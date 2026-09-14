@@ -110,6 +110,23 @@ export const getGroupTitle = (currentGroup?: string): string => {
   }
 };
 
+export const getFullFileUrl = (fileUrl?: string): string => {
+  if (!fileUrl) return '';
+  let url = fileUrl;
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    const cleanBase = config.apiBaseUrl.replace(/\/+$/, '');
+    const cleanPath = url.startsWith('/') ? url : `/${url}`;
+    url = `${cleanBase}${cleanPath}`;
+  }
+  // Đồng bộ host giữa Android Emulator (10.0.2.2) và Web / iOS / Host (localhost)
+  if (Platform.OS === 'android' && (url.includes('localhost:5023') || url.includes('127.0.0.1:5023'))) {
+    url = url.replace('localhost:5023', '10.0.2.2:5023').replace('127.0.0.1:5023', '10.0.2.2:5023');
+  } else if (Platform.OS !== 'android' && url.includes('10.0.2.2:5023')) {
+    url = url.replace('10.0.2.2:5023', 'localhost:5023');
+  }
+  return url;
+};
+
 const STORAGE_DOCS_PREFIX = 'taxkeep_docs_';
 
 export const dependentDocumentApi = {
@@ -183,7 +200,14 @@ export const dependentDocumentApi = {
   getDependentById: async (dependentId: string): Promise<any> => {
     try {
       const res = await apiClient.get<any>(`/api/v1/dependents/${dependentId}`);
-      return res.data?.data || res.data;
+      const data = res.data?.data || res.data;
+      if (data && Array.isArray(data.documents)) {
+        data.documents = data.documents.map((d: any) => ({
+          ...d,
+          fileUrl: getFullFileUrl(d.fileUrl),
+        }));
+      }
+      return data;
     } catch (err: any) {
       const msg = err?.response?.data?.message || 'Không thể lấy thông tin chi tiết người phụ thuộc.';
       throw new Error(msg);
@@ -202,7 +226,7 @@ export const dependentDocumentApi = {
           docType: d.docType,
           docTypeLabel: getDocTypeLabel(d.docType),
           fileName: (d.fileUrl || '').split('/').pop() || d.docType,
-          fileUrl: d.fileUrl,
+          fileUrl: getFullFileUrl(d.fileUrl),
           fileMimeType: d.fileMimeType,
           isReadable: Boolean(d.isReadable),
           uploadedAt: d.uploadedAt,

@@ -8,6 +8,8 @@ import {
   ActivityIndicator,
   RefreshControl,
   Alert,
+  Modal,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -17,7 +19,13 @@ import { RootNavigationProp } from '../../navigation/types';
 import {
   dependentDocumentApi,
   DependentItem,
+  getDocTypeLabel,
+  getGroupTitle,
 } from '../../api/dependentDocumentApi';
+import {
+  DocumentViewerModal,
+  DocumentViewerItem,
+} from '../../components/common/DocumentViewerModal';
 
 // Mức giảm trừ gia cảnh cho mỗi người phụ thuộc theo Nghị quyết 110/2025/UBTVQH15 (áp dụng từ 01/01/2026)
 const DEDUCTION_PER_DEPENDENT = 6200000; // 6.200.000 VNĐ/tháng
@@ -27,6 +35,24 @@ export const DependentListScreen: React.FC = () => {
   const [dependents, setDependents] = useState<DependentItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
+  const [selectedDetail, setSelectedDetail] = useState<any | null>(null);
+  const [detailLoading, setDetailLoading] = useState<boolean>(false);
+  const [isDetailModalVisible, setIsDetailModalVisible] = useState<boolean>(false);
+  const [previewDoc, setPreviewDoc] = useState<DocumentViewerItem | null>(null);
+
+  const handleViewDetail = async (depId: string) => {
+    setIsDetailModalVisible(true);
+    setDetailLoading(true);
+    try {
+      const detail = await dependentDocumentApi.getDependentById(depId);
+      setSelectedDetail(detail);
+    } catch (err: any) {
+      Alert.alert('Lỗi lấy chi tiết', err?.message || 'Không thể xem chi tiết người phụ thuộc.');
+      setIsDetailModalVisible(false);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
 
   const fetchDependents = useCallback(async () => {
     try {
@@ -230,7 +256,13 @@ export const DependentListScreen: React.FC = () => {
             const hasCitizenId = Boolean(dep.citizenId);
 
             return (
-              <View key={dep.id} style={styles.cardItem}>
+              <TouchableOpacity
+                key={dep.id}
+                style={styles.cardItem}
+                activeOpacity={0.88}
+                onPress={() => handleViewDetail(dep.id)}
+                testID={`dependentCard_${dep.id}`}
+              >
                 {/* Header thẻ */}
                 <View style={styles.cardTopRow}>
                   <View style={styles.avatarBox}>
@@ -331,13 +363,246 @@ export const DependentListScreen: React.FC = () => {
                     <Ionicons name="chevron-forward" size={14} color={theme.colors.primary} />
                   </TouchableOpacity>
                 </View>
-              </View>
+              </TouchableOpacity>
             );
           })
         )}
 
         <View style={{ height: 30 }} />
       </ScrollView>
+
+      {/* Modal Xem chi tiết người phụ thuộc (GET /api/v1/dependents/{id}) */}
+      <Modal
+        visible={isDetailModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setIsDetailModalVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setIsDetailModalVisible(false)}
+        >
+          <View style={styles.detailModalSheet} onStartShouldSetResponder={() => true}>
+            <View style={styles.detailModalHandle} />
+
+            {detailLoading ? (
+              <View style={styles.modalLoadingBox}>
+                <ActivityIndicator size="large" color={theme.colors.primary} />
+                <Text style={styles.modalLoadingText}>Đang tải chi tiết người phụ thuộc từ máy chủ...</Text>
+              </View>
+            ) : selectedDetail ? (
+              <ScrollView showsVerticalScrollIndicator={false}>
+                {/* Header Modal */}
+                <View style={styles.detailHeaderRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.detailModalTitle}>{selectedDetail.fullName}</Text>
+                    <Text style={styles.detailModalSubtitle}>
+                      {getRelationshipLabel(selectedDetail.relationship)} • {getGroupTitle(selectedDetail.currentGroup)}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.closeDetailBtn}
+                    onPress={() => setIsDetailModalVisible(false)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Đóng chi tiết"
+                  >
+                    <Ionicons name="close" size={24} color="#555555" />
+                  </TouchableOpacity>
+                </View>
+
+                {/* Trạng thái hồ sơ */}
+                <View
+                  style={[
+                    styles.detailStatusBox,
+                    selectedDetail.isProfileComplete ? styles.statusBoxComplete : styles.statusBoxPending,
+                  ]}
+                >
+                  <Ionicons
+                    name={selectedDetail.isProfileComplete ? 'checkmark-circle' : 'alert-circle'}
+                    size={20}
+                    color={selectedDetail.isProfileComplete ? '#2E7D32' : '#E65100'}
+                    style={{ marginRight: 8 }}
+                  />
+                  <Text
+                    style={[
+                      styles.detailStatusText,
+                      selectedDetail.isProfileComplete ? styles.statusTextComplete : styles.statusTextPending,
+                    ]}
+                  >
+                    {selectedDetail.isProfileComplete
+                      ? 'Hồ sơ đã đầy đủ minh chứng hợp lệ'
+                      : 'Hồ sơ đang chờ bổ sung ảnh minh chứng'}
+                  </Text>
+                </View>
+
+                {/* Khối thông tin cá nhân */}
+                <View style={styles.detailCardSection}>
+                  <Text style={styles.detailSectionHeading}>THÔNG TIN CÁ NHÂN</Text>
+
+                  <View style={styles.modalDetailRow}>
+                    <Text style={styles.modalDetailLabel}>Ngày sinh:</Text>
+                    <Text style={styles.modalDetailVal}>
+                      {(selectedDetail.birthDate || '').split('T')[0]} ({calculateAge(selectedDetail.birthDate)} tuổi)
+                    </Text>
+                  </View>
+
+                  <View style={styles.modalDetailRow}>
+                    <Text style={styles.modalDetailLabel}>
+                      {calculateAge(selectedDetail.birthDate) >= 14 || selectedDetail.citizenId
+                        ? 'Căn cước công dân:'
+                        : 'Số Giấy khai sinh:'}
+                    </Text>
+                    <Text style={[styles.modalDetailVal, styles.monospace]}>
+                      {selectedDetail.citizenId || selectedDetail.birthCertNumber || 'Chưa cập nhật'}
+                    </Text>
+                  </View>
+
+                  {selectedDetail.taxIdNumber ? (
+                    <View style={styles.modalDetailRow}>
+                      <Text style={styles.modalDetailLabel}>Mã số thuế NPT:</Text>
+                      <Text style={[styles.modalDetailVal, styles.monospace]}>{selectedDetail.taxIdNumber}</Text>
+                    </View>
+                  ) : null}
+
+                  <View style={styles.modalDetailRow}>
+                    <Text style={styles.modalDetailLabel}>Thời gian hiệu lực:</Text>
+                    <Text style={styles.modalDetailVal}>
+                      {selectedDetail.effectiveFromMonth || '01/2026'} → {selectedDetail.effectiveToMonth || '12/2026'}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Khối Giấy tờ minh chứng */}
+                <View style={styles.detailCardSection}>
+                  <Text style={styles.detailSectionHeading}>
+                    GIẤY TỜ MINH CHỨNG ĐÃ LƯU ({selectedDetail.documents?.length || 0})
+                  </Text>
+
+                  {selectedDetail.documents && selectedDetail.documents.length > 0 ? (
+                    selectedDetail.documents.map((doc: any, index: number) => {
+                      const isImg =
+                        doc.fileMimeType?.includes('image') ||
+                        doc.fileUrl?.match(/\.(png|jpe?g|webp|gif)$/i) ||
+                        !doc.fileUrl?.match(/\.pdf$/i);
+                      const fileName = (doc.fileUrl || '').split('/').pop() || doc.docType;
+
+                      const handleDocPress = () => {
+                        setPreviewDoc({
+                          uri: doc.fileUrl,
+                          title: getDocTypeLabel(doc.docType),
+                          docType: doc.docType,
+                          fileName,
+                          uploadedAt: doc.uploadedAt,
+                          isReadable: doc.isReadable,
+                          mimeType: doc.fileMimeType || (isImg ? 'image/jpeg' : 'application/pdf'),
+                        });
+                      };
+
+                      return (
+                        <TouchableOpacity
+                          key={doc.docId || index}
+                          style={styles.docItemCard}
+                          activeOpacity={0.8}
+                          onPress={handleDocPress}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Xem tài liệu ${getDocTypeLabel(doc.docType)}`}
+                        >
+                          {isImg && doc.fileUrl ? (
+                            <View style={styles.docThumbContainer}>
+                              <Image
+                                source={{ uri: doc.fileUrl }}
+                                style={styles.docItemThumb}
+                                resizeMode="cover"
+                              />
+                              <View style={styles.docThumbOverlay}>
+                                <Ionicons name="search-outline" size={12} color="#FFFFFF" />
+                              </View>
+                            </View>
+                          ) : (
+                            <View style={styles.docPdfBadge}>
+                              <Ionicons name="document-text" size={24} color="#D32F2F" />
+                            </View>
+                          )}
+
+                          <View style={{ flex: 1, paddingHorizontal: 10 }}>
+                            <Text style={styles.docItemName} numberOfLines={1}>
+                              {getDocTypeLabel(doc.docType)}
+                            </Text>
+                            <Text style={styles.docFileName} numberOfLines={1}>
+                              {fileName}
+                            </Text>
+                            <Text style={styles.docItemDate}>
+                              Ngày nộp: {(doc.uploadedAt || '').split('T')[0]} •{' '}
+                              <Text style={doc.isReadable ? styles.validStatusText : styles.pendingStatusText}>
+                                {doc.isReadable ? '✓ Hợp lệ' : 'Đang kiểm tra'}
+                              </Text>
+                            </Text>
+                          </View>
+
+                          <TouchableOpacity
+                            style={styles.viewDocActionBtn}
+                            onPress={handleDocPress}
+                            accessibilityRole="button"
+                            accessibilityLabel="Xem ảnh"
+                          >
+                            <Ionicons name="eye-outline" size={15} color={theme.colors.primary} />
+                            <Text style={styles.viewDocActionText}>Xem</Text>
+                          </TouchableOpacity>
+                        </TouchableOpacity>
+                      );
+                    })
+                  ) : (
+                    <View style={styles.emptyDocBox}>
+                      <Ionicons name="folder-open-outline" size={32} color="#999999" style={{ marginBottom: 6 }} />
+                      <Text style={styles.emptyDocText}>Chưa có giấy tờ minh chứng nào được tải lên.</Text>
+                    </View>
+                  )}
+                </View>
+
+                {/* Nút hành động trong Modal */}
+                <View style={styles.modalActionRow}>
+                  <TouchableOpacity
+                    style={styles.modalGoProofBtn}
+                    onPress={() => {
+                      setIsDetailModalVisible(false);
+                      handleGoToProofDocuments({
+                        id: selectedDetail.dependentId,
+                        fullName: selectedDetail.fullName,
+                        birthDate: selectedDetail.birthDate,
+                        currentGroup: selectedDetail.currentGroup,
+                        groupTitle: getGroupTitle(selectedDetail.currentGroup),
+                        isProfileComplete: selectedDetail.isProfileComplete,
+                        requiredDocs: selectedDetail.requiredDocuments || [],
+                        citizenId: selectedDetail.citizenId,
+                        birthCertNumber: selectedDetail.birthCertNumber,
+                        relationship: selectedDetail.relationship,
+                        effectiveFromMonth: selectedDetail.effectiveFromMonth,
+                        effectiveToMonth: selectedDetail.effectiveToMonth,
+                        status: selectedDetail.status,
+                      });
+                    }}
+                  >
+                    <Ionicons name="cloud-upload-outline" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
+                    <Text style={styles.modalGoProofBtnText}>
+                      {selectedDetail.isProfileComplete ? 'Xem / Cập nhật minh chứng' : 'Bổ sung ảnh minh chứng ngay'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                <View style={{ height: 25 }} />
+              </ScrollView>
+            ) : null}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Modal Xem ảnh / tài liệu minh chứng phóng to full-screen */}
+      <DocumentViewerModal
+        visible={!!previewDoc}
+        onClose={() => setPreviewDoc(null)}
+        document={previewDoc}
+      />
     </SafeAreaView>
   );
 };
@@ -429,6 +694,218 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.12)',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  detailModalSheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '85%',
+    paddingHorizontal: 20,
+    paddingTop: 12,
+  },
+  detailModalHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#DDDDDD',
+    alignSelf: 'center',
+    marginBottom: 16,
+  },
+  modalLoadingBox: {
+    paddingVertical: 50,
+    alignItems: 'center',
+  },
+  modalLoadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: '#666666',
+  },
+  detailHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    marginBottom: 14,
+  },
+  detailModalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#1A1A1A',
+  },
+  detailModalSubtitle: {
+    fontSize: 13,
+    color: '#666666',
+    marginTop: 3,
+  },
+  closeDetailBtn: {
+    padding: 4,
+  },
+  detailStatusBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 10,
+    borderRadius: 10,
+    marginBottom: 16,
+  },
+  statusBoxComplete: {
+    backgroundColor: '#E8F5E9',
+  },
+  statusBoxPending: {
+    backgroundColor: '#FFF3E0',
+  },
+  detailStatusText: {
+    fontSize: 13,
+    fontWeight: '600',
+    flex: 1,
+  },
+  statusTextComplete: {
+    color: '#2E7D32',
+  },
+  statusTextPending: {
+    color: '#E65100',
+  },
+  detailCardSection: {
+    backgroundColor: '#F9F7F2',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#EFEAE0',
+  },
+  detailSectionHeading: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#8B1E1E',
+    letterSpacing: 0.5,
+    marginBottom: 10,
+  },
+  modalDetailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0EBE0',
+  },
+  modalDetailLabel: {
+    fontSize: 13,
+    color: '#666666',
+  },
+  modalDetailVal: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#1A1A1A',
+    textAlign: 'right',
+  },
+  docItemCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    padding: 8,
+    borderRadius: 10,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#E8E2D6',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  docThumbContainer: {
+    width: 52,
+    height: 52,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: '#F0EAE1',
+    position: 'relative',
+  },
+  docItemThumb: {
+    width: '100%',
+    height: '100%',
+  },
+  docThumbOverlay: {
+    position: 'absolute',
+    right: 2,
+    bottom: 2,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    borderRadius: 8,
+    width: 18,
+    height: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  docPdfBadge: {
+    width: 52,
+    height: 52,
+    borderRadius: 8,
+    backgroundColor: '#FFEBEE',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  docFileName: {
+    fontSize: 11,
+    color: '#666666',
+    marginTop: 1,
+  },
+  validStatusText: {
+    color: '#2E7D32',
+    fontWeight: '600',
+  },
+  pendingStatusText: {
+    color: '#E65100',
+    fontWeight: '600',
+  },
+  viewDocActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FAF0E8',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    gap: 4,
+  },
+  viewDocActionText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: theme.colors.primary,
+  },
+  docItemName: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#1A1A1A',
+  },
+  docItemDate: {
+    fontSize: 11,
+    color: '#888888',
+    marginTop: 2,
+  },
+  emptyDocBox: {
+    alignItems: 'center',
+    paddingVertical: 16,
+  },
+  emptyDocText: {
+    fontSize: 13,
+    color: '#888888',
+  },
+  modalActionRow: {
+    marginTop: 6,
+  },
+  modalGoProofBtn: {
+    backgroundColor: theme.colors.primaryDark,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    borderRadius: 12,
+  },
+  modalGoProofBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 15,
   },
   sectionHeader: {
     flexDirection: 'row',

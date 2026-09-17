@@ -71,15 +71,10 @@ export const LoginScreen: React.FC = () => {
       } else if (status === 500) {
         Alert.alert('Lỗi hệ thống', 'Đã xảy ra lỗi trên máy chủ. Vui lòng thử lại sau.');
       } else {
-        // Nhánh Backend hiện tại (feature/ManageIncomeSource) chưa có AuthController (404),
-        // tự động chuyển vào phiên làm việc với userId chuẩn của BE c1234567-89ab-cdef-0123-456789abcdef
-        await setAuth('mock-demo-token', {
-          id: 'c1234567-89ab-cdef-0123-456789abcdef',
-          citizenId: data.account || '079201001111',
-          fullName: 'Nguyễn Văn An',
-          email: 'an.nguyen@taxkeep.vn',
-        });
-        navigation.replace('Home');
+        Alert.alert(
+          'Không kết nối được máy chủ',
+          serverMsg || 'Vui lòng kiểm tra API đang chạy rồi thử đăng nhập lại.'
+        );
       }
     } finally {
       setLoading(false);

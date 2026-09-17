@@ -15,6 +15,7 @@ import { LawConditionsScreen } from '../screens/home/LawConditionsScreen';
 import { TaxRegistrationScreen } from '../screens/dependent/TaxRegistrationScreen';
 import { ProofDocumentsScreen } from '../screens/dependent/ProofDocumentsScreen';
 import { DependentListScreen } from '../screens/dependent/DependentListScreen';
+import { ScanIdentityScreen } from '../screens/common/ScanIdentityScreen';
 import { useAuthStore } from '../stores/useAuthStore';
 import { theme } from '../constants/theme';
 
@@ -57,6 +58,7 @@ export const RootNavigator: React.FC = () => {
         <Stack.Screen name="TaxRegistration" component={TaxRegistrationScreen} />
         <Stack.Screen name="ProofDocuments" component={ProofDocumentsScreen} />
         <Stack.Screen name="DependentList" component={DependentListScreen} />
+        <Stack.Screen name="ScanIdentity" component={ScanIdentityScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

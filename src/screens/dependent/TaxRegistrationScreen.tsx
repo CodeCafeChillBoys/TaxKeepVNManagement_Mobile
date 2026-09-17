@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -12,11 +12,16 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
-import { RootNavigationProp } from '../../navigation/types';
+import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { dependentDocumentApi } from '../../api/dependentDocumentApi';
+import {
+  applyTaxRegistrationOcrFill,
+  buildDependentScanParams,
+  isTaxRegistrationFormDirty,
+} from './applyTaxRegistrationOcrFill';
 
 // Danh sách mối quan hệ chuẩn thuế TNCN
 const RELATIONSHIP_OPTIONS = [
@@ -69,6 +74,7 @@ const EFFECTIVE_YEARS = Array.from({ length: 10 }, (_, i) => String(currentYear 
 
 export const TaxRegistrationScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
+  const route = useRoute<RouteProp<RootStackParamList, 'TaxRegistration'>>();
 
   // Trạng thái gửi dữ liệu lên Backend
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
@@ -126,6 +132,27 @@ export const TaxRegistrationScreen: React.FC = () => {
     type: 'birthDay' | 'birthMonth' | 'birthYear' | 'relationship' | 'startDay' | 'startMonth' | 'startYear' | 'endDay' | 'endMonth' | 'endYear' | 'conditionGroup';
     items: { value: any; label: string }[];
   } | null>(null);
+
+  useEffect(() => {
+    const fill = route.params?.ocrDependentFill;
+    if (!fill) return;
+
+    const plan = applyTaxRegistrationOcrFill(fill);
+    const { patch } = plan;
+    setFullName(patch.fullName);
+    if (patch.birthDay) setBirthDay(patch.birthDay);
+    if (patch.birthMonth) setBirthMonth(patch.birthMonth);
+    if (patch.birthYear) setBirthYear(patch.birthYear);
+    if (patch.citizenId !== undefined) setCitizenId(patch.citizenId);
+    if (patch.birthCertNumber !== undefined) setBirthCertNumber(patch.birthCertNumber);
+    if (typeof patch.selectedGroupIdx === 'number') {
+      setSelectedGroupIdx(patch.selectedGroupIdx);
+    }
+    if (patch.relationship) setRelationship(patch.relationship);
+
+    navigation.setParams({ ocrDependentFill: undefined });
+    Alert.alert(plan.alertTitle, plan.alertMessage);
+  }, [route.params?.ocrDependentFill]);
 
   // Xử lý nút Tiếp tục: validate & điều hướng sang màn Ảnh minh chứng của nhóm tương ứng
   const handleContinue = async () => {
@@ -296,6 +323,35 @@ export const TaxRegistrationScreen: React.FC = () => {
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        <TouchableOpacity
+          activeOpacity={0.85}
+          style={styles.ocrQuickCard}
+          onPress={() =>
+            navigation.navigate(
+              'ScanIdentity',
+              buildDependentScanParams(
+                isTaxRegistrationFormDirty({ fullName, citizenId, birthCertNumber })
+              )
+            )
+          }
+          testID="taxRegOcrScanCard"
+        >
+          <View style={styles.ocrIconCircle}>
+            <Ionicons name="scan-outline" size={24} color={theme.colors.primary} />
+          </View>
+          <View style={styles.ocrTextCol}>
+            <Text style={styles.ocrTitle}>Quét giấy tờ người phụ thuộc</Text>
+            <Text style={styles.ocrSubtitle}>Điền nhanh từ CCCD hoặc giấy khai sinh</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={theme.colors.textSecondary} />
+        </TouchableOpacity>
+
+        <View style={styles.dividerRow}>
+          <View style={styles.dividerLine} />
+          <Text style={styles.dividerText}>hoặc nhập tay</Text>
+          <View style={styles.dividerLine} />
+        </View>
+
         {/* Trường 1: Họ và Tên */}
         <View style={styles.formGroup}>
           <Text style={styles.fieldLabel}>
@@ -679,6 +735,54 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 20,
     paddingBottom: 40,
+  },
+  ocrQuickCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1.2,
+    borderColor: theme.colors.gold,
+    borderStyle: 'dashed',
+    marginBottom: 12,
+  },
+  ocrIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: theme.colors.surfaceSecondary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  ocrTextCol: {
+    flex: 1,
+  },
+  ocrTitle: {
+    fontSize: 16,
+    color: theme.colors.primary,
+    fontWeight: '700',
+  },
+  ocrSubtitle: {
+    fontSize: 12,
+    color: theme.colors.textSecondary,
+    marginTop: 2,
+  },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#E0E0E0',
+  },
+  dividerText: {
+    marginHorizontal: 10,
+    fontSize: 12,
+    color: '#8E8E93',
   },
   formGroup: {
     marginBottom: 20,

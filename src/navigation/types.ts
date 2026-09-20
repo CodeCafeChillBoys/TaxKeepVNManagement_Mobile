@@ -19,6 +19,8 @@ export type RootStackParamList = {
     | {
         groupIndex?: number;
         dependentId?: string;
+        /** Checklist từ PATCH /group — ưu tiên hơn LAW_GROUP_SPECS local */
+        requiredDocuments?: string[];
         dependentData?: {
           fullName: string;
           citizenId?: string;

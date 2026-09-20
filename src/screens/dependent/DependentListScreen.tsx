@@ -10,6 +10,7 @@ import {
   Alert,
   Modal,
   Image,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -22,10 +23,20 @@ import {
   getDocTypeLabel,
   getGroupTitle,
 } from '../../api/dependentDocumentApi';
+import { dependentLifecycleApi } from '../../api/dependentLifecycleApi';
 import {
   DocumentViewerModal,
   DocumentViewerItem,
 } from '../../components/common/DocumentViewerModal';
+import { ChangeGroupSheet } from '../../components/common/ChangeGroupSheet';
+import { Dialog } from '../../components/common/Dialog';
+import { groupCodeToIndex } from './dependentGroupUtils';
+import {
+  buildManualChangeGroupPlan,
+  runManualChangeGroup,
+  type ManualChangeGroupPlan,
+} from './manualChangeGroup';
+import { buildSoftDeletePlan, runSoftDeleteDependent } from './softDeleteDependent';
 
 // Mức giảm trừ gia cảnh cho mỗi người phụ thuộc theo Nghị quyết 110/2025/UBTVQH15 (áp dụng từ 01/01/2026)
 const DEDUCTION_PER_DEPENDENT = 6200000; // 6.200.000 VNĐ/tháng
@@ -39,6 +50,13 @@ export const DependentListScreen: React.FC = () => {
   const [detailLoading, setDetailLoading] = useState<boolean>(false);
   const [isDetailModalVisible, setIsDetailModalVisible] = useState<boolean>(false);
   const [previewDoc, setPreviewDoc] = useState<DocumentViewerItem | null>(null);
+  const [changeGroupPlan, setChangeGroupPlan] = useState<ManualChangeGroupPlan | null>(null);
+  const [changeGroupVisible, setChangeGroupVisible] = useState(false);
+  const [changeGroupLoading, setChangeGroupLoading] = useState(false);
+  const [infoDialog, setInfoDialog] = useState<{
+    title: string;
+    message: string;
+  } | null>(null);
 
   const handleViewDetail = async (depId: string) => {
     setIsDetailModalVisible(true);
@@ -109,29 +127,7 @@ export const DependentListScreen: React.FC = () => {
     }
   };
 
-  const getGroupIndex = (currentGroup?: string): number => {
-    switch (currentGroup) {
-      case 'CHILD_UNDER_18':
-        return 0;
-      case 'CHILD_OVER_18_STUDYING':
-      case 'CHILD_STUDYING':
-        return 1;
-      case 'CHILD_OVER_18_DISABLED':
-      case 'DISABLED_DEPENDENT':
-        return 2;
-      case 'SPOUSE_RETIRED':
-      case 'SPOUSE_DISABLED':
-      case 'PARENT_RETIRED':
-      case 'PARENT_DISABLED':
-      case 'SPOUSE_OR_PARENTS':
-        return 3;
-      case 'OTHER_HELPLESS':
-      case 'OTHER_DEPENDENT':
-        return 4;
-      default:
-        return 0;
-    }
-  };
+  const getGroupIndex = (currentGroup?: string): number => groupCodeToIndex(currentGroup);
 
   const handleGoToProofDocuments = (dep: DependentItem) => {
     const groupIdx = getGroupIndex(dep.currentGroup);
@@ -150,6 +146,120 @@ export const DependentListScreen: React.FC = () => {
         groupCode: dep.currentGroup,
       },
     });
+  };
+
+  const navigateAfterGroupChange = (nav: {
+    screen: 'ProofDocuments';
+    params: {
+      dependentId: string;
+      groupIndex: number;
+      requiredDocuments?: string[];
+    };
+  }) => {
+    navigation.navigate(nav.screen, nav.params);
+  };
+
+  const handleChangeGroup = (detail: {
+    dependentId: string;
+    fullName: string;
+    relationship: string;
+    currentGroup: string;
+  }) => {
+    const plan = buildManualChangeGroupPlan({
+      dependentId: detail.dependentId,
+      fullName: detail.fullName,
+      relationship: detail.relationship || 'CHILD',
+      currentGroup: detail.currentGroup,
+    });
+    if (!plan.canChange) {
+      setInfoDialog({
+        title: 'Không thể đổi nhóm',
+        message: 'Không còn nhóm điều kiện khác phù hợp với quan hệ hiện tại.',
+      });
+      return;
+    }
+    setChangeGroupPlan(plan);
+    setChangeGroupVisible(true);
+  };
+
+  const handleSelectChangeGroup = async (newGroup: string) => {
+    if (!changeGroupPlan || changeGroupLoading) return;
+    setChangeGroupLoading(true);
+    try {
+      const result = await runManualChangeGroup({
+        dependentId: changeGroupPlan.dependentId,
+        newGroup,
+        updateDependentGroup: dependentLifecycleApi.updateDependentGroup,
+      });
+      if (!result.ok) {
+        setInfoDialog({ title: 'Không thể chuyển nhóm', message: result.message });
+        return;
+      }
+      setChangeGroupVisible(false);
+      setChangeGroupPlan(null);
+      setIsDetailModalVisible(false);
+      navigateAfterGroupChange(result.navigation);
+    } finally {
+      setChangeGroupLoading(false);
+    }
+  };
+
+  const executeSoftDelete = async (dependentId: string, reason?: string) => {
+    const result = await runSoftDeleteDependent({
+      dependentId,
+      reason,
+      deleteDependent: dependentLifecycleApi.deleteDependent,
+    });
+    if (!result.ok) {
+      Alert.alert('Không thể vô hiệu hóa', result.message);
+      return;
+    }
+    setIsDetailModalVisible(false);
+    setSelectedDetail(null);
+    Alert.alert('Thành công', result.toastMessage);
+    await fetchDependents();
+  };
+
+  const handleSoftDelete = (dependentId: string, fullName: string) => {
+    const plan = buildSoftDeletePlan({ dependentId, fullName });
+    if (Platform.OS === 'ios') {
+      Alert.prompt(
+        plan.confirmTitle,
+        `${plan.confirmMessage}\n\nLý do (tuỳ chọn):`,
+        [
+          { text: 'Hủy', style: 'cancel' },
+          {
+            text: 'Vô hiệu hóa',
+            style: 'destructive',
+            onPress: (reason?: string) => {
+              void executeSoftDelete(dependentId, reason);
+            },
+          },
+        ]
+      );
+      return;
+    }
+    Alert.alert(plan.confirmTitle, plan.confirmMessage, [
+      { text: 'Hủy', style: 'cancel' },
+      {
+        text: 'Vô hiệu hóa',
+        style: 'destructive',
+        onPress: () => {
+          void executeSoftDelete(dependentId);
+        },
+      },
+    ]);
+  };
+
+  const handleRowMenu = (dep: DependentItem) => {
+    Alert.alert(dep.fullName, undefined, [
+      {
+        text: 'Vô hiệu hóa',
+        style: 'destructive',
+        onPress: () => handleSoftDelete(dep.id, dep.fullName),
+      },
+      { text: 'Hủy', style: 'cancel' },
+    ]);
   };
 
   return (
@@ -299,6 +409,16 @@ export const DependentListScreen: React.FC = () => {
                       </View>
                     </View>
                   </View>
+                  <TouchableOpacity
+                    style={styles.rowMenuBtn}
+                    onPress={() => handleRowMenu(dep)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    testID={`dependentMenu_${dep.id}`}
+                    accessibilityRole="button"
+                    accessibilityLabel="Tuỳ chọn người phụ thuộc"
+                  >
+                    <Ionicons name="ellipsis-vertical" size={20} color="#666666" />
+                  </TouchableOpacity>
                 </View>
 
                 {/* Phân cách nhẹ */}
@@ -563,6 +683,43 @@ export const DependentListScreen: React.FC = () => {
                 {/* Nút hành động trong Modal */}
                 <View style={styles.modalActionRow}>
                   <TouchableOpacity
+                    style={styles.modalSecondaryBtn}
+                    onPress={() =>
+                      handleChangeGroup({
+                        dependentId: selectedDetail.dependentId,
+                        fullName: selectedDetail.fullName,
+                        relationship: selectedDetail.relationship,
+                        currentGroup: selectedDetail.currentGroup,
+                      })
+                    }
+                    testID="btnChangeDependentGroup"
+                  >
+                    <Ionicons
+                      name="swap-horizontal-outline"
+                      size={18}
+                      color={theme.colors.primary}
+                      style={{ marginRight: 6 }}
+                    />
+                    <Text style={styles.modalSecondaryBtnText}>Đổi nhóm điều kiện</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.modalDangerBtn}
+                    onPress={() =>
+                      handleSoftDelete(selectedDetail.dependentId, selectedDetail.fullName)
+                    }
+                    testID="btnSoftDeleteDependent"
+                  >
+                    <Ionicons
+                      name="trash-outline"
+                      size={18}
+                      color={theme.colors.error}
+                      style={{ marginRight: 6 }}
+                    />
+                    <Text style={styles.modalDangerBtnText}>Vô hiệu hóa</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
                     style={styles.modalGoProofBtn}
                     onPress={() => {
                       setIsDetailModalVisible(false);
@@ -602,6 +759,31 @@ export const DependentListScreen: React.FC = () => {
         visible={!!previewDoc}
         onClose={() => setPreviewDoc(null)}
         document={previewDoc}
+      />
+
+      <ChangeGroupSheet
+        visible={changeGroupVisible && !!changeGroupPlan}
+        fullName={changeGroupPlan?.fullName ?? ''}
+        currentGroup={changeGroupPlan?.currentGroup ?? ''}
+        options={changeGroupPlan?.options ?? []}
+        loading={changeGroupLoading}
+        onSelect={(code) => {
+          void handleSelectChangeGroup(code);
+        }}
+        onCancel={() => {
+          if (changeGroupLoading) return;
+          setChangeGroupVisible(false);
+          setChangeGroupPlan(null);
+        }}
+      />
+
+      <Dialog
+        visible={!!infoDialog}
+        title={infoDialog?.title ?? ''}
+        message={infoDialog?.message ?? ''}
+        primaryLabel="Đóng"
+        onPrimary={() => setInfoDialog(null)}
+        onRequestClose={() => setInfoDialog(null)}
       />
     </SafeAreaView>
   );
@@ -906,6 +1088,42 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '700',
     fontSize: 15,
+  },
+  modalSecondaryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: theme.colors.primary,
+    backgroundColor: '#FFFFFF',
+    marginBottom: 10,
+  },
+  modalSecondaryBtnText: {
+    color: theme.colors.primary,
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  modalDangerBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: theme.colors.error,
+    backgroundColor: '#FFFFFF',
+    marginBottom: 10,
+  },
+  modalDangerBtnText: {
+    color: theme.colors.error,
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  rowMenuBtn: {
+    padding: 6,
+    marginLeft: 4,
   },
   sectionHeader: {
     flexDirection: 'row',

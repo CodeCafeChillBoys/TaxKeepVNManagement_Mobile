@@ -38,6 +38,9 @@ export type RootStackParamList = {
   ChangePassword: undefined;
   LawConditions: undefined;
   DependentList: undefined;
+  ExpenseList: undefined;
+  ExpenseUpload: { targetYear?: number; periodId?: string } | undefined;
+  ExpenseReview: { ocrResult: import('../types/expense').ExpenseOcrResult; periodId?: string; isReadOnly?: boolean };
 };
 
 export type RootNavigationProp = NativeStackNavigationProp<RootStackParamList>;

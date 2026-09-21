@@ -991,11 +991,15 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     borderWidth: 1,
     borderColor: '#E8E2D6',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
+    ...(Platform.OS === 'web'
+      ? { boxShadow: '0px 1px 2px rgba(0, 0, 0, 0.05)' }
+      : {
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 1 },
+          shadowOpacity: 0.05,
+          shadowRadius: 2,
+          elevation: 1,
+        }),
   },
   docThumbContainer: {
     width: 52,

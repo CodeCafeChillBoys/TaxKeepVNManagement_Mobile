@@ -16,6 +16,9 @@ import { TaxRegistrationScreen } from '../screens/dependent/TaxRegistrationScree
 import { ProofDocumentsScreen } from '../screens/dependent/ProofDocumentsScreen';
 import { DependentListScreen } from '../screens/dependent/DependentListScreen';
 import { ScanIdentityScreen } from '../screens/common/ScanIdentityScreen';
+import { ExpenseListScreen } from '../screens/expense/ExpenseListScreen';
+import { ExpenseUploadScreen } from '../screens/expense/ExpenseUploadScreen';
+import { ExpenseReviewScreen } from '../screens/expense/ExpenseReviewScreen';
 import { useAuthStore } from '../stores/useAuthStore';
 import { theme } from '../constants/theme';
 
@@ -37,7 +40,13 @@ export const RootNavigator: React.FC = () => {
   }
 
   return (
-    <NavigationContainer>
+    <NavigationContainer
+      onStateChange={() => {
+        if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
+          document.activeElement.blur();
+        }
+      }}
+    >
       <Stack.Navigator
         initialRouteName={isAuthenticated ? 'Home' : 'Login'}
         screenOptions={{
@@ -59,6 +68,9 @@ export const RootNavigator: React.FC = () => {
         <Stack.Screen name="ProofDocuments" component={ProofDocumentsScreen} />
         <Stack.Screen name="DependentList" component={DependentListScreen} />
         <Stack.Screen name="ScanIdentity" component={ScanIdentityScreen} />
+        <Stack.Screen name="ExpenseList" component={ExpenseListScreen} />
+        <Stack.Screen name="ExpenseUpload" component={ExpenseUploadScreen} />
+        <Stack.Screen name="ExpenseReview" component={ExpenseReviewScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

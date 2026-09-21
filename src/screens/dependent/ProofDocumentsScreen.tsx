@@ -1292,11 +1292,15 @@ const styles = StyleSheet.create({
     backgroundColor: '#F5F5F7',
     borderRadius: 18,
     padding: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 10,
-    elevation: 6,
+    ...(Platform.OS === 'web'
+      ? { boxShadow: '0px 4px 10px rgba(0, 0, 0, 0.2)' }
+      : {
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.2,
+          shadowRadius: 10,
+          elevation: 6,
+        }),
   },
   lawModalHeader: {
     flexDirection: 'row',

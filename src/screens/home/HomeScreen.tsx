@@ -18,7 +18,12 @@ import { theme } from '../../constants/theme';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { RootNavigationProp } from '../../navigation/types';
 import { dependentDocumentApi, AgeReminderItemDto } from '../../api/dependentDocumentApi';
+import { dependentLifecycleApi } from '../../api/dependentLifecycleApi';
 import { notificationApi, NotificationItem } from '../../api/notificationApi';
+import {
+  buildHomeReminderChangeGroupPlan,
+  runHomeReminderChangeGroup,
+} from './homeReminderChangeGroup';
 
 export const HomeScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
@@ -26,6 +31,7 @@ export const HomeScreen: React.FC = () => {
 
   // Nhắc nhở chuyển nhóm tuổi NPT: GET /api/v1/dependents/reminders/age-transitions
   const [reminders, setReminders] = useState<AgeReminderItemDto[]>([]);
+  const [reminderPatching, setReminderPatching] = useState(false);
 
   // Thông báo hệ thống: GET /api/v1/notifications & PATCH /api/v1/notifications/{id}/read
   const [unreadCount, setUnreadCount] = useState<number>(0);
@@ -139,6 +145,43 @@ export const HomeScreen: React.FC = () => {
     ]);
   };
 
+  /** NPT-03: confirm → PATCH /group → ProofDocuments (không skip PATCH). */
+  const handleReminderUploadPress = (item: AgeReminderItemDto) => {
+    if (reminderPatching) return;
+    const plan = buildHomeReminderChangeGroupPlan({
+      dependentId: item.dependentId,
+      fullName: item.fullName,
+      recommendedGroup: item.recommendedGroup || 'CHILD_OVER_18_STUDYING',
+    });
+
+    Alert.alert(plan.confirmTitle, plan.confirmMessage, [
+      { text: 'Hủy', style: 'cancel' },
+      {
+        text: 'Xác nhận',
+        onPress: async () => {
+          setReminderPatching(true);
+          try {
+            const result = await runHomeReminderChangeGroup({
+              dependentId: plan.dependentId,
+              newGroup: plan.newGroup,
+              updateDependentGroup: dependentLifecycleApi.updateDependentGroup,
+            });
+            if (!result.ok) {
+              Alert.alert('Không thể chuyển nhóm', result.message);
+              return;
+            }
+            navigation.navigate(
+              result.navigation.screen,
+              result.navigation.params
+            );
+          } finally {
+            setReminderPatching(false);
+          }
+        },
+      },
+    ]);
+  };
+
   return (
     <SafeAreaView style={styles.safeArea}>
       {/* Top Bar theo Figma iPhone 17 - 16 */}
@@ -221,18 +264,20 @@ export const HomeScreen: React.FC = () => {
             <TouchableOpacity
               style={styles.reminderActionBtn}
               activeOpacity={0.8}
-              onPress={() =>
-                navigation.navigate('ProofDocuments', {
-                  groupIndex: 1, // Nhóm 2: Con từ 18 tuổi trở lên đang theo học (CHILD_STUDYING)
-                  dependentId: reminders[0].dependentId,
-                })
-              }
+              disabled={reminderPatching}
+              onPress={() => handleReminderUploadPress(reminders[0])}
               testID="btnUploadStudentCardReminder"
               accessibilityRole="button"
               accessibilityLabel="Bổ sung hồ sơ sinh viên ngay"
             >
-              <Text style={styles.reminderActionBtnText}>Bổ sung hồ sơ sinh viên ngay</Text>
-              <Ionicons name="arrow-forward" size={16} color="#FFFFFF" />
+              {reminderPatching ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <>
+                  <Text style={styles.reminderActionBtnText}>Bổ sung hồ sơ sinh viên ngay</Text>
+                  <Ionicons name="arrow-forward" size={16} color="#FFFFFF" />
+                </>
+              )}
             </TouchableOpacity>
           </View>
         )}

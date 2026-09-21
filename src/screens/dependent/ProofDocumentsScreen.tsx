@@ -29,6 +29,7 @@ import {
   DocumentViewerItem,
 } from '../../components/common/DocumentViewerModal';
 import { RootStackParamList, RootNavigationProp } from '../../navigation/types';
+import { resolveProofDocumentsChecklist } from './proofDocumentsParams';
 
 type ProofDocumentsRouteProp = RouteProp<RootStackParamList, 'ProofDocuments'>;
 
@@ -289,7 +290,27 @@ export const ProofDocumentsScreen: React.FC = () => {
   };
 
   // Cập nhật danh sách tài liệu động theo quy tắc từ Backend API
+  // NPT-07: ưu tiên requiredDocuments từ PATCH /group qua nav params
   useEffect(() => {
+    const fromPatch = resolveProofDocumentsChecklist({
+      requiredDocuments: route.params?.requiredDocuments,
+      fallbackDocTypes: [],
+    });
+    if (fromPatch.length > 0) {
+      const docs: LawDocItem[] = fromPatch.map((docType, idx) => {
+        const letter = String.fromCharCode(97 + idx);
+        const label = getDocTypeLabel(docType);
+        return {
+          key: `patch_${docType.toLowerCase()}_${idx}`,
+          code: letter,
+          docType,
+          title: `${letter}. ${label} (Bắt buộc)`,
+        };
+      });
+      setDynamicDocs(docs);
+      return;
+    }
+
     if (allRules.length === 0) return;
 
     const rel = (route.params?.dependentData as any)?.relationship;
@@ -340,7 +361,7 @@ export const ProofDocumentsScreen: React.FC = () => {
       });
       setDynamicDocs(docs);
     }
-  }, [allRules, selectedGroupIdx, route.params?.dependentData]);
+  }, [allRules, selectedGroupIdx, route.params?.dependentData, route.params?.requiredDocuments]);
 
   // Tự động đồng bộ hóa tài liệu từ máy chủ (serverDocs) vào các ô giấy tờ (activeDocs)
   useEffect(() => {

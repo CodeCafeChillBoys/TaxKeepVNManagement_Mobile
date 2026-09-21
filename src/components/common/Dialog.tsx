@@ -13,24 +13,31 @@ interface DialogProps {
   visible: boolean;
   title: string;
   message: string;
+  /** Optional highlighted detail (vd. tên nhóm điều kiện). */
+  detail?: string;
+  detailLabel?: string;
   primaryLabel: string;
   secondaryLabel?: string;
   onPrimary: () => void;
   onSecondary?: () => void;
   onRequestClose?: () => void;
   destructive?: boolean;
+  testID?: string;
 }
 
 export const Dialog: React.FC<DialogProps> = ({
   visible,
   title,
   message,
+  detail,
+  detailLabel,
   primaryLabel,
   secondaryLabel,
   onPrimary,
   onSecondary,
   onRequestClose,
   destructive = false,
+  testID,
 }) => {
   return (
     <Modal
@@ -40,9 +47,22 @@ export const Dialog: React.FC<DialogProps> = ({
       onRequestClose={onRequestClose ?? onSecondary}
     >
       <Pressable style={styles.scrim} onPress={onRequestClose ?? onSecondary}>
-        <Pressable style={styles.sheet} onPress={() => undefined}>
+        <Pressable
+          style={styles.sheet}
+          onPress={() => undefined}
+          testID={testID}
+          accessibilityRole="summary"
+        >
           <Text style={styles.title}>{title}</Text>
           <Text style={styles.message}>{message}</Text>
+          {detail ? (
+            <View style={styles.detailBox}>
+              {detailLabel ? (
+                <Text style={styles.detailLabel}>{detailLabel}</Text>
+              ) : null}
+              <Text style={styles.detailValue}>{detail}</Text>
+            </View>
+          ) : null}
           <View style={styles.actions}>
             {secondaryLabel ? (
               <TouchableOpacity
@@ -101,7 +121,30 @@ const styles = StyleSheet.create({
   message: {
     ...theme.typography.bodyLarge,
     color: theme.colors.textPrimary,
+    marginBottom: theme.spacing.md,
+    lineHeight: 22,
+  },
+  detailBox: {
+    backgroundColor: theme.colors.warningBackground,
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: '#F5C48A',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     marginBottom: theme.spacing.lg,
+  },
+  detailLabel: {
+    ...theme.typography.caption,
+    color: theme.colors.warning,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    marginBottom: 4,
+  },
+  detailValue: {
+    ...theme.typography.bodyMedium,
+    fontWeight: '700',
+    color: theme.colors.textPrimary,
   },
   actions: {
     flexDirection: 'row',

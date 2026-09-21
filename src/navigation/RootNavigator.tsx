@@ -16,6 +16,9 @@ import { TaxRegistrationScreen } from '../screens/dependent/TaxRegistrationScree
 import { ProofDocumentsScreen } from '../screens/dependent/ProofDocumentsScreen';
 import { DependentListScreen } from '../screens/dependent/DependentListScreen';
 import { ScanIdentityScreen } from '../screens/common/ScanIdentityScreen';
+import { SettlementHomeScreen } from '../screens/settlement/SettlementHomeScreen';
+import { SettlementReviewScreen } from '../screens/settlement/SettlementReviewScreen';
+import { SettlementResultScreen } from '../screens/settlement/SettlementResultScreen';
 import { useAuthStore } from '../stores/useAuthStore';
 import { theme } from '../constants/theme';
 
@@ -59,6 +62,9 @@ export const RootNavigator: React.FC = () => {
         <Stack.Screen name="ProofDocuments" component={ProofDocumentsScreen} />
         <Stack.Screen name="DependentList" component={DependentListScreen} />
         <Stack.Screen name="ScanIdentity" component={ScanIdentityScreen} />
+        <Stack.Screen name="SettlementHome" component={SettlementHomeScreen} />
+        <Stack.Screen name="SettlementReview" component={SettlementReviewScreen} />
+        <Stack.Screen name="SettlementResult" component={SettlementResultScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

@@ -21,6 +21,7 @@ import { theme } from '../../constants/theme';
 import { RootNavigationProp } from '../../navigation/types';
 import { authApi } from '../../api/authApi';
 import { useAuthStore } from '../../stores/useAuthStore';
+import { getLocalApiBaseUrl } from '../../constants/config';
 
 export const LoginScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
@@ -43,6 +44,9 @@ export const LoginScreen: React.FC = () => {
   const onSubmit = async (data: LoginFormData) => {
     setLoading(true);
     try {
+      if (__DEV__) {
+        console.log('[Login] API =', getLocalApiBaseUrl());
+      }
       const response = await authApi.login(data);
 
       if (response && response.data) {
@@ -73,7 +77,7 @@ export const LoginScreen: React.FC = () => {
       } else {
         Alert.alert(
           'Không kết nối được máy chủ',
-          serverMsg || 'Vui lòng kiểm tra API đang chạy rồi thử đăng nhập lại.'
+          `${serverMsg || 'Vui lòng kiểm tra API đang chạy rồi thử đăng nhập lại.'}\n\nAPI: ${getLocalApiBaseUrl()}`
         );
       }
     } finally {

@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 import { apiClient, storageHelper } from './apiClient';
 import { config } from '../constants/config';
+import { groupCodeToTitle } from '../screens/dependent/dependentGroupUtils';
 
 export interface DependentItem {
   id: string;
@@ -82,33 +83,8 @@ export const getDocTypeLabel = (docType: string): string => {
   return found ? found.label : docType;
 };
 
-export const getGroupTitle = (currentGroup?: string): string => {
-  switch (currentGroup) {
-    case 'CHILD_UNDER_18':
-      return 'Nhóm 1: Con chưa thành niên (< 18 tuổi)';
-    case 'CHILD_OVER_18_STUDYING':
-    case 'CHILD_STUDYING':
-      return 'Nhóm 2: Con ≥ 18 tuổi đang theo học ĐH/CĐ';
-    case 'CHILD_OVER_18_DISABLED':
-    case 'CHILD_DISABLED':
-    case 'DISABLED_DEPENDENT':
-      return 'Nhóm 3: Con bị khuyết tật / Mất khả năng LĐ';
-    case 'SPOUSE_RETIRED':
-    case 'SPOUSE_DISABLED':
-    case 'PARENT_RETIRED':
-    case 'PARENT_DISABLED':
-    case 'SPOUSE_OR_PARENTS':
-    case 'PARENT':
-    case 'SPOUSE':
-    case 'PARENT_IN_LAW':
-      return 'Nhóm 4: Vợ / Chồng hoặc Cha / Mẹ';
-    case 'OTHER_HELPLESS':
-    case 'OTHER_DEPENDENT':
-      return 'Nhóm 5: Cá nhân không nơi nương tựa khác';
-    default:
-      return 'Người phụ thuộc';
-  }
-};
+export const getGroupTitle = (currentGroup?: string): string =>
+  groupCodeToTitle(currentGroup);
 
 export const getFullFileUrl = (fileUrl?: string): string => {
   if (!fileUrl) return '';
@@ -118,11 +94,15 @@ export const getFullFileUrl = (fileUrl?: string): string => {
     const cleanPath = url.startsWith('/') ? url : `/${url}`;
     url = `${cleanBase}${cleanPath}`;
   }
-  // Đồng bộ host giữa Android Emulator (10.0.2.2) và Web / iOS / Host (localhost)
-  if (Platform.OS === 'android' && (url.includes('localhost:5023') || url.includes('127.0.0.1:5023'))) {
-    url = url.replace('localhost:5023', '10.0.2.2:5023').replace('127.0.0.1:5023', '10.0.2.2:5023');
-  } else if (Platform.OS !== 'android' && url.includes('10.0.2.2:5023')) {
-    url = url.replace('10.0.2.2:5023', 'localhost:5023');
+  // Map localhost / 10.0.2.2 → host đang dùng trong config (LAN máy thật hoặc emulator)
+  try {
+    const apiHost = new URL(config.apiBaseUrl).host; // host:port
+    url = url
+      .replace(/localhost:5023/gi, apiHost)
+      .replace(/127\.0\.0\.1:5023/gi, apiHost)
+      .replace(/10\.0\.2\.2:5023/gi, apiHost);
+  } catch {
+    /* keep url */
   }
   return url;
 };
@@ -271,7 +251,7 @@ export const dependentDocumentApi = {
     let result: UploadDocumentResponse;
 
     try {
-      // 1. Gửi request multipart lên Backend
+      // Upload + OCR cross-check (TaxAI) thường >15s — đặc biệt ảnh CCCD.
       const response = await apiClient.post<ApiResponse<UploadDocumentResponse>>(
         `/api/v1/dependents/${dependentId}/documents`,
         formData,
@@ -280,15 +260,19 @@ export const dependentDocumentApi = {
             'Content-Type': 'multipart/form-data',
           },
           transformRequest: (data) => data,
+          timeout: 120000,
         }
       );
       result = response.data?.data || response.data;
     } catch (err: any) {
-      const errMsg =
-        err?.response?.data?.message ||
-        err?.response?.data?.errors?.DocType?.[0] ||
-        err?.message ||
-        'Không thể tải lên giấy tờ minh chứng.';
+      const isTimeout =
+        err?.code === 'ECONNABORTED' || /timeout/i.test(String(err?.message || ''));
+      const errMsg = isTimeout
+        ? 'Đã hết thời gian chờ đọc giấy tờ (OCR). Vui lòng thử lại với ảnh rõ hơn hoặc kiểm tra TaxAI đang chạy.'
+        : err?.response?.data?.message ||
+          err?.response?.data?.errors?.DocType?.[0] ||
+          err?.message ||
+          'Không thể tải lên giấy tờ minh chứng.';
       throw new Error(errMsg);
     }
 
@@ -311,7 +295,10 @@ export const dependentDocumentApi = {
       await storageHelper.setItem(STORAGE_DOCS_PREFIX + dependentId, JSON.stringify(updatedDocs));
     } catch {}
 
-    return result;
+    return {
+      ...result,
+      fileUrl: getFullFileUrl(result.fileUrl),
+    };
   },
 
   // Lấy danh sách quy tắc giấy tờ từ Backend API: GET /api/v1/dependent-rules

@@ -21,6 +21,7 @@ import {
   dependentDocumentApi,
   DependentItem,
   getDocTypeLabel,
+  getFullFileUrl,
   getGroupTitle,
 } from '../../api/dependentDocumentApi';
 import { dependentLifecycleApi } from '../../api/dependentLifecycleApi';
@@ -31,6 +32,7 @@ import {
 import { ChangeGroupSheet } from '../../components/common/ChangeGroupSheet';
 import { Dialog } from '../../components/common/Dialog';
 import { groupCodeToIndex } from './dependentGroupUtils';
+import { ageAtEffectiveFrom } from './dependentEligibility';
 import {
   buildManualChangeGroupPlan,
   runManualChangeGroup,
@@ -164,17 +166,32 @@ export const DependentListScreen: React.FC = () => {
     fullName: string;
     relationship: string;
     currentGroup: string;
+    birthDate?: string;
+    effectiveFromMonth?: string;
   }) => {
+    // Đổi nhóm: lọc theo tuổi hôm nay (khớp BE UpdateGroup + reminder), không theo tháng HL đăng ký.
+    let ageAtEffective: number | undefined;
+    if (detail.birthDate) {
+      const iso = detail.birthDate.slice(0, 10);
+      const parts = iso.split('-');
+      if (parts.length === 3) {
+        const now = new Date();
+        const asOfMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        ageAtEffective = ageAtEffectiveFrom(parts[2], parts[1], parts[0], asOfMonth);
+      }
+    }
     const plan = buildManualChangeGroupPlan({
       dependentId: detail.dependentId,
       fullName: detail.fullName,
       relationship: detail.relationship || 'CHILD',
       currentGroup: detail.currentGroup,
+      ageAtEffective,
     });
     if (!plan.canChange) {
       setInfoDialog({
         title: 'Không thể đổi nhóm',
-        message: 'Không còn nhóm điều kiện khác phù hợp với quan hệ hiện tại.',
+        message:
+          'Không còn nhóm điều kiện khác phù hợp với quan hệ và tuổi tại ngày hiệu lực.',
       });
       return;
     }
@@ -601,15 +618,18 @@ export const DependentListScreen: React.FC = () => {
 
                   {selectedDetail.documents && selectedDetail.documents.length > 0 ? (
                     selectedDetail.documents.map((doc: any, index: number) => {
+                      const fullUrl = getFullFileUrl(doc.fileUrl);
                       const isImg =
                         doc.fileMimeType?.includes('image') ||
-                        doc.fileUrl?.match(/\.(png|jpe?g|webp|gif)$/i) ||
-                        !doc.fileUrl?.match(/\.pdf$/i);
-                      const fileName = (doc.fileUrl || '').split('/').pop() || doc.docType;
+                        fullUrl.match(/\.(png|jpe?g|webp|gif)(\?|$)/i) != null ||
+                        !fullUrl.match(/\.pdf(\?|$)/i);
+                      const fileName = fullUrl.split('/').pop()?.split('?')[0] || doc.docType;
 
                       const handleDocPress = () => {
+                        // Đóng modal chi tiết trước — RN không ổn định khi modal lồng nhau.
+                        setIsDetailModalVisible(false);
                         setPreviewDoc({
-                          uri: doc.fileUrl,
+                          uri: fullUrl,
                           title: getDocTypeLabel(doc.docType),
                           docType: doc.docType,
                           fileName,
@@ -628,10 +648,10 @@ export const DependentListScreen: React.FC = () => {
                           accessibilityRole="button"
                           accessibilityLabel={`Xem tài liệu ${getDocTypeLabel(doc.docType)}`}
                         >
-                          {isImg && doc.fileUrl ? (
+                          {isImg && fullUrl ? (
                             <View style={styles.docThumbContainer}>
                               <Image
-                                source={{ uri: doc.fileUrl }}
+                                source={{ uri: fullUrl }}
                                 style={styles.docItemThumb}
                                 resizeMode="cover"
                               />
@@ -690,6 +710,8 @@ export const DependentListScreen: React.FC = () => {
                         fullName: selectedDetail.fullName,
                         relationship: selectedDetail.relationship,
                         currentGroup: selectedDetail.currentGroup,
+                        birthDate: selectedDetail.birthDate,
+                        effectiveFromMonth: selectedDetail.effectiveFromMonth,
                       })
                     }
                     testID="btnChangeDependentGroup"
@@ -757,7 +779,13 @@ export const DependentListScreen: React.FC = () => {
       {/* Modal Xem ảnh / tài liệu minh chứng phóng to full-screen */}
       <DocumentViewerModal
         visible={!!previewDoc}
-        onClose={() => setPreviewDoc(null)}
+        onClose={() => {
+          setPreviewDoc(null);
+          // Mở lại chi tiết NPT sau khi đóng xem ảnh
+          if (selectedDetail) {
+            setIsDetailModalVisible(true);
+          }
+        }}
         document={previewDoc}
       />
 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Modal,
   View,
@@ -42,6 +42,13 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
 }) => {
   const [loading, setLoading] = useState<boolean>(true);
   const [loadError, setLoadError] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (visible && document?.uri) {
+      setLoading(true);
+      setLoadError(false);
+    }
+  }, [visible, document?.uri]);
 
   if (!document) return null;
 

@@ -193,13 +193,8 @@ describe('OCR-11 QA checklist (automated seams)', () => {
   });
 
   describe('Case 6 — NPT + CCCD', () => {
-    it('polls success, fills citizenId, aliases studying group to idx 1', async () => {
-      const taskId = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
-      const createDependentOcrTask = jest.fn().mockResolvedValue({
-        success: true,
-        data: { taskId },
-      });
-      const pollOcrTask = jest.fn().mockResolvedValue({
+    it('sync extract success, fills citizenId, aliases studying group to idx 1', async () => {
+      const extractDirect = jest.fn().mockResolvedValue({
         success: true,
         data: {
           success: true,
@@ -216,8 +211,7 @@ describe('OCR-11 QA checklist (automated seams)', () => {
 
       const extracted = await runDependentOcrExtract({
         frontUri: 'file:///npt.jpg',
-        createDependentOcrTask,
-        pollOcrTask,
+        extractDirect,
       });
       expect(extracted.ok).toBe(true);
       if (!extracted.ok) return;
@@ -240,12 +234,7 @@ describe('OCR-11 QA checklist (automated seams)', () => {
 
   describe('Case 7 — NPT + GKS', () => {
     it('fills birthCertNumber when no 12-digit CCCD', async () => {
-      const taskId = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
-      const createDependentOcrTask = jest.fn().mockResolvedValue({
-        success: true,
-        data: { taskId },
-      });
-      const pollOcrTask = jest.fn().mockResolvedValue({
+      const extractDirect = jest.fn().mockResolvedValue({
         success: true,
         data: {
           success: true,
@@ -263,8 +252,7 @@ describe('OCR-11 QA checklist (automated seams)', () => {
 
       const extracted = await runDependentOcrExtract({
         frontUri: 'file:///gks.jpg',
-        createDependentOcrTask,
-        pollOcrTask,
+        extractDirect,
       });
       expect(extracted.ok).toBe(true);
       if (!extracted.ok) return;
@@ -282,20 +270,16 @@ describe('OCR-11 QA checklist (automated seams)', () => {
     });
   });
 
-  describe('Case 8 — NPT tắt RabbitMQ / poll timeout', () => {
+  describe('Case 8 — NPT request timeout', () => {
     it('returns timeout outcome (dialog + nhập tay path)', async () => {
-      const timeoutErr = new Error('OCR poll timed out');
-      timeoutErr.name = 'OcrPollTimeoutError';
-      const createDependentOcrTask = jest.fn().mockResolvedValue({
-        success: true,
-        data: { taskId: 'dddddddd-dddd-dddd-dddd-dddddddddddd' },
+      const timeoutErr = Object.assign(new Error('timeout of 120000ms exceeded'), {
+        code: 'ECONNABORTED',
       });
-      const pollOcrTask = jest.fn().mockRejectedValue(timeoutErr);
+      const extractDirect = jest.fn().mockRejectedValue(timeoutErr);
 
       const result = await runDependentOcrExtract({
         frontUri: 'file:///npt.jpg',
-        createDependentOcrTask,
-        pollOcrTask,
+        extractDirect,
       });
       expect(result.ok).toBe(false);
       if (result.ok) return;
@@ -304,21 +288,18 @@ describe('OCR-11 QA checklist (automated seams)', () => {
     });
   });
 
-  describe('Case 9 — Hủy giữa uploading/poll', () => {
+  describe('Case 9 — Hủy giữa uploading', () => {
     it('rethrows AbortError so screen returns to source without fill', async () => {
       const abortErr = new Error('Aborted');
       abortErr.name = 'AbortError';
-      const createDependentOcrTask = jest.fn().mockRejectedValue(abortErr);
-      const pollOcrTask = jest.fn();
+      const extractDirect = jest.fn().mockRejectedValue(abortErr);
 
       await expect(
         runDependentOcrExtract({
           frontUri: 'file:///npt.jpg',
-          createDependentOcrTask,
-          pollOcrTask,
+          extractDirect,
         })
       ).rejects.toMatchObject({ name: 'AbortError' });
-      expect(pollOcrTask).not.toHaveBeenCalled();
       expect(createEmptyOcrFields().fullName).toBe('');
     });
   });

@@ -3,13 +3,12 @@ import { runDependentOcrExtract } from './scanIdentityDependentExtract';
 describe('scanIdentityDependentExtract', () => {
   const front = 'file:///front.jpg';
   const back = 'file:///back.jpg';
-  const taskId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
 
-  const pollSuccess = (data: Record<string, unknown>) => ({
+  const directSuccess = (data: Record<string, unknown>) => ({
     success: true,
     message: 'ok',
     data: {
-      taskId,
+      taskId: '00000000-0000-0000-0000-000000000000',
       success: true,
       statusCode: 200,
       message: 'done',
@@ -25,30 +24,21 @@ describe('scanIdentityDependentExtract', () => {
     },
   });
 
-  it('creates task then polls and maps fields including suggestedGroup', async () => {
+  it('calls extractDirect and maps fields including suggestedGroup', async () => {
     const phases: string[] = [];
-    const createDependentOcrTask = jest.fn().mockResolvedValue({
-      success: true,
-      data: { taskId, checkStatusUrl: `/api/v1/ocr/tasks/${taskId}` },
-    });
-    const pollOcrTask = jest.fn().mockResolvedValue(pollSuccess({}));
+    const extractDirect = jest.fn().mockResolvedValue(directSuccess({}));
 
     const result = await runDependentOcrExtract({
       frontUri: front,
       backUri: back,
-      createDependentOcrTask,
-      pollOcrTask,
+      extractDirect,
       onPhase: (p: string) => phases.push(p),
     });
 
-    expect(createDependentOcrTask).toHaveBeenCalledWith(
+    expect(extractDirect).toHaveBeenCalledWith(
       expect.objectContaining({ uri: front }),
       expect.objectContaining({ uri: back }),
       undefined
-    );
-    expect(pollOcrTask).toHaveBeenCalledWith(
-      taskId,
-      expect.objectContaining({ intervalMs: 2000, timeoutMs: 30000 })
     );
     expect(phases).toEqual(['uploading', 'extracting']);
     expect(result).toEqual({
@@ -64,12 +54,8 @@ describe('scanIdentityDependentExtract', () => {
   });
 
   it('maps birth certificate documentNumber when no CCCD', async () => {
-    const createDependentOcrTask = jest.fn().mockResolvedValue({
-      success: true,
-      data: { taskId },
-    });
-    const pollOcrTask = jest.fn().mockResolvedValue(
-      pollSuccess({
+    const extractDirect = jest.fn().mockResolvedValue(
+      directSuccess({
         citizenId: null,
         documentNumber: 'GKS-001',
         birthDate: '2015-06-01',
@@ -79,8 +65,7 @@ describe('scanIdentityDependentExtract', () => {
 
     const result = await runDependentOcrExtract({
       frontUri: front,
-      createDependentOcrTask,
-      pollOcrTask,
+      extractDirect,
     });
 
     expect(result.ok).toBe(true);
@@ -91,11 +76,7 @@ describe('scanIdentityDependentExtract', () => {
   });
 
   it('returns blurry when isReadable is false', async () => {
-    const createDependentOcrTask = jest.fn().mockResolvedValue({
-      success: true,
-      data: { taskId },
-    });
-    const pollOcrTask = jest.fn().mockResolvedValue({
+    const extractDirect = jest.fn().mockResolvedValue({
       success: true,
       data: {
         success: true,
@@ -105,8 +86,7 @@ describe('scanIdentityDependentExtract', () => {
 
     const result = await runDependentOcrExtract({
       frontUri: front,
-      createDependentOcrTask,
-      pollOcrTask,
+      extractDirect,
     });
 
     expect(result).toEqual({
@@ -117,19 +97,14 @@ describe('scanIdentityDependentExtract', () => {
   });
 
   it('returns server when msg.success is false', async () => {
-    const createDependentOcrTask = jest.fn().mockResolvedValue({
-      success: true,
-      data: { taskId },
-    });
-    const pollOcrTask = jest.fn().mockResolvedValue({
+    const extractDirect = jest.fn().mockResolvedValue({
       success: true,
       data: { success: false, message: 'AI lỗi', data: null },
     });
 
     const result = await runDependentOcrExtract({
       frontUri: front,
-      createDependentOcrTask,
-      pollOcrTask,
+      extractDirect,
     });
 
     expect(result).toEqual({
@@ -139,19 +114,15 @@ describe('scanIdentityDependentExtract', () => {
     });
   });
 
-  it('returns timeout when poll throws OcrPollTimeoutError', async () => {
-    const createDependentOcrTask = jest.fn().mockResolvedValue({
-      success: true,
-      data: { taskId },
+  it('returns timeout on axios ECONNABORTED', async () => {
+    const timeoutErr = Object.assign(new Error('timeout of 120000ms exceeded'), {
+      code: 'ECONNABORTED',
     });
-    const timeoutErr = new Error('OCR poll timed out');
-    timeoutErr.name = 'OcrPollTimeoutError';
-    const pollOcrTask = jest.fn().mockRejectedValue(timeoutErr);
+    const extractDirect = jest.fn().mockRejectedValue(timeoutErr);
 
     const result = await runDependentOcrExtract({
       frontUri: front,
-      createDependentOcrTask,
-      pollOcrTask,
+      extractDirect,
     });
 
     expect(result).toEqual({
@@ -164,16 +135,13 @@ describe('scanIdentityDependentExtract', () => {
   it('rethrows AbortError', async () => {
     const abortErr = new Error('Aborted');
     abortErr.name = 'AbortError';
-    const createDependentOcrTask = jest.fn().mockRejectedValue(abortErr);
-    const pollOcrTask = jest.fn();
+    const extractDirect = jest.fn().mockRejectedValue(abortErr);
 
     await expect(
       runDependentOcrExtract({
         frontUri: front,
-        createDependentOcrTask,
-        pollOcrTask,
+        extractDirect,
       })
     ).rejects.toMatchObject({ name: 'AbortError' });
-    expect(pollOcrTask).not.toHaveBeenCalled();
   });
 });

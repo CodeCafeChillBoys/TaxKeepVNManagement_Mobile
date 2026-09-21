@@ -178,13 +178,12 @@ export const ScanIdentityScreen: React.FC = () => {
         return;
       }
 
-      // dependent: upload task → poll (extracting)
+      // dependent: sync direct-extractions (tránh poll RabbitMQ 30s timeout)
       const result = await runDependentOcrExtract({
         frontUri: front,
         backUri: back,
         signal: controller.signal,
-        createDependentOcrTask: ocrApi.createDependentOcrTask,
-        pollOcrTask: ocrApi.pollOcrTask,
+        extractDirect: ocrApi.extractDirect,
         onPhase: (phase) => {
           if (!controller.signal.aborted) setProcessPhase(phase);
         },

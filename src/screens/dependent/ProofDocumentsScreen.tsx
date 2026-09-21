@@ -619,9 +619,9 @@ export const ProofDocumentsScreen: React.FC = () => {
 
       Alert.alert('Thành công', msg, [
         {
-          text: 'Xem danh sách người phụ thuộc',
+          text: 'Về trang chủ',
           onPress: () => {
-            navigation.navigate('DependentList');
+            navigation.reset({ index: 0, routes: [{ name: 'Home' }] });
           },
         },
       ]);
@@ -669,10 +669,13 @@ export const ProofDocumentsScreen: React.FC = () => {
         ? 'Tải lên thành công! Hồ sơ minh chứng người phụ thuộc đã đủ điều kiện giảm trừ gia cảnh.'
         : 'Tải lên thành công! Ảnh minh chứng đã được lưu trữ bảo mật trên hệ thống Tổng cục Thuế.';
 
+      const goHome = () => navigation.reset({ index: 0, routes: [{ name: 'Home' }] });
+
       if (Platform.OS === 'web') {
         window.alert(msg);
+        goHome();
       } else {
-        Alert.alert('Thành công', msg);
+        Alert.alert('Thành công', msg, [{ text: 'Về trang chủ', onPress: goHome }]);
       }
     } catch (err: any) {
       const errMsg = err.response?.data?.message || 'Không thể tải lên tệp. Vui lòng thử lại sau.';

@@ -5,6 +5,7 @@ import type {
 } from '../../api/dependentLifecycleApi';
 import {
   groupCodeToIndex,
+  groupCodeToTitle,
   mapDependentLifecycleError,
 } from '../dependent/dependentGroupUtils';
 
@@ -17,6 +18,7 @@ export type HomeReminderInput = {
 export type HomeReminderConfirmPlan = {
   dependentId: string;
   newGroup: string;
+  newGroupLabel: string;
   confirmTitle: string;
   confirmMessage: string;
 };
@@ -42,11 +44,13 @@ export type UpdateDependentGroupFn = (
 export function buildHomeReminderChangeGroupPlan(
   reminder: HomeReminderInput
 ): HomeReminderConfirmPlan {
+  const newGroupLabel = groupCodeToTitle(reminder.recommendedGroup);
   return {
     dependentId: reminder.dependentId,
     newGroup: reminder.recommendedGroup,
+    newGroupLabel,
     confirmTitle: 'Xác nhận chuyển nhóm',
-    confirmMessage: `Chuyển người phụ thuộc "${reminder.fullName}" sang nhóm ${reminder.recommendedGroup}? Hồ sơ sẽ cần bổ sung giấy tờ theo nhóm mới.`,
+    confirmMessage: `Chuyển người phụ thuộc “${reminder.fullName}” sang nhóm mới? Hồ sơ sẽ cần bổ sung giấy tờ theo nhóm này.`,
   };
 }
 
@@ -78,6 +82,25 @@ export async function runHomeReminderChangeGroup(options: {
       },
     };
   } catch (error: unknown) {
+    // Đã ở nhóm đích (xác nhận lần 2 / race) → vẫn mở upload thay vì báo lỗi.
+    const code =
+      error &&
+      typeof error === 'object' &&
+      (error as { response?: { data?: { errors?: { errorCode?: string } } } }).response?.data
+        ?.errors?.errorCode;
+    if (code === 'SAME_GROUP') {
+      return {
+        ok: true,
+        navigation: {
+          screen: 'ProofDocuments',
+          params: {
+            dependentId,
+            groupIndex: groupCodeToIndex(newGroup),
+            requiredDocuments: ['STUDENT_CARD'],
+          },
+        },
+      };
+    }
     return { ok: false, message: mapDependentLifecycleError(error) };
   }
 }

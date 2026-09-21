@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 export const theme = {
   colors: {
     // Primary palette
@@ -84,19 +85,29 @@ export const theme = {
   },
   
   shadows: {
-    card: {
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.06,
-      shadowRadius: 6,
-      elevation: 2,
-    },
-    button: {
-      shadowColor: '#8B1E1E',
-      shadowOffset: { width: 0, height: 3 },
-      shadowOpacity: 0.2,
-      shadowRadius: 5,
-      elevation: 3,
-    },
+    card: Platform.select({
+      web: {
+        boxShadow: '0px 2px 6px rgba(0, 0, 0, 0.06)',
+      },
+      default: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.06,
+        shadowRadius: 6,
+        elevation: 2,
+      },
+    }),
+    button: Platform.select({
+      web: {
+        boxShadow: '0px 3px 5px rgba(139, 30, 30, 0.2)',
+      },
+      default: {
+        shadowColor: '#8B1E1E',
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.2,
+        shadowRadius: 5,
+        elevation: 3,
+      },
+    }),
   },
 };

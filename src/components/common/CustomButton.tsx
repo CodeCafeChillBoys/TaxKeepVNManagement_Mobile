@@ -6,6 +6,7 @@ import {
   ActivityIndicator,
   ViewStyle,
   TextStyle,
+  Platform,
 } from 'react-native';
 import { theme } from '../../constants/theme';
 
@@ -126,8 +127,9 @@ const styles = StyleSheet.create({
   buttonDisabled: {
     backgroundColor: '#CCCCCC',
     borderColor: '#CCCCCC',
-    shadowOpacity: 0,
-    elevation: 0,
+    ...(Platform.OS === 'web'
+      ? { boxShadow: 'none' }
+      : { shadowOpacity: 0, elevation: 0 }),
   },
   text: {
     ...theme.typography.titleMedium,

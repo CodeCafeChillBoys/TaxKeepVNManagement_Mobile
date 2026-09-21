@@ -5,8 +5,7 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  Pressable,
-} from 'react-native';
+  Pressable, Platform} from 'react-native';
 import { theme } from '../../constants/theme';
 
 interface DialogProps {
@@ -106,11 +105,15 @@ const styles = StyleSheet.create({
     paddingBottom: theme.spacing.md,
     borderWidth: 1,
     borderColor: theme.colors.border,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 10,
-    elevation: 8,
+    ...(Platform.OS === 'web'
+      ? { boxShadow: '0px 4px 10px rgba(0, 0, 0, 0.2)' }
+      : {
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.2,
+          shadowRadius: 10,
+          elevation: 8,
+        }),
   },
   title: {
     ...theme.typography.titleMedium,

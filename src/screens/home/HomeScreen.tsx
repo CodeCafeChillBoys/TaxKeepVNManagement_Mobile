@@ -390,7 +390,22 @@ export const HomeScreen: React.FC = () => {
             <Text style={styles.gridSubtitle}>Nguồn thu nhập</Text>
           </TouchableOpacity>
 
-          {/* Tiện ích 6: Quyết toán thuế (Flow 03) */}
+          {/* Tiện ích 6: Hóa đơn & Chi phí trừ thuế (SPEC_EXPENSE_OCR) */}
+          <TouchableOpacity
+            style={styles.gridCard}
+            onPress={() => navigation.navigate('ExpenseList')}
+            accessibilityRole="button"
+            accessibilityLabel="Hóa đơn & Chi phí trừ thuế"
+            testID="homeExpenseListCard"
+          >
+            <View style={styles.gridIconCircle}>
+              <Ionicons name="receipt-outline" size={22} color={theme.colors.primary} />
+            </View>
+            <Text style={styles.gridTitle}>Hóa đơn chi phí</Text>
+            <Text style={styles.gridSubtitle}>Đã duyệt & Upload</Text>
+          </TouchableOpacity>
+
+          {/* Tiện ích 7: Quyết toán thuế (Flow 03) */}
           <TouchableOpacity
             style={styles.gridCard}
             onPress={() => navigation.navigate('SettlementHome')}

@@ -19,6 +19,9 @@ import { ScanIdentityScreen } from '../screens/common/ScanIdentityScreen';
 import { SettlementHomeScreen } from '../screens/settlement/SettlementHomeScreen';
 import { SettlementReviewScreen } from '../screens/settlement/SettlementReviewScreen';
 import { SettlementResultScreen } from '../screens/settlement/SettlementResultScreen';
+import { ExpenseListScreen } from '../screens/expense/ExpenseListScreen';
+import { ExpenseUploadScreen } from '../screens/expense/ExpenseUploadScreen';
+import { ExpenseReviewScreen } from '../screens/expense/ExpenseReviewScreen';
 import { useAuthStore } from '../stores/useAuthStore';
 import { theme } from '../constants/theme';
 
@@ -40,7 +43,13 @@ export const RootNavigator: React.FC = () => {
   }
 
   return (
-    <NavigationContainer>
+    <NavigationContainer
+      onStateChange={() => {
+        if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
+          document.activeElement.blur();
+        }
+      }}
+    >
       <Stack.Navigator
         initialRouteName={isAuthenticated ? 'Home' : 'Login'}
         screenOptions={{
@@ -65,6 +74,9 @@ export const RootNavigator: React.FC = () => {
         <Stack.Screen name="SettlementHome" component={SettlementHomeScreen} />
         <Stack.Screen name="SettlementReview" component={SettlementReviewScreen} />
         <Stack.Screen name="SettlementResult" component={SettlementResultScreen} />
+        <Stack.Screen name="ExpenseList" component={ExpenseListScreen} />
+        <Stack.Screen name="ExpenseUpload" component={ExpenseUploadScreen} />
+        <Stack.Screen name="ExpenseReview" component={ExpenseReviewScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

@@ -38,6 +38,20 @@ describe('dependentGroupUtils', () => {
     it('returns empty when OTHER_DEPENDENT already OTHER_HELPLESS', () => {
       expect(filterChangeGroupOptions('OTHER_DEPENDENT', 'OTHER_HELPLESS')).toEqual([]);
     });
+
+    it('does not filter by age (FE age validate off)', () => {
+      expect(filterChangeGroupOptions('CHILD', 'CHILD_OVER_18_DISABLED', 10)).toEqual([
+        'CHILD_UNDER_18',
+        'CHILD_OVER_18_STUDYING',
+      ]);
+      expect(filterChangeGroupOptions('CHILD', 'CHILD_UNDER_18', 30)).toEqual([
+        'CHILD_OVER_18_STUDYING',
+        'CHILD_OVER_18_DISABLED',
+      ]);
+      expect(filterChangeGroupOptions('PARENT', 'PARENT_RETIRED', 17)).toEqual([
+        'PARENT_DISABLED',
+      ]);
+    });
   });
 
   describe('groupCodeToIndex', () => {
@@ -72,7 +86,7 @@ describe('dependentGroupUtils', () => {
       );
     });
 
-    it('maps INVALID_GROUP and GROUP_RELATIONSHIP_MISMATCH', () => {
+    it('maps INVALID_GROUP, GROUP_RELATIONSHIP_MISMATCH, GROUP_AGE_MISMATCH', () => {
       expect(
         mapDependentLifecycleError({
           response: {
@@ -89,6 +103,14 @@ describe('dependentGroupUtils', () => {
           },
         })
       ).toBe('Nhóm không khớp quan hệ hiện tại.');
+      expect(
+        mapDependentLifecycleError({
+          response: {
+            status: 400,
+            data: { errors: { errorCode: 'GROUP_AGE_MISMATCH' } },
+          },
+        })
+      ).toMatch(/tuổi.*hiệu lực/i);
     });
 
     it('maps 403, 404, and network', () => {

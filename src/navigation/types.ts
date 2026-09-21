@@ -38,6 +38,9 @@ export type RootStackParamList = {
   ChangePassword: undefined;
   LawConditions: undefined;
   DependentList: undefined;
+  SettlementHome: { taxYear?: number } | undefined;
+  SettlementReview: { dossierId: string };
+  SettlementResult: { dossierId: string };
 };
 
 export type RootNavigationProp = NativeStackNavigationProp<RootStackParamList>;

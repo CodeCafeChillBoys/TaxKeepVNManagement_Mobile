@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -22,48 +22,19 @@ import {
   buildDependentScanParams,
   isTaxRegistrationFormDirty,
 } from './applyTaxRegistrationOcrFill';
-
-// Danh sách mối quan hệ chuẩn thuế TNCN
-const RELATIONSHIP_OPTIONS = [
-  { value: 'CHILD', label: 'Con đẻ, con nuôi, con riêng' },
-  { value: 'SPOUSE', label: 'Vợ hoặc Chồng' },
-  { value: 'PARENT', label: 'Cha mẹ đẻ, cha mẹ vợ/chồng, cha mẹ nuôi' },
-  { value: 'OTHER_DEPENDENT', label: 'Cá nhân khác không nơi nương tựa' },
-];
-
-// 5 Nhóm điều kiện đăng ký theo Luật Thuế TNCN (Figma iPhone 17 - 14)
-const CONDITION_GROUP_OPTIONS = [
-  {
-    index: 0,
-    code: 'CHILD_UNDER_18',
-    title: 'Nhóm 1: Con dưới 18 tuổi',
-    subtitle: 'Độ tuổi tính theo ngày sinh < 18 tuổi.',
-  },
-  {
-    index: 1,
-    code: 'CHILD_OVER_18_STUDYING',
-    title: 'Nhóm 2: Con từ 18 tuổi trở lên đang đi học',
-    subtitle: 'Độ tuổi < 18 tuổi và còn đang theo học các bậc giáo dục.',
-  },
-  {
-    index: 2,
-    code: 'DISABLED_DEPENDENT',
-    title: 'Nhóm 3: Con bị khuyết tật / Mất khả năng lao động',
-    subtitle: 'Con đủ 18 tuổi trở lên nhưng không có khả năng tự lao động.',
-  },
-  {
-    index: 3,
-    code: 'SPOUSE_OR_PARENTS',
-    title: 'Nhóm 4: Vợ / Chồng hoặc Cha / Mẹ',
-    subtitle: 'Vợ, chồng, cha mẹ đẻ, cha mẹ vợ/chồng hợp pháp.',
-  },
-  {
-    index: 4,
-    code: 'OTHER_DEPENDENT',
-    title: 'Nhóm 5: Cá nhân không nơi nương tựa khác',
-    subtitle: 'Anh, chị, em ruột, ông bà, cô dì chú bác, cháu ruột.',
-  },
-];
+import {
+  ageAtEffectiveFrom,
+  CONDITION_GROUP_OPTIONS,
+  ELIGIBILITY_CLEARED_TOAST,
+  filterEligibleGroups,
+  filterEligibleRelationships,
+  isAge14OrOlderAtEffective,
+  isGroupEligibleFor,
+  mapUiGroupToBackendEnum,
+  reconcileEligibilitySelection,
+  RELATIONSHIP_OPTIONS,
+  sanitizeOcrEligibility,
+} from './dependentEligibility';
 
 // Mảng ngày, tháng, năm
 const DAYS = Array.from({ length: 31 }, (_, i) => String(i + 1).padStart(2, '0'));
@@ -91,24 +62,6 @@ export const TaxRegistrationScreen: React.FC = () => {
   const [birthMonth, setBirthMonth] = useState<string>('06');
   const [birthYear, setBirthYear] = useState<string>('2018');
 
-  // Tính tuổi dựa trên ngày sinh đã chọn
-  const calculateAge = (day: string, month: string, year: string): number => {
-    const bDay = parseInt(day, 10);
-    const bMonth = parseInt(month, 10);
-    const bYear = parseInt(year, 10);
-    if (isNaN(bDay) || isNaN(bMonth) || isNaN(bYear)) return 0;
-    const today = new Date();
-    let age = today.getFullYear() - bYear;
-    const m = today.getMonth() + 1 - bMonth;
-    if (m < 0 || (m === 0 && today.getDate() < bDay)) {
-      age--;
-    }
-    return age;
-  };
-
-  const currentAge = calculateAge(birthDay, birthMonth, birthYear);
-  const isAge14OrOlder = currentAge >= 14;
-
   // 4. Mối quan hệ với người nộp thuế
   const [relationship, setRelationship] = useState<string>('CHILD');
 
@@ -123,8 +76,41 @@ export const TaxRegistrationScreen: React.FC = () => {
   const [endMonth, setEndMonth] = useState<string>('12');
   const [endYear, setEndYear] = useState<string>(String(currentYear));
 
-  // 7. Điều kiện đăng kí người phụ thuộc (Nhóm 1 đến Nhóm 5)
+  // 7. Điều kiện đăng kí người phụ thuộc (Nhóm 1 đến Nhóm 5); -1 = chưa chọn
   const [selectedGroupIdx, setSelectedGroupIdx] = useState<number>(0);
+
+  const effectiveFromMonth = `${startYear}-${startMonth}`;
+  const ageAtEffective = useMemo(
+    () => ageAtEffectiveFrom(birthDay, birthMonth, birthYear, effectiveFromMonth),
+    [birthDay, birthMonth, birthYear, effectiveFromMonth]
+  );
+  const isAge14OrOlder = isAge14OrOlderAtEffective(ageAtEffective);
+
+  const eligibleRelationships = useMemo(
+    () => filterEligibleRelationships(ageAtEffective),
+    [ageAtEffective]
+  );
+  const eligibleGroups = useMemo(
+    () => filterEligibleGroups(relationship || 'CHILD', ageAtEffective),
+    [relationship, ageAtEffective]
+  );
+
+  const skipReconcileToastRef = useRef(true);
+
+  // Q6: đổi DOB / hiệu lực / quan hệ → xóa lựa chọn không còn hợp lệ
+  useEffect(() => {
+    const { next, clearedGroup, clearedRelationship } = reconcileEligibilitySelection(
+      { relationship, selectedGroupIdx },
+      ageAtEffective
+    );
+    if (next.relationship !== relationship) setRelationship(next.relationship);
+    if (next.selectedGroupIdx !== selectedGroupIdx) setSelectedGroupIdx(next.selectedGroupIdx);
+    if (!skipReconcileToastRef.current && (clearedGroup || clearedRelationship)) {
+      Alert.alert('Cần chọn lại', ELIGIBILITY_CLEARED_TOAST);
+    }
+    skipReconcileToastRef.current = false;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- chỉ khi tuổi/hiệu lực đổi; quan hệ/nhóm tự reconcile
+  }, [ageAtEffective]);
 
   // Modals selector
   const [activePicker, setActivePicker] = useState<{
@@ -139,19 +125,42 @@ export const TaxRegistrationScreen: React.FC = () => {
 
     const plan = applyTaxRegistrationOcrFill(fill);
     const { patch } = plan;
+    const nextBirthDay = patch.birthDay ?? birthDay;
+    const nextBirthMonth = patch.birthMonth ?? birthMonth;
+    const nextBirthYear = patch.birthYear ?? birthYear;
+    const age = ageAtEffectiveFrom(
+      nextBirthDay,
+      nextBirthMonth,
+      nextBirthYear,
+      effectiveFromMonth
+    );
+    const sanitized = sanitizeOcrEligibility(
+      {
+        relationship: patch.relationship,
+        selectedGroupIdx: patch.selectedGroupIdx,
+      },
+      age
+    );
+
+    skipReconcileToastRef.current = true;
     setFullName(patch.fullName);
     if (patch.birthDay) setBirthDay(patch.birthDay);
     if (patch.birthMonth) setBirthMonth(patch.birthMonth);
     if (patch.birthYear) setBirthYear(patch.birthYear);
     if (patch.citizenId !== undefined) setCitizenId(patch.citizenId);
     if (patch.birthCertNumber !== undefined) setBirthCertNumber(patch.birthCertNumber);
-    if (typeof patch.selectedGroupIdx === 'number') {
-      setSelectedGroupIdx(patch.selectedGroupIdx);
+    if (sanitized.relationship) setRelationship(sanitized.relationship);
+    if (typeof sanitized.selectedGroupIdx === 'number') {
+      setSelectedGroupIdx(sanitized.selectedGroupIdx);
+    } else if (sanitized.dropped) {
+      setSelectedGroupIdx(-1);
     }
-    if (patch.relationship) setRelationship(patch.relationship);
 
     navigation.setParams({ ocrDependentFill: undefined });
-    Alert.alert(plan.alertTitle, plan.alertMessage);
+    const msg = sanitized.dropped
+      ? `${plan.alertMessage}\n\n${ELIGIBILITY_CLEARED_TOAST}`
+      : plan.alertMessage;
+    Alert.alert(plan.alertTitle, msg);
   }, [route.params?.ocrDependentFill]);
 
   // Xử lý nút Tiếp tục: validate & điều hướng sang màn Ảnh minh chứng của nhóm tương ứng
@@ -161,9 +170,22 @@ export const TaxRegistrationScreen: React.FC = () => {
       return;
     }
 
+    if (!relationship) {
+      Alert.alert('Thiếu thông tin', 'Vui lòng chọn mối quan hệ với người nộp thuế.');
+      return;
+    }
+
+    if (selectedGroupIdx < 0 || !isGroupEligibleFor(selectedGroupIdx, relationship, ageAtEffective)) {
+      Alert.alert(
+        'Nhóm điều kiện không hợp lệ',
+        'Vui lòng chọn nhóm điều kiện phù hợp với ngày sinh và ngày bắt đầu hiệu lực.'
+      );
+      return;
+    }
+
     if (isAge14OrOlder) {
       if (!citizenId.trim()) {
-        Alert.alert('Thiếu thông tin', 'Người phụ thuộc từ đủ 14 tuổi trở lên bắt buộc phải có Căn cước công dân.');
+        Alert.alert('Thiếu thông tin', 'Người phụ thuộc từ đủ 14 tuổi trở lên (tại ngày hiệu lực) bắt buộc phải có Căn cước công dân.');
         return;
       }
       if (citizenId.trim().length !== 12 && citizenId.trim().length !== 9) {
@@ -178,29 +200,15 @@ export const TaxRegistrationScreen: React.FC = () => {
     }
 
     const birthDate = `${birthYear}-${birthMonth}-${birthDay}`;
-    const effectiveFrom = `${startYear}-${startMonth}`;
+    const effectiveFrom = effectiveFromMonth;
     const effectiveTo = hasEndDate ? `${endYear}-${endMonth}` : `${startYear}-12`;
 
-    // Map relationship và groupCode chuẩn với Backend enum
-    let relCode = relationship || 'CHILD';
-    let groupEnumCode = 'CHILD_UNDER_18';
-
-    if (selectedGroupIdx === 0) {
-      relCode = 'CHILD';
-      groupEnumCode = 'CHILD_UNDER_18';
-    } else if (selectedGroupIdx === 1) {
-      relCode = 'CHILD';
-      groupEnumCode = 'CHILD_OVER_18_STUDYING';
-    } else if (selectedGroupIdx === 2) {
-      relCode = 'CHILD';
-      groupEnumCode = 'CHILD_OVER_18_DISABLED';
-    } else if (selectedGroupIdx === 3) {
-      if (relCode !== 'SPOUSE' && relCode !== 'PARENT') relCode = 'PARENT';
-      groupEnumCode = relCode === 'SPOUSE' ? 'SPOUSE_RETIRED' : 'PARENT_RETIRED';
-    } else if (selectedGroupIdx === 4) {
-      relCode = 'OTHER_DEPENDENT';
-      groupEnumCode = 'OTHER_HELPLESS';
+    const mapped = mapUiGroupToBackendEnum(selectedGroupIdx, relationship);
+    if (!mapped) {
+      Alert.alert('Nhóm điều kiện không hợp lệ', 'Quan hệ và nhóm không khớp. Vui lòng chọn lại.');
+      return;
     }
+    const { relationship: relCode, currentGroup: groupEnumCode } = mapped;
 
     // Gọi API Backend POST /api/v1/dependents để tạo người phụ thuộc trước khi sang upload tài liệu
     let createdDependentId = '';
@@ -275,6 +283,10 @@ export const TaxRegistrationScreen: React.FC = () => {
         break;
       case 'relationship':
         setRelationship(val);
+        // Đổi quan hệ → nếu nhóm hiện tại không còn hợp lệ thì xóa
+        if (!isGroupEligibleFor(selectedGroupIdx, val, ageAtEffective)) {
+          setSelectedGroupIdx(-1);
+        }
         break;
       case 'startDay':
         setStartDay(val);
@@ -303,7 +315,11 @@ export const TaxRegistrationScreen: React.FC = () => {
 
   const selectedRelLabel =
     RELATIONSHIP_OPTIONS.find((r) => r.value === relationship)?.label || 'Chọn mối quan hệ';
-  const selectedGroupTitle = CONDITION_GROUP_OPTIONS[selectedGroupIdx].title;
+  const selectedGroupTitle =
+    selectedGroupIdx >= 0
+      ? CONDITION_GROUP_OPTIONS.find((g) => g.index === selectedGroupIdx)?.title ??
+        'Chọn nhóm điều kiện'
+      : 'Chọn nhóm điều kiện';
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -375,7 +391,7 @@ export const TaxRegistrationScreen: React.FC = () => {
             </Text>
             <View style={[styles.ageBadge, isAge14OrOlder ? styles.ageBadgeAdult : styles.ageBadgeChild]}>
               <Text style={[styles.ageBadgeText, isAge14OrOlder ? styles.ageBadgeTextAdult : styles.ageBadgeTextChild]}>
-                {currentAge} tuổi ({isAge14OrOlder ? '≥ 14 tuổi' : '< 14 tuổi'})
+                {ageAtEffective} tuổi tại hiệu lực ({isAge14OrOlder ? '≥ 14 tuổi' : '< 14 tuổi'})
               </Text>
             </View>
           </View>
@@ -476,7 +492,11 @@ export const TaxRegistrationScreen: React.FC = () => {
           <TouchableOpacity
             style={styles.dropdownSelector}
             onPress={() =>
-              openPicker('Mối quan hệ với người nộp thuế', 'relationship', RELATIONSHIP_OPTIONS)
+              openPicker(
+                'Mối quan hệ với người nộp thuế',
+                'relationship',
+                eligibleRelationships.map((r) => ({ value: r.value, label: r.label }))
+              )
             }
             testID="selectRelationship"
           >
@@ -629,7 +649,7 @@ export const TaxRegistrationScreen: React.FC = () => {
               openPicker(
                 'Chọn nhóm điều kiện đăng ký',
                 'conditionGroup',
-                CONDITION_GROUP_OPTIONS.map((g) => ({ value: g.index, label: g.title }))
+                eligibleGroups.map((g) => ({ value: g.index, label: g.title }))
               )
             }
             testID="selectConditionGroup"

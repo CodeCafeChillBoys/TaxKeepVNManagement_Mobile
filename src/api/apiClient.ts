@@ -1,7 +1,7 @@
 import axios from 'axios';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
-import { config } from '../constants/config';
+import { config, getLocalApiBaseUrl } from '../constants/config';
 
 // Hỗ trợ lưu token an toàn: trên thiết bị dùng SecureStore, trên Web dùng localStorage
 export const storageHelper = {
@@ -38,16 +38,16 @@ export const storageHelper = {
 };
 
 export const apiClient = axios.create({
-  baseURL: config.apiBaseUrl,
   headers: {
     'Content-Type': 'application/json',
   },
   timeout: 15000,
 });
 
-// Request Interceptor: Đính kèm Bearer Token nếu có
+// Request Interceptor: baseURL động (LAN máy thật) + Bearer Token
 apiClient.interceptors.request.use(
   async (reqConfig) => {
+    reqConfig.baseURL = getLocalApiBaseUrl();
     const token = await storageHelper.getItem(config.storageKeys.accessToken);
     if (token && reqConfig.headers) {
       reqConfig.headers.Authorization = `Bearer ${token}`;
@@ -62,7 +62,6 @@ apiClient.interceptors.response.use(
   (response) => response,
   async (error) => {
     if (error.response?.status === 401) {
-      // Hết phiên đăng nhập -> Xoá token
       await storageHelper.removeItem(config.storageKeys.accessToken);
       await storageHelper.removeItem(config.storageKeys.refreshToken);
       await storageHelper.removeItem(config.storageKeys.userData);

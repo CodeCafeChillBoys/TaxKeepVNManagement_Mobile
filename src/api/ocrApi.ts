@@ -105,7 +105,8 @@ export function buildOcrFormData(file: OcrImagePart, backFile?: OcrImagePart): F
 
 function multipartConfig(signal?: AbortSignal): AxiosRequestConfig {
   return {
-    timeout: 30000,
+    // Gemini OCR 2 mặt thường 20–60s; 30s cũ gây timeout trên máy thật
+    timeout: 120000,
     signal,
     // Bỏ default application/json của apiClient — để runtime gắn multipart boundary
     headers: { 'Content-Type': undefined as unknown as string },

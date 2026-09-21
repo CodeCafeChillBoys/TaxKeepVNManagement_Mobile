@@ -23,15 +23,30 @@ import { notificationApi, NotificationItem } from '../../api/notificationApi';
 import {
   buildHomeReminderChangeGroupPlan,
   runHomeReminderChangeGroup,
+  type HomeReminderConfirmPlan,
 } from './homeReminderChangeGroup';
+import {
+  buildPendingUploadAgeReminders,
+  isReminderAwaitingUploadOnly,
+  mergeAgeTransitionReminders,
+  proofNavFromAgeReminder,
+} from './homeAgeReminderBanner';
+import { Dialog } from '../../components/common/Dialog';
 
 export const HomeScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
   const { user, logout } = useAuthStore();
 
   // Nhắc nhở chuyển nhóm tuổi NPT: GET /api/v1/dependents/reminders/age-transitions
+  // + NPT đã PATCH nhóm 2 nhưng chưa upload (giữ banner đến khi đủ hồ sơ)
   const [reminders, setReminders] = useState<AgeReminderItemDto[]>([]);
   const [reminderPatching, setReminderPatching] = useState(false);
+  const [changeGroupConfirm, setChangeGroupConfirm] =
+    useState<HomeReminderConfirmPlan | null>(null);
+  const [infoDialog, setInfoDialog] = useState<{
+    title: string;
+    message: string;
+  } | null>(null);
 
   // Thông báo hệ thống: GET /api/v1/notifications & PATCH /api/v1/notifications/{id}/read
   const [unreadCount, setUnreadCount] = useState<number>(0);
@@ -44,11 +59,13 @@ export const HomeScreen: React.FC = () => {
   // Tải dữ liệu nhắc nhở và thông báo khi màn hình hiển thị
   const fetchDashboardData = useCallback(async () => {
     try {
-      // 1. Gọi API nhắc nhở chuyển nhóm tuổi NPT (Điều 4.1.a & Điều 4.1.đ TT 111/2013/TT-BTC)
-      const remindersData = await dependentDocumentApi.getAgeTransitionReminders();
-      setReminders(remindersData);
+      const [remindersData, dependents] = await Promise.all([
+        dependentDocumentApi.getAgeTransitionReminders(),
+        dependentDocumentApi.getDependents({ size: 50 }),
+      ]);
+      const pendingUpload = buildPendingUploadAgeReminders(dependents);
+      setReminders(mergeAgeTransitionReminders(remindersData, pendingUpload));
 
-      // 2. Lấy số lượng thông báo chưa đọc hiển thị badge
       const count = await notificationApi.getUnreadCount();
       setUnreadCount(count);
     } catch (err) {
@@ -145,41 +162,43 @@ export const HomeScreen: React.FC = () => {
     ]);
   };
 
-  /** NPT-03: confirm → PATCH /group → ProofDocuments (không skip PATCH). */
+  /** NPT-03: chưa đổi nhóm → confirm PATCH; đã đổi nhưng chưa upload → thẳng ProofDocuments. */
   const handleReminderUploadPress = (item: AgeReminderItemDto) => {
     if (reminderPatching) return;
-    const plan = buildHomeReminderChangeGroupPlan({
-      dependentId: item.dependentId,
-      fullName: item.fullName,
-      recommendedGroup: item.recommendedGroup || 'CHILD_OVER_18_STUDYING',
-    });
+    if (isReminderAwaitingUploadOnly(item)) {
+      const nav = proofNavFromAgeReminder(item);
+      navigation.navigate(nav.screen, nav.params);
+      return;
+    }
+    setChangeGroupConfirm(
+      buildHomeReminderChangeGroupPlan({
+        dependentId: item.dependentId,
+        fullName: item.fullName,
+        recommendedGroup: item.recommendedGroup || 'CHILD_OVER_18_STUDYING',
+      })
+    );
+  };
 
-    Alert.alert(plan.confirmTitle, plan.confirmMessage, [
-      { text: 'Hủy', style: 'cancel' },
-      {
-        text: 'Xác nhận',
-        onPress: async () => {
-          setReminderPatching(true);
-          try {
-            const result = await runHomeReminderChangeGroup({
-              dependentId: plan.dependentId,
-              newGroup: plan.newGroup,
-              updateDependentGroup: dependentLifecycleApi.updateDependentGroup,
-            });
-            if (!result.ok) {
-              Alert.alert('Không thể chuyển nhóm', result.message);
-              return;
-            }
-            navigation.navigate(
-              result.navigation.screen,
-              result.navigation.params
-            );
-          } finally {
-            setReminderPatching(false);
-          }
-        },
-      },
-    ]);
+  const handleConfirmReminderChangeGroup = async () => {
+    if (!changeGroupConfirm || reminderPatching) return;
+    const plan = changeGroupConfirm;
+    setChangeGroupConfirm(null);
+    setReminderPatching(true);
+    try {
+      const result = await runHomeReminderChangeGroup({
+        dependentId: plan.dependentId,
+        newGroup: plan.newGroup,
+        updateDependentGroup: dependentLifecycleApi.updateDependentGroup,
+      });
+      if (!result.ok) {
+        setInfoDialog({ title: 'Không thể chuyển nhóm', message: result.message });
+        return;
+      }
+      // Giữ banner: không xóa reminders local — khi về Home sẽ merge NPT studying chưa upload.
+      navigation.navigate(result.navigation.screen, result.navigation.params);
+    } finally {
+      setReminderPatching(false);
+    }
   };
 
   return (
@@ -370,6 +389,21 @@ export const HomeScreen: React.FC = () => {
             <Text style={styles.gridTitle}>Nơi chi trả</Text>
             <Text style={styles.gridSubtitle}>Nguồn thu nhập</Text>
           </TouchableOpacity>
+
+          {/* Tiện ích 6: Quyết toán thuế (Flow 03) */}
+          <TouchableOpacity
+            style={styles.gridCard}
+            onPress={() => navigation.navigate('SettlementHome')}
+            accessibilityRole="button"
+            accessibilityLabel="Quyết toán thuế"
+            testID="homeSettlementCard"
+          >
+            <View style={styles.gridIconCircle}>
+              <Ionicons name="calculator-outline" size={22} color={theme.colors.primary} />
+            </View>
+            <Text style={styles.gridTitle}>Quyết toán thuế</Text>
+            <Text style={styles.gridSubtitle}>Lập hồ sơ TNCN</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Thông tin tài khoản hiện tại */}
@@ -557,6 +591,31 @@ export const HomeScreen: React.FC = () => {
           )}
         </SafeAreaView>
       </Modal>
+
+      <Dialog
+        visible={!!changeGroupConfirm}
+        title={changeGroupConfirm?.confirmTitle ?? ''}
+        message={changeGroupConfirm?.confirmMessage ?? ''}
+        detailLabel="Nhóm đích"
+        detail={changeGroupConfirm?.newGroupLabel}
+        primaryLabel="Xác nhận"
+        secondaryLabel="Hủy"
+        onPrimary={() => {
+          void handleConfirmReminderChangeGroup();
+        }}
+        onSecondary={() => setChangeGroupConfirm(null)}
+        onRequestClose={() => setChangeGroupConfirm(null)}
+        testID="homeReminderChangeGroupDialog"
+      />
+
+      <Dialog
+        visible={!!infoDialog}
+        title={infoDialog?.title ?? ''}
+        message={infoDialog?.message ?? ''}
+        primaryLabel="Đóng"
+        onPrimary={() => setInfoDialog(null)}
+        onRequestClose={() => setInfoDialog(null)}
+      />
     </SafeAreaView>
   );
 };

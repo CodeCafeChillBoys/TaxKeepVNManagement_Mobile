@@ -16,8 +16,9 @@ describe('homeReminderChangeGroup', () => {
       expect(plan.dependentId).toBe('dep-1');
       expect(plan.newGroup).toBe('CHILD_OVER_18_STUDYING');
       expect(plan.confirmTitle).toMatch(/chuyển nhóm/i);
+      expect(plan.newGroupLabel).toMatch(/Nhóm 2/i);
       expect(plan.confirmMessage).toContain('Nguyen Van B');
-      expect(plan.confirmMessage).toContain('CHILD_OVER_18_STUDYING');
+      expect(plan.confirmMessage).not.toContain('CHILD_OVER_18_STUDYING');
     });
   });
 
@@ -62,7 +63,7 @@ describe('homeReminderChangeGroup', () => {
       const updateDependentGroup = jest.fn().mockRejectedValue({
         response: {
           status: 400,
-          data: { errors: { errorCode: 'SAME_GROUP' } },
+          data: { errors: { errorCode: 'GROUP_AGE_MISMATCH' } },
         },
       });
 
@@ -74,8 +75,28 @@ describe('homeReminderChangeGroup', () => {
 
       expect(result).toEqual({
         ok: false,
-        message: 'Người phụ thuộc đã ở nhóm này.',
+        message: 'Nhóm không khớp tuổi tại ngày bắt đầu hiệu lực giảm trừ.',
       });
+    });
+
+    it('SAME_GROUP still navigates to ProofDocuments for upload', async () => {
+      const updateDependentGroup = jest.fn().mockRejectedValue({
+        response: {
+          status: 400,
+          data: { errors: { errorCode: 'SAME_GROUP' } },
+        },
+      });
+
+      const result = await runHomeReminderChangeGroup({
+        dependentId: 'dep-1',
+        newGroup: 'CHILD_OVER_18_STUDYING',
+        updateDependentGroup,
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.navigation.params.dependentId).toBe('dep-1');
+      expect(result.navigation.params.groupIndex).toBe(1);
     });
 
     it('returns failure when API success=false', async () => {

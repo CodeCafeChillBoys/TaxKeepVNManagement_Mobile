@@ -15,6 +15,8 @@ export type ManualChangeGroupInput = {
   fullName: string;
   relationship: string;
   currentGroup: string;
+  /** Tuổi tại ngày bắt đầu hiệu lực — lọc nhóm theo grill Q4. */
+  ageAtEffective?: number;
 };
 
 export type ManualChangeGroupPlan = {
@@ -37,7 +39,11 @@ export type UpdateDependentGroupFn = (
 export function buildManualChangeGroupPlan(
   input: ManualChangeGroupInput
 ): ManualChangeGroupPlan {
-  const options = filterChangeGroupOptions(input.relationship, input.currentGroup);
+  const options = filterChangeGroupOptions(
+    input.relationship,
+    input.currentGroup,
+    input.ageAtEffective
+  );
   return {
     dependentId: input.dependentId,
     fullName: input.fullName,

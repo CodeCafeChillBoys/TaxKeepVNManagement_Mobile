@@ -119,6 +119,9 @@ export interface ExpenseOcrResult {
   validationStatus?: ValidationStatus;
   validationErrors?: ValidationErrorItem[];
   
+  // Cam kết thuế TNCN: Chưa được bồi hoàn từ bảo hiểm hoặc tài trợ khác
+  isNotReimbursed?: boolean | null;
+
   status: 'UPLOADED' | 'EXTRACTED' | 'CONFIRMED' | 'FAILED' | 'REJECTED';
   createdAt?: string;
 }
@@ -174,6 +177,7 @@ export interface ConfirmDocumentReviewRequest {
   extractedYear?: number | null;
   isYearValid?: boolean;
   isIdentityValid?: boolean;
+  isNotReimbursed?: boolean | null;
   items?: InvoiceLineItem[];
 }
 
@@ -223,6 +227,7 @@ export interface DocumentReviewResponse {
   extractedYear?: number | null;
   isYearValid?: boolean | null;
   isIdentityValid?: boolean | null;
+  isNotReimbursed?: boolean | null;
   status: 'UPLOADED' | 'EXTRACTED' | 'CONFIRMED' | 'FAILED' | string;
   createdAt: string;
   items: DocumentItemResponse[];

@@ -1,47 +1,12 @@
-import { create } from 'zustand';
+﻿import { create } from 'zustand';
 import { storageHelper } from '../api/apiClient';
 import { ExpenseOcrResult, TaxPeriodItem, TaxDocumentTypeItem } from '../types/expense';
 import { expenseApi } from '../api/expenseApi';
 
 const EXPENSE_STORAGE_KEY = 'taxkeep_expense_store_v6';
 
-export const DEFAULT_DOCUMENT_TYPES: TaxDocumentTypeItem[] = [
-  {
-    code: 'MEDICAL_EXPENSE_INVOICE',
-    name: 'Hóa đơn viện phí y tế',
-    isTaxEligible: true,
-  },
-  {
-    code: 'EDUCATION_EXPENSE_INVOICE',
-    name: 'Hóa đơn học phí giáo dục',
-    isTaxEligible: true,
-  },
-  {
-    code: 'DONATION_VOUCHER',
-    name: 'Chứng từ đóng góp từ thiện',
-    isTaxEligible: true,
-  },
-  {
-    code: 'INSURANCE_PREMIUM_RECEIPT',
-    name: 'Bảo hiểm nhân thọ / hưu trí',
-    isTaxEligible: true,
-  },
-  {
-    code: 'SALES_INVOICE',
-    name: 'Hóa đơn bán hàng',
-    isTaxEligible: true,
-  },
-  {
-    code: 'VAT_INVOICE',
-    name: 'Hóa đơn GTGT',
-    isTaxEligible: true,
-  },
-  {
-    code: 'WITHHOLDING_VOUCHER',
-    name: 'Chứng từ khấu trừ thuế TNCN',
-    isTaxEligible: true,
-  },
-];
+// Danh mục loại chứng từ được tải trực tiếp từ DB của admin qua API /tax-document-types
+export const DEFAULT_DOCUMENT_TYPES: TaxDocumentTypeItem[] = [];
 
 interface ExpenseState {
   selectedYear: number | null;
@@ -76,7 +41,7 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
   availableYears: [],
   periods: {},
   documents: {},
-  documentTypes: DEFAULT_DOCUMENT_TYPES,
+  documentTypes: [],
   isDocumentTypesLoading: false,
   isLoading: false,
   error: null,
@@ -123,24 +88,115 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       const period = await expenseApi.initOrGetPeriod(year, userId);
+
+      // Tải danh sách chứng từ từ server cho kỳ tính thuế này
+      let serverDocs: ExpenseOcrResult[] | null = null;
+      try {
+        if (period?.periodId) {
+          const docsPaged = await expenseApi.getDocumentsByPeriod(period.periodId, { size: 100 });
+          if (docsPaged && Array.isArray(docsPaged.items)) {
+            serverDocs = docsPaged.items.map((doc: any) => ({
+              id: doc.id,
+              documentId: doc.id,
+              periodId: doc.periodId,
+              docTypeCode: doc.docTypeCode,
+              docTypeName:
+                doc.docTypeName ||
+                get().documentTypes.find((t) => t.code === doc.docTypeCode)?.name ||
+                (doc.docTypeCode ? doc.docTypeCode : 'Chứng từ chi phí'),
+              fileUrl: doc.fileUrl,
+              originalFilename: doc.originalFilename || 'invoice.jpg',
+              sellerName: doc.sellerName,
+              sellerTaxCode: doc.sellerTaxCode,
+              sellerAddress: doc.sellerAddress,
+              sellerPhone: doc.sellerPhone,
+              invoiceSeries: doc.invoiceSeries,
+              invoiceNumber: doc.invoiceNumber,
+              invoiceDate: doc.invoiceDate,
+              extractedYear: doc.extractedYear || year,
+              lookupUrl: doc.lookupUrl,
+              lookupCode: doc.lookupCode,
+              buyerName: doc.buyerName,
+              buyerTaxCode: doc.buyerTaxCode,
+              buyerIdCard: doc.buyerIdCard,
+              buyerAddress: doc.buyerAddress,
+              paymentMethod: doc.paymentMethod || 'Chuyển khoản',
+              totalAmount: doc.totalAmount ?? 0,
+              totalAmountInWords: doc.totalAmountInWords,
+              items: (doc.items || []).map((it: any, idx: number) => ({
+                itemOrder: it.itemOrder || idx + 1,
+                itemName: it.itemName,
+                unit: it.unit,
+                quantity: it.quantity,
+                unitPrice: it.unitPrice,
+                totalPrice: it.totalPrice,
+              })),
+              overallConfidence: 0.95,
+              appliedThreshold: 0.8,
+              isPassedThreshold: true,
+              hasCrucialLowConfidence: false,
+              fields: [],
+              qualityEvaluation: {
+                qualityScore: 0.95,
+                requiredThreshold: 0.75,
+                qualityIssues: [],
+                isPassedQuality: true,
+              },
+              validationStatus: {
+                isYearValid: doc.isYearValid ?? true,
+                isDocTypeValid: doc.isTaxEligible ?? true,
+                isIdentityValid: doc.isIdentityValid ?? true,
+                isPassedThreshold: true,
+              },
+              validationErrors: [],
+              isNotReimbursed: doc.isNotReimbursed ?? false,
+              status:
+                doc.status === 'CONFIRMED'
+                  ? 'CONFIRMED'
+                  : doc.status === 'FAILED' &&
+                    (doc.sellerName || (doc.totalAmount !== undefined && doc.totalAmount !== null && Number(doc.totalAmount) > 0))
+                  ? 'EXTRACTED'
+                  : doc.status || 'EXTRACTED',
+              createdAt: doc.createdAt,
+            }));
+          }
+        }
+      } catch (fetchErr) {
+        console.warn(`Không thể tải documents từ server cho kỳ ${period?.periodId}:`, fetchErr);
+      }
+
       set((state) => {
         const updatedPeriods = { ...state.periods, [year]: period };
-        const updatedDocs = {
-          ...state.documents,
-          [year]: state.documents[year] || [],
-        };
+        const updatedYears = state.availableYears.includes(year)
+          ? state.availableYears
+          : [year, ...state.availableYears].sort((a, b) => b - a);
+
+        const currentYearDocs = state.documents[year] || [];
+        let finalDocs = currentYearDocs;
+        if (serverDocs !== null) {
+          const serverDocIds = new Set(serverDocs.map((d) => d.documentId));
+          const localOnlyDocs = currentYearDocs.filter(
+            (d) => d.documentId && !serverDocIds.has(d.documentId) && d.documentId.startsWith('doc-')
+          );
+          finalDocs = [...serverDocs, ...localOnlyDocs];
+        }
+
         return {
           periods: updatedPeriods,
-          documents: updatedDocs,
+          documents: {
+            ...state.documents,
+            [year]: finalDocs,
+          },
+          availableYears: updatedYears,
+          selectedYear: state.selectedYear || year,
           isLoading: false,
         };
       });
-      // Lưu lại trạng thái
+
       get().saveToStorage();
       return period;
     } catch (err: any) {
       console.warn(`Lỗi khi khởi tạo TaxPeriod cho năm ${year}:`, err);
-      // Tạo fallback local period object nếu API có trục trặc mạng
       const localPeriod: TaxPeriodItem = {
         periodId: `period-${year}-${Date.now()}`,
         taxYear: year,
@@ -191,7 +247,6 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
         updatedList = [docToSave, ...currentList];
       }
 
-      // Đảm bảo năm luôn có trong availableYears và cập nhật selectedYear
       const updatedYears = state.availableYears.includes(numYear)
         ? state.availableYears
         : [numYear, ...state.availableYears].sort((a, b) => b - a);

@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+﻿import { create } from 'zustand';
 import { storageHelper } from '../api/apiClient';
 import { config } from '../constants/config';
 import { authApi } from '../api/authApi';
@@ -43,6 +43,10 @@ export const useAuthStore = create<AuthState>((set) => ({
     await storageHelper.removeItem(config.storageKeys.accessToken);
     await storageHelper.removeItem(config.storageKeys.refreshToken);
     await storageHelper.removeItem(config.storageKeys.userData);
+    try {
+      const { useExpenseStore } = await import('./useExpenseStore');
+      await useExpenseStore.getState().clearAllExpenses();
+    } catch {}
     set({ token: null, user: null, isAuthenticated: false, isLoading: false });
   },
 

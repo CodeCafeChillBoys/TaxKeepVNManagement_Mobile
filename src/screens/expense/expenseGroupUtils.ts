@@ -25,6 +25,59 @@ export interface ExpenseGroup {
 }
 
 /**
+ * Nhãn hiển thị thân thiện theo trạng thái chứng từ (không dùng thuật ngữ IT)
+ */
+export function getStatusLabel(status: string): string {
+  switch (status) {
+    case 'CONFIRMED':    return '✓ Đã duyệt';
+    case 'EXTRACTED':   return '⚡ Chờ soát xét';
+    case 'UPLOADED':    return '⏳ Đang xử lý';
+    case 'FAILED':      return '⚠ Cần kiểm tra lại';
+    case 'REJECTED':    return '✕ Bị từ chối';
+    default:            return status;
+  }
+}
+
+/**
+ * Màu badge tương ứng với trạng thái (không dùng thuật ngữ IT)
+ */
+export function getStatusBadgeVariant(status: string): BadgeVariant {
+  switch (status) {
+    case 'CONFIRMED':  return 'success';
+    case 'EXTRACTED':  return 'warning';
+    case 'UPLOADED':   return 'outline';
+    case 'FAILED':     return 'destructive';
+    default:           return 'secondary';
+  }
+}
+
+/**
+ * Tìm kiếm chứng từ theo từ khóa (tên đơn vị, số hóa đơn, mã chứng từ)
+ */
+export function searchExpenses(expenses: ExpenseOcrResult[], keyword: string): ExpenseOcrResult[] {
+  const q = keyword.trim().toLowerCase();
+  if (!q) return expenses;
+  return expenses.filter((doc) => {
+    const sellerMatch = (doc.sellerName || '').toLowerCase().includes(q);
+    const invoiceMatch = (doc.invoiceNumber || '').toLowerCase().includes(q);
+    const docTypeMatch = (doc.docTypeName || '').toLowerCase().includes(q);
+    const codeMatch = (doc.docTypeCode || '').toLowerCase().includes(q);
+    return sellerMatch || invoiceMatch || docTypeMatch || codeMatch;
+  });
+}
+
+/**
+ * Lọc chứng từ theo trạng thái
+ */
+export function filterExpensesByStatus(
+  expenses: ExpenseOcrResult[],
+  statusFilter: 'ALL' | 'CONFIRMED' | 'EXTRACTED' | 'UPLOADED' | 'FAILED'
+): ExpenseOcrResult[] {
+  if (statusFilter === 'ALL') return expenses;
+  return expenses.filter((doc) => doc.status === statusFilter);
+}
+
+/**
  * Lấy biểu tượng Ionicons phù hợp cho loại chứng từ dựa trên code và name
  */
 export function getDocumentTypeIcon(code?: string | null, name?: string | null): string {
@@ -154,60 +207,59 @@ export function getGroupMetadata(key: ExpenseGroupKey) {
     case 'TO_VIEN_PHI':
       return {
         order: 1,
-        name: 'Tổ 1: Viện phí & Chăm sóc Y tế',
-        shortName: 'Viện phí & Y tế',
-        description: 'Hóa đơn khám chữa bệnh, viện phí và thuốc men điều trị',
+        name: 'Viện phí & Chăm sóc sức khỏe',
+        shortName: 'Sức khỏe',
+        description: 'Hóa đơn khám chữa bệnh, viện phí và thuốc men',
         icon: 'medkit',
-        color: '#0F766E', // teal-700
+        color: '#0F766E',
         badgeVariant: 'teal' as BadgeVariant,
       };
     case 'TO_GIAO_DUC':
       return {
         order: 2,
-        name: 'Tổ 2: Giáo dục & Học phí Chính quy',
-        shortName: 'Giáo dục & Học phí',
-        description: 'Biên lai, hóa đơn học phí các cấp đào tạo hợp pháp',
+        name: 'Học phí & Giáo dục',
+        shortName: 'Học phí',
+        description: 'Biên lai học phí các cấp đào tạo hợp pháp',
         icon: 'school',
-        color: '#0284C7', // sky-600
+        color: '#0284C7',
         badgeVariant: 'info' as BadgeVariant,
       };
     case 'TO_TU_THIEN':
       return {
         order: 3,
-        name: 'Tổ 3: Đóng góp Từ thiện & Nhân đạo',
-        shortName: 'Từ thiện & Nhân đạo',
-        description: 'Chứng từ ủng hộ các quỹ từ thiện, khắc phục thiên tai, khuyến học',
+        name: 'Đóng góp Từ thiện & Nhân đạo',
+        shortName: 'Từ thiện',
+        description: 'Chứng từ ủng hộ quỹ từ thiện và khuyến học',
         icon: 'heart',
-        color: '#E11D48', // rose-600
+        color: '#E11D48',
         badgeVariant: 'destructive' as BadgeVariant,
       };
     case 'TO_BAO_HIEM':
       return {
         order: 4,
-        name: 'Tổ 4: Bảo hiểm Nhân thọ & Hưu trí Tự nguyện',
-        shortName: 'Bảo hiểm & Hưu trí',
-        description: 'Phí đóng bảo hiểm nhân thọ và quỹ hưu trí tự nguyện được giảm trừ',
+        name: 'Bảo hiểm & Hưu trí Tự nguyện',
+        shortName: 'Bảo hiểm',
+        description: 'Phí bảo hiểm nhân thọ và quỹ hưu trí tự nguyện',
         icon: 'shield-checkmark',
-        color: '#4338CA', // indigo-700
+        color: '#4338CA',
         badgeVariant: 'indigo' as BadgeVariant,
       };
     case 'TO_KHAC':
     default:
       return {
         order: 5,
-        name: 'Tổ 5: Hóa đơn & Chứng từ Hợp lệ Khác',
-        shortName: 'Chứng từ khác',
-        description: 'Hóa đơn bán hàng, hóa đơn GTGT và chứng từ khấu trừ thuế',
+        name: 'Chứng từ hợp lệ khác',
+        shortName: 'Khác',
+        description: 'Hóa đơn và chứng từ khấu trừ thuế hợp lệ khác',
         icon: 'receipt',
-        color: '#D97706', // amber-600
+        color: '#D97706',
         badgeVariant: 'warning' as BadgeVariant,
       };
   }
 }
 
 /**
- * Nhóm danh sách chứng từ theo từng Tổ do AI phân loại
- * Trả về danh sách các nhóm Tổ, chỉ trả về các tổ có chứng từ hoặc có thể trả về tất cả
+ * Nhóm danh sách chứng từ theo từng Tổ phân loại
  */
 export function groupExpensesByAiClassification(
   expenses: ExpenseOcrResult[],
@@ -298,6 +350,8 @@ export function calculateExpenseMetrics(expenses: ExpenseOcrResult[]) {
   let totalAmount = 0;
   let confirmedCount = 0;
   let pendingCount = 0;
+  let processingCount = 0;
+  let failedCount = 0;
 
   for (const doc of expenses) {
     const amount = Number(doc.totalAmount) || 0;
@@ -306,6 +360,10 @@ export function calculateExpenseMetrics(expenses: ExpenseOcrResult[]) {
     if (doc.status === 'CONFIRMED') {
       totalConfirmedAmount += amount;
       confirmedCount += 1;
+    } else if (doc.status === 'UPLOADED') {
+      processingCount += 1;
+    } else if (doc.status === 'FAILED') {
+      failedCount += 1;
     } else {
       pendingCount += 1;
     }
@@ -315,6 +373,8 @@ export function calculateExpenseMetrics(expenses: ExpenseOcrResult[]) {
     totalDocs: expenses.length,
     confirmedDocs: confirmedCount,
     pendingDocs: pendingCount,
+    processingDocs: processingCount,
+    failedDocs: failedCount,
     totalAmount,
     totalConfirmedAmount,
   };

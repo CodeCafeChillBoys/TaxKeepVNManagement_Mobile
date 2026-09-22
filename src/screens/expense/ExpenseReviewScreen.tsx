@@ -29,20 +29,13 @@ import { useExpenseStore } from '../../stores/useExpenseStore';
 import { getGroupKeyFromDocTypeCode, getGroupMetadata, getDocumentTypeIcon } from './expenseGroupUtils';
 import {
   Card,
-  CardHeader,
-  CardTitle,
-  CardDescription,
   CardContent,
-  CardFooter,
   Badge,
   Button,
-  Tabs,
-  TabsList,
-  TabsTrigger,
   Separator,
 } from '../../components/ui';
 
-type TabType = 'AUDIT' | 'INFO' | 'ITEMS';
+type TabType = 'KIEM_TRA' | 'THONG_TIN';
 
 export const ExpenseReviewScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
@@ -50,74 +43,61 @@ export const ExpenseReviewScreen: React.FC = () => {
   const initialData: ExpenseOcrResult = route.params?.ocrResult || {};
   const periodIdParam = route.params?.periodId || initialData.periodId;
 
-  // Hóa đơn đã duyệt hoặc mở từ action Xem chi tiết -> chế độ Chỉ xem (ReadOnly)
   const isConfirmed = initialData.status === 'CONFIRMED';
   const isReadOnly = Boolean(route.params?.isReadOnly || isConfirmed);
 
   const { addOrUpdateDocument, setSelectedYear, documentTypes, fetchDocumentTypes } = useExpenseStore();
 
   const [currentDocTypeCode, setCurrentDocTypeCode] = useState<string>(
-    initialData.docTypeCode || (documentTypes && documentTypes.length > 0 ? documentTypes[0].code : 'MEDICAL_EXPENSE_INVOICE')
+    initialData.docTypeCode || (documentTypes && documentTypes.length > 0 ? documentTypes[0].code : '')
   );
   const [showDocTypeModal, setShowDocTypeModal] = useState<boolean>(false);
+  const [activeTab, setActiveTab] = useState<TabType>('KIEM_TRA');
 
-  useEffect(() => {
-    fetchDocumentTypes();
-  }, [fetchDocumentTypes]);
+  useEffect(() => { fetchDocumentTypes(); }, [fetchDocumentTypes]);
 
-  const [activeTab, setActiveTab] = useState<TabType>('AUDIT');
-  const [selectedFieldBox, setSelectedFieldBox] = useState<string | null>(null);
-
-  // Nhóm Tổ do AI phân loại hoặc người dùng điều chỉnh theo config admin
   const groupKey = getGroupKeyFromDocTypeCode(currentDocTypeCode);
   const groupMeta = getGroupMetadata(groupKey);
   const currentDocTypeItem = documentTypes.find((t) => t.code === currentDocTypeCode);
   const currentDocTypeName = currentDocTypeItem?.name || initialData.docTypeName || groupMeta.name;
 
-  // Form state - Bên bán
+  // Form state
   const [sellerName, setSellerName] = useState<string>(initialData.sellerName || '');
   const [sellerTaxCode, setSellerTaxCode] = useState<string>(initialData.sellerTaxCode || '');
   const [sellerAddress, setSellerAddress] = useState<string>(initialData.sellerAddress || '');
   const [sellerPhone, setSellerPhone] = useState<string>(initialData.sellerPhone || '');
-
-  // Form state - Hóa đơn
   const [invoiceSeries, setInvoiceSeries] = useState<string>(initialData.invoiceSeries || '');
   const [invoiceNumber, setInvoiceNumber] = useState<string>(initialData.invoiceNumber || '');
   const [invoiceDate, setInvoiceDate] = useState<string>(initialData.invoiceDate || '');
   const [lookupUrl, setLookupUrl] = useState<string>(initialData.lookupUrl || '');
   const [lookupCode, setLookupCode] = useState<string>(initialData.lookupCode || '');
-
-  // Form state - Bên mua
   const [buyerName, setBuyerName] = useState<string>(initialData.buyerName || '');
   const [buyerIdCard, setBuyerIdCard] = useState<string>(initialData.buyerIdCard || '');
   const [buyerAddress, setBuyerAddress] = useState<string>(initialData.buyerAddress || '');
-  const [paymentMethod, setPaymentMethod] = useState<string>(
-    initialData.paymentMethod || 'Chuyển khoản'
-  );
-
-  // Form state - Chi tiết hàng hóa / Viện phí
+  const [paymentMethod, setPaymentMethod] = useState<string>(initialData.paymentMethod || 'Chuyển khoản');
   const [items, setItems] = useState<InvoiceLineItem[]>(initialData.items || []);
+  const [isNotReimbursed, setIsNotReimbursed] = useState<boolean>(initialData.isNotReimbursed ?? true);
+  const [saving, setSaving] = useState<boolean>(false);
+
+  // Item modal state
   const [itemModalVisible, setItemModalVisible] = useState<boolean>(false);
   const [editingItemIndex, setEditingItemIndex] = useState<number | null>(null);
   const [itemFormName, setItemFormName] = useState<string>('');
   const [itemFormUnit, setItemFormUnit] = useState<string>('');
   const [itemFormQty, setItemFormQty] = useState<string>('1');
   const [itemFormPrice, setItemFormPrice] = useState<string>('0');
-  const [saving, setSaving] = useState<boolean>(false);
 
-  // Tổng tiền tính tự động từ items
-  const totalAmount = calculateItemsTotal(items) || initialData.totalAmount || 0;
+  const itemsSum = calculateItemsTotal(items);
+  const [totalAmount, setTotalAmount] = useState<number>(() => {
+    if (initialData.totalAmount !== undefined && initialData.totalAmount !== null && Number(initialData.totalAmount) > 0) {
+      return Number(initialData.totalAmount);
+    }
+    return calculateItemsTotal(initialData.items || []);
+  });
 
-  // Kiểm tra trường cốt lõi
-  const crucialCheck = validateCrucialFields(
-    initialData.fields || [],
-    initialData.appliedThreshold || 0.8
-  );
-
-  // Danh sách lỗi validation
+  const crucialCheck = validateCrucialFields(initialData.fields || [], initialData.appliedThreshold || 0.8);
   const validationErrors = initialData.validationErrors || [];
 
-  // Mở modal thêm/sửa hàng hóa
   const handleOpenItemModal = (index?: number) => {
     if (isReadOnly) return;
     if (index !== undefined && items[index]) {
@@ -137,16 +117,10 @@ export const ExpenseReviewScreen: React.FC = () => {
   };
 
   const handleSaveItem = () => {
-    if (isReadOnly) return;
     if (!itemFormName.trim()) {
-      if (Platform.OS === 'web') {
-        window.alert('Thiếu thông tin: Vui lòng nhập tên dịch vụ / hàng hóa.');
-      } else {
-        Alert.alert('Thiếu thông tin', 'Vui lòng nhập tên dịch vụ / hàng hóa.');
-      }
+      Alert.alert('Thiếu thông tin', 'Vui lòng nhập tên dịch vụ / khoản mục.');
       return;
     }
-
     const qty = parseFloat(itemFormQty) || 1;
     const price = parseFloat(itemFormPrice) || 0;
     const newItem: InvoiceLineItem = {
@@ -157,7 +131,6 @@ export const ExpenseReviewScreen: React.FC = () => {
       unitPrice: price,
       totalPrice: qty * price,
     };
-
     if (editingItemIndex !== null) {
       const updated = [...items];
       updated[editingItemIndex] = newItem;
@@ -170,49 +143,22 @@ export const ExpenseReviewScreen: React.FC = () => {
 
   const handleDeleteItem = (index: number) => {
     if (isReadOnly) return;
-    if (Platform.OS === 'web') {
-      const ok = window.confirm('Bạn có chắc chắn muốn xóa dòng chi phí này?');
-      if (ok) {
-        setItems(items.filter((_, i) => i !== index));
-      }
-    } else {
-      Alert.alert('Xóa mục này', 'Bạn có chắc chắn muốn xóa dòng chi phí này?', [
-        { text: 'Hủy', style: 'cancel' },
-        {
-          text: 'Xóa',
-          style: 'destructive',
-          onPress: () => {
-            setItems(items.filter((_, i) => i !== index));
-          },
-        },
-      ]);
-    }
+    Alert.alert('Xóa khoản mục', 'Xóa dòng chi phí này khỏi bảng kê?', [
+      { text: 'Hủy', style: 'cancel' },
+      { text: 'Xóa', style: 'destructive', onPress: () => setItems(items.filter((_, i) => i !== index)) },
+    ]);
   };
 
-  // Xác nhận lưu hóa đơn (Human-in-the-loop Confirm)
   const executeConfirm = async () => {
-    if (isReadOnly) {
-      if (Platform.OS === 'web') {
-        window.alert('Chứng từ này đã được duyệt, không thể chỉnh sửa hoặc lưu lại.');
-      } else {
-        Alert.alert('Không thể chỉnh sửa', 'Chứng từ này đã được duyệt, không thể chỉnh sửa hoặc lưu lại.');
-      }
-      return;
-    }
-
+    if (isReadOnly) return;
     setSaving(true);
     try {
       const cleanDate = invoiceDate.trim();
       const validDate = cleanDate.match(/^\d{4}-\d{2}-\d{2}$/) ? cleanDate : undefined;
       const currentTaxYear = new Date().getFullYear();
-      const cleanYear = validDate
-        ? parseInt(validDate.substring(0, 4), 10)
-        : Number(initialData.extractedYear) || currentTaxYear;
+      const cleanYear = validDate ? parseInt(validDate.substring(0, 4), 10) : Number(initialData.extractedYear) || currentTaxYear;
       const finalDocId = initialData.documentId || `doc-${Date.now()}`;
-
-      // 1. Nếu có backend periodId và documentId hợp lệ, gọi API xác nhận chính thức
-      const isGuid = (val?: string) =>
-        !!val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+      const isGuid = (val?: string) => !!val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
 
       if (isGuid(periodIdParam) && isGuid(initialData.documentId)) {
         try {
@@ -235,37 +181,24 @@ export const ExpenseReviewScreen: React.FC = () => {
             totalAmount: totalAmount || null,
             isYearValid: initialData.validationStatus?.isYearValid ?? true,
             isIdentityValid: initialData.validationStatus?.isIdentityValid ?? true,
+            isNotReimbursed: isNotReimbursed,
             items: items.map((it, idx) => ({
               itemOrder: it.itemOrder || idx + 1,
               itemName: it.itemName,
               unit: it.unit || null,
-              quantity: Number(it.quantity) || 1,
-              unitPrice: Number(it.unitPrice) || 0,
-              totalPrice:
-                Number(it.totalPrice) ||
-                (Number(it.quantity) || 1) * (Number(it.unitPrice) || 0),
+              quantity: it.quantity ?? null,
+              unitPrice: it.unitPrice ?? null,
+              totalPrice: it.totalPrice ?? null,
             })),
           });
         } catch (apiErr: any) {
-          console.warn('Lỗi gọi API confirmDocumentReview:', apiErr);
-          const statusCode = apiErr?.response?.status || apiErr?.status;
-          const beMsg = apiErr?.response?.data?.message || apiErr?.message;
-
-          // Xử lý các validation đặc thù từ Backend (409 trùng lặp số HĐ & MST, 400 đã duyệt)
-          if (statusCode === 409 || statusCode === 400) {
-            setSaving(false);
-            const displayMsg = beMsg || 'Hóa đơn đã tồn tại hoặc đã được duyệt trước đó.';
-            if (Platform.OS === 'web') {
-              window.alert(`Không thể xác nhận: ${displayMsg}`);
-            } else {
-              Alert.alert('Không thể xác nhận', displayMsg);
-            }
-            return;
-          }
+          setSaving(false);
+          const displayMsg = apiErr?.response?.data?.message || apiErr?.message || 'Máy chủ từ chối xác nhận.';
+          Alert.alert('Không thể xác nhận', displayMsg);
+          return;
         }
       }
 
-      // 2. Lưu vào Store của năm tương ứng
       const confirmedDocument: ExpenseOcrResult = {
         ...initialData,
         documentId: finalDocId,
@@ -287,777 +220,480 @@ export const ExpenseReviewScreen: React.FC = () => {
         paymentMethod: paymentMethod.trim(),
         totalAmount: totalAmount,
         items: items,
+        isNotReimbursed: isNotReimbursed,
         status: 'CONFIRMED',
       };
 
       await addOrUpdateDocument(cleanYear, confirmedDocument);
       setSelectedYear(cleanYear);
-
       setSaving(false);
 
-      if (Platform.OS === 'web') {
-        window.alert(
-          `Xác nhận thành công!\nChứng từ đã được ghi nhận và lưu vào nhóm:\n"${groupMeta.name}".`
-        );
-        navigation.navigate('ExpenseList');
-      } else {
-        Alert.alert(
-          'Xác nhận thành công!',
-          `Chứng từ đã được ghi nhận và lưu vào nhóm:\n"${groupMeta.name}".`,
-          [
-            {
-              text: 'Về danh sách',
-              onPress: () => navigation.navigate('ExpenseList'),
-            },
-          ]
-        );
-      }
+      Alert.alert(
+        '✓ Đã xác nhận thành công!',
+        `Hóa đơn đã được lưu vào danh mục "${groupMeta.name}".`,
+        [{ text: 'Về danh sách', onPress: () => navigation.navigate('ExpenseList') }]
+      );
     } catch (err: any) {
       setSaving(false);
-      const errMsg = err?.message || 'Không thể xác nhận chứng từ.';
-      if (Platform.OS === 'web') {
-        window.alert(`Lỗi xác nhận: ${errMsg}`);
-      } else {
-        Alert.alert('Lỗi xác nhận', errMsg);
-      }
+      Alert.alert('Lỗi xác nhận', err?.message || 'Không thể xác nhận chứng từ.');
     }
   };
 
   const handleConfirmReview = () => {
     if (isReadOnly) {
-      if (Platform.OS === 'web') {
-        window.alert('Chứng từ này đã được duyệt, không thể chỉnh sửa.');
-      } else {
-        Alert.alert('Thông báo', 'Chứng từ này đã được duyệt, không thể chỉnh sửa.');
-      }
+      Alert.alert('Thông báo', 'Chứng từ này đã được duyệt, không thể chỉnh sửa.');
       return;
     }
-
     if (crucialCheck.hasCrucialLowConfidence) {
-      if (Platform.OS === 'web') {
-        const confirmed = window.confirm(
-          'Lưu ý kiểm tra thông tin:\nCó thông tin quan trọng cần rà soát lại độ chuẩn xác. Bạn có chắc chắn muốn tiếp tục xác nhận và lưu không?'
-        );
-        if (confirmed) {
-          executeConfirm();
-        }
-      } else {
-        Alert.alert(
-          'Lưu ý kiểm tra thông tin',
-          'Có thông tin quan trọng cần rà soát lại độ chuẩn xác. Bạn đã kiểm tra kỹ trước khi xác nhận chưa?',
-          [
-            { text: 'Kiểm tra lại', style: 'cancel' },
-            { text: 'Xác nhận lưu', onPress: executeConfirm },
-          ]
-        );
-      }
+      Alert.alert(
+        'Kiểm tra lại thông tin',
+        'Một số thông tin quan trọng chưa rõ ràng. Bạn đã kiểm tra kỹ chưa?',
+        [
+          { text: 'Kiểm tra lại', style: 'cancel' },
+          { text: 'Xác nhận', onPress: executeConfirm },
+        ]
+      );
     } else {
       executeConfirm();
     }
   };
 
+  const FieldInput = ({
+    label, value, onChange, placeholder, keyboardType = 'default', readOnly = false,
+  }: {
+    label: string; value: string; onChange?: (v: string) => void;
+    placeholder?: string; keyboardType?: any; readOnly?: boolean;
+  }) => (
+    <View style={styles.fieldGroup}>
+      <Text style={styles.fieldLabel}>{label}</Text>
+      <TextInput
+        editable={!isReadOnly && !readOnly}
+        style={[styles.textInput, (isReadOnly || readOnly) && styles.readOnlyInput]}
+        value={value}
+        onChangeText={onChange}
+        placeholder={placeholder}
+        placeholderTextColor="#94A3B8"
+        keyboardType={keyboardType}
+      />
+    </View>
+  );
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <HeaderMotif
-        title={isReadOnly ? "CHI TIẾT CHỨNG TỪ" : "BÁO CÁO SOÁT XÉT CHỨNG TỪ"}
+        title={isReadOnly ? 'CHI TIẾT CHỨNG TỪ' : 'SOÁT XÉT HÓA ĐƠN'}
         onBack={() => navigation.goBack()}
       />
 
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* BANNER THÔNG TIN PHÂN LOẠI VÀO NHÓM CHỨNG TỪ */}
-        <Card style={styles.aiClassificationCard}>
-          <CardContent style={styles.aiClassificationContent}>
-            <View
-              style={[
-                styles.aiClassificationIconCircle,
-                { backgroundColor: `${groupMeta.color}15` },
-              ]}
-            >
-              <Ionicons name={groupMeta.icon as any} size={26} color={groupMeta.color} />
-            </View>
-            <View style={{ flex: 1, marginLeft: 12 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Badge variant={groupMeta.badgeVariant}>
-                  NHÓM CHI PHÍ: {groupMeta.shortName.toUpperCase()}
-                </Badge>
-              </View>
-              <Text style={styles.aiClassificationName}>{groupMeta.name}</Text>
-              <Text style={styles.aiClassificationDesc}>
-                {groupMeta.description}
-              </Text>
-            </View>
-          </CardContent>
-        </Card>
-
-        {/* BANNER THÔNG BÁO KHI Ở CHẾ ĐỘ XEM CHI TIẾT (ĐÃ DUYỆT) */}
-        {isReadOnly && (
-          <View style={styles.verifiedBanner}>
-            <View style={styles.verifiedIconCircle}>
-              <Ionicons name="shield-checkmark" size={22} color="#16A34A" />
-            </View>
-            <View style={{ flex: 1, marginLeft: 12 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Text style={styles.verifiedBannerTitle}>CHỨNG TỪ ĐÃ ĐƯỢC DUYỆT</Text>
-                <Badge variant="default" style={styles.verifiedBadge}>
-                  ĐÃ XÁC NHẬN
-                </Badge>
-              </View>
-              <Text style={styles.verifiedBannerDesc}>
-                Chứng từ này đã được xác nhận và lưu trữ chính thức vào hồ sơ thuế. Chế độ chỉ xem, không thể chỉnh sửa thông tin.
-              </Text>
-            </View>
+      {/* STICKY HEADER: Số tiền + Danh mục + Trạng thái */}
+      <View style={styles.stickyHeader}>
+        <View style={styles.stickyLeft}>
+          <View style={[styles.stickyIconCircle, { backgroundColor: `${groupMeta.color}20` }]}>
+            <Ionicons name={groupMeta.icon as any} size={18} color={groupMeta.color} />
           </View>
-        )}
-
-        {/* 3 TABS SHADCN ĐIỀU HƯỚNG */}
-        <View style={styles.tabsWrapper}>
-          <Tabs value={activeTab} onValueChange={(val) => setActiveTab(val as TabType)}>
-            <TabsList>
-              <TabsTrigger
-                value="AUDIT"
-                icon={<Ionicons name="shield-checkmark-outline" size={16} color="#475569" />}
-              >
-                Đối soát chứng từ
-              </TabsTrigger>
-              <TabsTrigger
-                value="INFO"
-                icon={<Ionicons name="reader-outline" size={16} color="#475569" />}
-              >
-                Thông tin HĐ
-              </TabsTrigger>
-              <TabsTrigger
-                value="ITEMS"
-                icon={<Ionicons name="list-outline" size={16} color="#475569" />}
-              >
-                {`Bảng kê (${items.length})`}
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
+          <View style={{ marginLeft: 8 }}>
+            <Text style={styles.stickyCategory} numberOfLines={1}>{groupMeta.shortName}</Text>
+            <Text style={styles.stickySellerName} numberOfLines={1}>{sellerName || 'Chưa có tên đơn vị'}</Text>
+          </View>
         </View>
+        <View style={styles.stickyRight}>
+          <Text style={styles.stickyAmount}>{formatCurrencyVND(totalAmount)}</Text>
+          <Badge variant={isConfirmed ? 'success' : 'warning'} style={{ alignSelf: 'flex-end' }}>
+            {isConfirmed ? 'Đã duyệt' : 'Chờ soát xét'}
+          </Badge>
+        </View>
+      </View>
 
-        {/* ===================== TAB 1: ĐỐI SOÁT CHỨNG TỪ & ĐÁNH GIÁ ĐỘ CHUẨN XÁC ===================== */}
-        {activeTab === 'AUDIT' && (
+      {/* 2 TABS: Kiểm tra & Xác nhận / Thông tin hóa đơn */}
+      <View style={styles.tabBar}>
+        {([
+          { key: 'KIEM_TRA', label: 'Kiểm tra & Xác nhận', icon: 'shield-checkmark-outline' },
+          { key: 'THONG_TIN', label: 'Thông tin hóa đơn', icon: 'reader-outline' },
+        ] as { key: TabType; label: string; icon: string }[]).map((tab) => (
+          <TouchableOpacity
+            key={tab.key}
+            style={[styles.tabItem, activeTab === tab.key && styles.tabItemActive]}
+            onPress={() => setActiveTab(tab.key)}
+            activeOpacity={0.7}
+          >
+            <Ionicons name={tab.icon as any} size={14} color={activeTab === tab.key ? '#8B1E1E' : '#94A3B8'} />
+            <Text style={[styles.tabLabel, activeTab === tab.key && styles.tabLabelActive]}>{tab.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+
+        {/* ===== TAB 1: KIỂM TRA & XÁC NHẬN ===== */}
+        {activeTab === 'KIEM_TRA' && (
           <View>
-            {/* Ảnh hóa đơn và vùng thông tin */}
-            <Card style={styles.visualCard}>
-              <CardHeader>
-                <CardTitle>Ảnh hóa đơn & Vùng thông tin</CardTitle>
-                <CardDescription>
-                  Chạm vào từng mục bên dưới để làm nổi bật vị trí trên chứng từ
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <View style={styles.imageWrapper}>
-                  <Image
-                    source={{
-                      uri:
-                        initialData.fileUrl ||
-                        'https://images.unsplash.com/photo-1584515979956-d9f6e5d09982?auto=format&fit=crop&w=800&q=80',
-                    }}
-                    style={styles.documentImage}
-                    resizeMode="contain"
-                  />
-
-                  {selectedFieldBox && (
-                    <View style={styles.highlightBoxOverlay}>
-                      <View style={styles.simulatedBox}>
-                        <Text style={styles.simulatedBoxText}>{selectedFieldBox}</Text>
-                      </View>
-                    </View>
-                  )}
+            {/* Banner đã duyệt */}
+            {isReadOnly && (
+              <View style={styles.confirmedBanner}>
+                <Ionicons name="shield-checkmark" size={20} color="#16A34A" />
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Text style={styles.confirmedBannerTitle}>Hóa đơn đã được duyệt chính thức</Text>
+                  <Text style={styles.confirmedBannerDesc}>Đã lưu vào hồ sơ thuế. Chế độ chỉ xem.</Text>
                 </View>
+                <Badge variant="success">Đã xác nhận</Badge>
+              </View>
+            )}
 
-                {/* Danh sách các trường bóc tách có tọa độ */}
-                <View style={styles.fieldTagsRow}>
-                  {initialData.fields && initialData.fields.length > 0 ? (
-                    initialData.fields.map((f) => {
-                      const isSelected = selectedFieldBox === f.fieldLabel;
-                      return (
-                        <TouchableOpacity
-                          key={f.fieldName}
-                          style={[styles.fieldTag, isSelected && styles.fieldTagSelected]}
-                          onPress={() =>
-                            setSelectedFieldBox(
-                              isSelected ? null : f.fieldLabel || f.fieldName
-                            )
-                          }
-                        >
-                          <View
-                            style={[
-                              styles.fieldConfidenceDot,
-                              {
-                                backgroundColor:
-                                  f.confidenceScore >= (initialData.appliedThreshold || 0.8)
-                                    ? theme.colors.success
-                                    : theme.colors.error,
-                              },
-                            ]}
-                          />
-                          <Text style={styles.fieldTagText}>
-                            {f.fieldLabel || f.fieldName} ({Math.round(f.confidenceScore * 100)}%)
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })
-                  ) : (
-                    <Text style={styles.noFieldNotice}>
-                      Ảnh hóa đơn không có tọa độ chi tiết từng mục.
-                    </Text>
-                  )}
+            {/* Ảnh hóa đơn */}
+            {initialData.fileUrl && (
+              <Card style={styles.card}>
+                <View style={styles.cardHeader}>
+                  <Ionicons name="image-outline" size={15} color="#475569" />
+                  <Text style={styles.cardHeaderTitle}>Ảnh hóa đơn gốc</Text>
                 </View>
-              </CardContent>
-            </Card>
-
-            {/* Thẻ Đánh giá Độ chuẩn xác dữ liệu */}
-            <Card style={styles.scoreCard}>
-              <CardHeader>
-                <View style={styles.scoreTopRow}>
-                  <View>
-                    <CardTitle>Đánh giá mức độ chuẩn xác dữ liệu</CardTitle>
-                    <CardDescription>
-                      Tiêu chuẩn yêu cầu:{' '}
-                      {Math.round((initialData.appliedThreshold || 0.8) * 100)}%
-                    </CardDescription>
-                  </View>
-                  <Badge
-                    variant={initialData.isPassedThreshold !== false ? 'success' : 'warning'}
-                  >
-                    {initialData.isPassedThreshold !== false ? 'ĐẠT TIÊU CHUẨN' : 'CẦN KIỂM TRA LẠI'}
-                  </Badge>
-                </View>
-              </CardHeader>
-              <CardContent>
-                <View style={styles.meterContainer}>
-                  <View style={styles.meterTrack}>
-                    <View
-                      style={[
-                        styles.meterFill,
-                        {
-                          width: `${Math.min(
-                            100,
-                            Math.round((initialData.overallConfidence || 0.92) * 100)
-                          )}%`,
-                          backgroundColor:
-                            initialData.isPassedThreshold !== false
-                              ? '#16A34A'
-                              : '#D97706',
-                        },
-                      ]}
-                    />
-                  </View>
-                  <Text style={styles.meterValText}>
-                    {Math.round((initialData.overallConfidence || 0.92) * 100)}%
-                  </Text>
-                </View>
-
-                {/* Rà soát 4 thông tin quan trọng nhất */}
-                <View style={styles.crucialSection}>
-                  <Text style={styles.crucialHeader}>
-                    Kiểm tra 4 thông tin quan trọng nhất:
-                  </Text>
-                  <View style={styles.crucialGrid}>
-                    {[
-                      'Tổng tiền thanh toán',
-                      'Mã số thuế bên bán',
-                      'CCCD / Mã số thuế người mua',
-                      'Số hóa đơn',
-                    ].map((name) => (
-                      <View key={name} style={styles.crucialItem}>
-                        <Ionicons
-                          name={
-                            crucialCheck.hasCrucialLowConfidence
-                              ? 'alert-circle'
-                              : 'checkmark-circle'
-                          }
-                          size={14}
-                          color={
-                            crucialCheck.hasCrucialLowConfidence ? '#D97706' : '#16A34A'
-                          }
-                        />
-                        <Text style={styles.crucialText}>{name}</Text>
-                      </View>
-                    ))}
-                  </View>
-                </View>
-              </CardContent>
-            </Card>
-
-            {/* Banner hiển thị các lưu ý và sai lệch */}
-            {validationErrors.length > 0 ? (
-              <Card style={styles.errorMatrixCard}>
-                <CardHeader>
-                  <View style={styles.errorMatrixHeader}>
-                    <Ionicons name="warning" size={20} color={theme.colors.error} />
-                    <CardTitle style={{ color: theme.colors.error, marginLeft: 8 }}>
-                      Danh sách lưu ý & Cảnh báo sai lệch
-                    </CardTitle>
-                  </View>
-                </CardHeader>
-                <CardContent>
-                  {validationErrors.map((err, idx) => {
-                    const details = getValidationMatrixErrorDetails(err.code);
-                    return (
-                      <View key={idx} style={styles.errorItemBox}>
-                        <Text style={styles.errorItemTitle}>{details.title}</Text>
-                        <Text style={styles.errorItemMsg}>{details.message}</Text>
-                        <Text style={styles.errorItemHint}>Gợi ý: {details.actionHint}</Text>
-                      </View>
-                    );
-                  })}
-                </CardContent>
-              </Card>
-            ) : (
-              <Card style={styles.validMatrixCard}>
-                <CardContent style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <Ionicons name="checkmark-done-circle" size={28} color="#16A34A" />
-                  <View style={{ flex: 1, marginLeft: 12 }}>
-                    <Text style={styles.validMatrixTitle}>
-                      Hóa đơn đáp ứng đầy đủ tiêu chuẩn khấu trừ thuế
-                    </Text>
-                    <Text style={styles.validMatrixSubtitle}>
-                      Khớp năm tính thuế {initialData.extractedYear || new Date().getFullYear()}, đúng danh mục giảm
-                      trừ, thông tin rõ ràng đầy đủ.
-                    </Text>
-                  </View>
-                </CardContent>
+                <Image
+                  source={{ uri: initialData.fileUrl }}
+                  style={styles.invoiceImage}
+                  resizeMode="contain"
+                />
               </Card>
             )}
+
+            {/* Đánh giá mức độ tin cậy */}
+            <Card style={styles.card}>
+              <View style={styles.cardHeader}>
+                <Ionicons name="stats-chart-outline" size={15} color="#475569" />
+                <Text style={styles.cardHeaderTitle}>Mức độ tin cậy thông tin nhận diện</Text>
+                <Badge variant={initialData.isPassedThreshold !== false ? 'success' : 'warning'}>
+                  {initialData.isPassedThreshold !== false ? 'Đạt yêu cầu' : 'Cần xem lại'}
+                </Badge>
+              </View>
+              <View style={styles.confidenceBar}>
+                <View style={[styles.confidenceFill, {
+                  width: `${Math.min(100, Math.round((initialData.overallConfidence || 0.92) * 100))}%`,
+                  backgroundColor: initialData.isPassedThreshold !== false ? '#16A34A' : '#D97706',
+                }]} />
+              </View>
+              <Text style={styles.confidencePct}>
+                {Math.round((initialData.overallConfidence || 0.92) * 100)}% / Ngưỡng {Math.round((initialData.appliedThreshold || 0.8) * 100)}%
+              </Text>
+
+              {/* 4 điểm kiểm tra */}
+              <View style={styles.checkGrid}>
+                {[
+                  'Tổng tiền thanh toán',
+                  'Mã số thuế bên bán',
+                  'Số CCCD người mua',
+                  'Số hóa đơn',
+                ].map((name) => (
+                  <View key={name} style={styles.checkItem}>
+                    <Ionicons
+                      name={crucialCheck.hasCrucialLowConfidence ? 'alert-circle-outline' : 'checkmark-circle-outline'}
+                      size={14}
+                      color={crucialCheck.hasCrucialLowConfidence ? '#D97706' : '#16A34A'}
+                    />
+                    <Text style={styles.checkText}>{name}</Text>
+                  </View>
+                ))}
+              </View>
+            </Card>
+
+            {/* Cảnh báo lỗi / Xác nhận hợp lệ */}
+            {validationErrors.length > 0 ? (
+              <Card style={[styles.card, styles.cardWarning]}>
+                <View style={styles.cardHeader}>
+                  <Ionicons name="warning-outline" size={15} color="#D97706" />
+                  <Text style={[styles.cardHeaderTitle, { color: '#92400E' }]}>Lưu ý khi xét duyệt ({validationErrors.length})</Text>
+                </View>
+                {validationErrors.map((err, idx) => {
+                  const details = getValidationMatrixErrorDetails(err.code);
+                  return (
+                    <View key={idx} style={styles.errorItem}>
+                      <Text style={styles.errorItemTitle}>{details.title}</Text>
+                      <Text style={styles.errorItemMsg}>{details.message}</Text>
+                      <Text style={styles.errorItemHint}>💡 {details.actionHint}</Text>
+                    </View>
+                  );
+                })}
+              </Card>
+            ) : (
+              <Card style={[styles.card, styles.cardSuccess]}>
+                <View style={styles.cardHeader}>
+                  <Ionicons name="checkmark-done-circle-outline" size={15} color="#16A34A" />
+                  <Text style={[styles.cardHeaderTitle, { color: '#15803D' }]}>Hóa đơn đáp ứng điều kiện giảm trừ thuế</Text>
+                </View>
+                <Text style={styles.successDesc}>
+                  Đúng năm tính thuế {initialData.extractedYear || new Date().getFullYear()}, đúng danh mục, thông tin đầy đủ và rõ ràng.
+                </Text>
+              </Card>
+            )}
+
+            {/* Cam kết chưa bồi hoàn */}
+            <Card style={styles.card}>
+              <View style={styles.cardHeader}>
+                <Ionicons name="shield-checkmark-outline" size={15} color="#475569" />
+                <Text style={styles.cardHeaderTitle}>Xác nhận điều kiện giảm trừ thuế</Text>
+              </View>
+              <Text style={styles.commitDesc}>
+                Theo quy định thuế TNCN, chi phí chỉ được giảm trừ khi chưa được bảo hiểm hoặc tổ chức khác bồi hoàn toàn bộ.
+              </Text>
+              <TouchableOpacity
+                disabled={isReadOnly}
+                onPress={() => setIsNotReimbursed(!isNotReimbursed)}
+                style={[styles.commitBox, isNotReimbursed ? styles.commitBoxChecked : styles.commitBoxUnchecked]}
+                activeOpacity={0.8}
+              >
+                <Ionicons
+                  name={isNotReimbursed ? 'checkbox' : 'square-outline'}
+                  size={22}
+                  color={isNotReimbursed ? '#8B1E1E' : '#94A3B8'}
+                />
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Text style={[styles.commitTitle, isNotReimbursed && { color: '#8B1E1E', fontWeight: '700' }]}>
+                    Tôi xác nhận khoản chi phí này chưa được bồi hoàn từ bảo hiểm hoặc nguồn khác
+                  </Text>
+                  <Text style={styles.commitStatus}>
+                    {isNotReimbursed ? '✓ Đủ điều kiện giảm trừ thuế TNCN' : '⚠ Nếu đã bồi hoàn, sẽ không được tính giảm trừ'}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            </Card>
           </View>
         )}
 
-        {/* ===================== TAB 2: THÔNG TIN HÓA ĐƠN (HUMAN-IN-THE-LOOP EDIT) ===================== */}
-        {activeTab === 'INFO' && (
+        {/* ===== TAB 2: THÔNG TIN HÓA ĐƠN ===== */}
+        {activeTab === 'THONG_TIN' && (
           <View>
-            {/* Khối Loại chứng từ cấu hình */}
-            <Card style={styles.formSectionCard}>
-              <CardHeader style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                <CardTitle>Loại chứng từ & Phân nhóm</CardTitle>
+            {/* Loại chứng từ */}
+            <Card style={styles.card}>
+              <View style={styles.cardHeaderRow}>
+                <View style={styles.cardHeader}>
+                  <Ionicons name="albums-outline" size={15} color="#475569" />
+                  <Text style={styles.cardHeaderTitle}>Loại hóa đơn chi phí</Text>
+                </View>
                 {!isReadOnly && (
-                  <TouchableOpacity
-                    onPress={() => setShowDocTypeModal(true)}
-                    style={styles.changeDocTypeBtn}
-                    activeOpacity={0.7}
-                  >
-                    <Ionicons name="swap-horizontal" size={14} color={theme.colors.primary} />
-                    <Text style={styles.changeDocTypeBtnText}>Thay đổi loại</Text>
+                  <TouchableOpacity onPress={() => setShowDocTypeModal(true)} style={styles.changeCategoryBtn}>
+                    <Ionicons name="swap-horizontal" size={13} color="#8B1E1E" />
+                    <Text style={styles.changeCategoryText}>Đổi loại</Text>
                   </TouchableOpacity>
                 )}
-              </CardHeader>
-              <CardContent>
-                <View style={styles.docTypeSelectedBox}>
-                  <View style={styles.docTypeSelectedIconCircle}>
-                    <Ionicons
-                      name={getDocumentTypeIcon(currentDocTypeCode, currentDocTypeName) as any}
-                      size={20}
-                      color={theme.colors.primary}
-                    />
+              </View>
+              <View style={styles.docTypeRow}>
+                <View style={[styles.docTypeIcon, { backgroundColor: `${groupMeta.color}20` }]}>
+                  <Ionicons name={getDocumentTypeIcon(currentDocTypeCode, currentDocTypeName) as any} size={18} color={groupMeta.color} />
+                </View>
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Text style={styles.docTypeName}>{currentDocTypeName}</Text>
+                  <View style={{ flexDirection: 'row', gap: 6, marginTop: 3, flexWrap: 'wrap' }}>
+                    <Text style={styles.docTypeCode}>{currentDocTypeCode}</Text>
+                    <Badge variant={currentDocTypeItem?.isTaxEligible !== false ? 'teal' : 'secondary'}>
+                      {currentDocTypeItem?.isTaxEligible !== false ? 'Được giảm trừ thuế' : 'Không giảm trừ'}
+                    </Badge>
                   </View>
-                  <View style={{ flex: 1, marginLeft: 10 }}>
-                    <Text style={styles.docTypeSelectedName}>{currentDocTypeName}</Text>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, gap: 6, flexWrap: 'wrap' }}>
-                      <Text style={styles.docTypeCodeMono}>{currentDocTypeCode}</Text>
-                      <Badge variant={currentDocTypeItem?.isTaxEligible !== false ? 'teal' : 'secondary'}>
-                        {currentDocTypeItem?.isTaxEligible !== false ? 'Đủ điều kiện giảm trừ' : 'Không giảm trừ'}
-                      </Badge>
+                </View>
+              </View>
+            </Card>
+
+            {/* Đơn vị phát hành (Bên bán) */}
+            <Card style={styles.card}>
+              <View style={styles.cardHeader}>
+                <Ionicons name="business-outline" size={15} color="#475569" />
+                <Text style={styles.cardHeaderTitle}>Đơn vị phát hành hóa đơn</Text>
+              </View>
+              <FieldInput label="Tên đơn vị / Người bán" value={sellerName} onChange={setSellerName} placeholder="Tên bệnh viện, trường học, cơ sở..." />
+              <FieldInput label="Mã số thuế" value={sellerTaxCode} onChange={setSellerTaxCode} placeholder="Ví dụ: 0302221111" keyboardType="numeric" />
+              <FieldInput label="Địa chỉ" value={sellerAddress} onChange={setSellerAddress} placeholder="Địa chỉ trụ sở" />
+              <FieldInput label="Số điện thoại" value={sellerPhone} onChange={setSellerPhone} placeholder="Số điện thoại liên hệ" keyboardType="phone-pad" />
+            </Card>
+
+            {/* Thông tin hóa đơn */}
+            <Card style={styles.card}>
+              <View style={styles.cardHeader}>
+                <Ionicons name="receipt-outline" size={15} color="#475569" />
+                <Text style={styles.cardHeaderTitle}>Thông tin hóa đơn</Text>
+              </View>
+              <View style={styles.rowInputs}>
+                <View style={{ flex: 1, marginRight: 6 }}>
+                  <FieldInput label="Ký hiệu mẫu" value={invoiceSeries} onChange={setInvoiceSeries} placeholder="2C26TBH" />
+                </View>
+                <View style={{ flex: 1, marginLeft: 6 }}>
+                  <FieldInput label="Số hóa đơn" value={invoiceNumber} onChange={setInvoiceNumber} placeholder="0082621" keyboardType="numeric" />
+                </View>
+              </View>
+              <FieldInput label="Ngày lập (YYYY-MM-DD)" value={invoiceDate} onChange={setInvoiceDate} placeholder={`${new Date().getFullYear()}-03-15`} />
+              <FieldInput label="Tổng tiền thực thanh toán (VNĐ)" value={totalAmount ? String(totalAmount) : ''} onChange={(v) => setTotalAmount(Number(v.replace(/[^0-9]/g,''))||0)} placeholder="Nhập số tiền" keyboardType="numeric" />
+              <FieldInput label="Đường dẫn tra cứu điện tử" value={lookupUrl} onChange={setLookupUrl} placeholder="https://..." />
+              <FieldInput label="Mã tra cứu hóa đơn" value={lookupCode} onChange={setLookupCode} placeholder="Mã tra cứu" />
+            </Card>
+
+            {/* Người thanh toán */}
+            <Card style={styles.card}>
+              <View style={styles.cardHeader}>
+                <Ionicons name="person-outline" size={15} color="#475569" />
+                <Text style={styles.cardHeaderTitle}>Người thanh toán</Text>
+              </View>
+              <FieldInput label="Họ và tên" value={buyerName} onChange={setBuyerName} placeholder="NGUYỄN VĂN AN" />
+              <FieldInput label="Số CCCD" value={buyerIdCard} onChange={setBuyerIdCard} placeholder="12 chữ số" keyboardType="numeric" />
+              <FieldInput label="Địa chỉ" value={buyerAddress} onChange={setBuyerAddress} placeholder="Địa chỉ thường trú" />
+              <FieldInput label="Hình thức thanh toán" value={paymentMethod} onChange={setPaymentMethod} placeholder="Chuyển khoản / Tiền mặt" />
+            </Card>
+
+            {/* Bảng kê chi tiết */}
+            <Card style={styles.card}>
+              <View style={styles.cardHeaderRow}>
+                <View style={styles.cardHeader}>
+                  <Ionicons name="list-outline" size={15} color="#475569" />
+                  <Text style={styles.cardHeaderTitle}>Danh sách dịch vụ & Chi phí ({items.length})</Text>
+                </View>
+                {!isReadOnly && (
+                  <TouchableOpacity onPress={() => handleOpenItemModal()} style={styles.addItemBtn}>
+                    <Ionicons name="add" size={14} color="#fff" />
+                    <Text style={styles.addItemBtnText}>Thêm</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              {items.length === 0 ? (
+                <Text style={styles.emptyItems}>
+                  {isReadOnly ? 'Không có dịch vụ nào.' : "Chưa có dịch vụ. Bấm 'Thêm' để bổ sung."}
+                </Text>
+              ) : (
+                items.map((it, idx) => (
+                  <View key={idx} style={styles.itemRow}>
+                    <View style={styles.itemOrderBadge}>
+                      <Text style={styles.itemOrderText}>{it.itemOrder || idx + 1}</Text>
                     </View>
-                  </View>
-                </View>
-              </CardContent>
-            </Card>
-
-            {/* Khối bên bán */}
-            <Card style={styles.formSectionCard}>
-              <CardHeader>
-                <CardTitle>Đơn vị phát hành (Bên bán)</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Text style={styles.fieldLabel}>Tên cơ sở / Bệnh viện / Trường học</Text>
-                <TextInput
-                  editable={!isReadOnly}
-                  style={[styles.textInput, isReadOnly && styles.readOnlyInput]}
-                  value={sellerName}
-                  onChangeText={setSellerName}
-                  placeholder="Nhập tên bên bán"
-                />
-
-                <Text style={styles.fieldLabel}>Mã số thuế bên bán</Text>
-                <TextInput
-                  editable={!isReadOnly}
-                  style={[styles.textInput, isReadOnly && styles.readOnlyInput]}
-                  value={sellerTaxCode}
-                  onChangeText={setSellerTaxCode}
-                  placeholder="Ví dụ: 0302221111"
-                  keyboardType="numeric"
-                />
-
-                <Text style={styles.fieldLabel}>Địa chỉ bên bán</Text>
-                <TextInput
-                  editable={!isReadOnly}
-                  style={[styles.textInput, isReadOnly && styles.readOnlyInput]}
-                  value={sellerAddress}
-                  onChangeText={setSellerAddress}
-                  placeholder="Địa chỉ trụ sở"
-                />
-
-                <Text style={styles.fieldLabel}>Số điện thoại liên hệ</Text>
-                <TextInput
-                  editable={!isReadOnly}
-                  style={[styles.textInput, isReadOnly && styles.readOnlyInput]}
-                  value={sellerPhone}
-                  onChangeText={setSellerPhone}
-                  placeholder="Số điện thoại"
-                  keyboardType="phone-pad"
-                />
-              </CardContent>
-            </Card>
-
-            {/* Khối hóa đơn */}
-            <Card style={styles.formSectionCard}>
-              <CardHeader>
-                <CardTitle>Thông tin hóa đơn & Tra cứu</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <View style={styles.rowInputs}>
-                  <View style={{ flex: 1, marginRight: 8 }}>
-                    <Text style={styles.fieldLabel}>Ký hiệu mẫu HĐ</Text>
-                    <TextInput
-                      editable={!isReadOnly}
-                      style={[styles.textInput, isReadOnly && styles.readOnlyInput]}
-                      value={invoiceSeries}
-                      onChangeText={setInvoiceSeries}
-                      placeholder="2C26TBH"
-                    />
-                  </View>
-                  <View style={{ flex: 1, marginLeft: 8 }}>
-                    <Text style={styles.fieldLabel}>Số hóa đơn</Text>
-                    <TextInput
-                      editable={!isReadOnly}
-                      style={[styles.textInput, isReadOnly && styles.readOnlyInput]}
-                      value={invoiceNumber}
-                      onChangeText={setInvoiceNumber}
-                      placeholder="0082621"
-                      keyboardType="numeric"
-                    />
-                  </View>
-                </View>
-
-                <Text style={styles.fieldLabel}>Ngày lập hóa đơn (YYYY-MM-DD)</Text>
-                <TextInput
-                  editable={!isReadOnly}
-                  style={[styles.textInput, isReadOnly && styles.readOnlyInput]}
-                  value={invoiceDate}
-                  onChangeText={setInvoiceDate}
-                  placeholder={`${new Date().getFullYear()}-03-15`}
-                />
-
-                <Text style={styles.fieldLabel}>Đường dẫn tra cứu HĐĐT</Text>
-                <TextInput
-                  editable={!isReadOnly}
-                  style={[styles.textInput, isReadOnly && styles.readOnlyInput]}
-                  value={lookupUrl}
-                  onChangeText={setLookupUrl}
-                  placeholder="https://..."
-                  autoCapitalize="none"
-                />
-
-                <Text style={styles.fieldLabel}>Mã tra cứu hóa đơn</Text>
-                <TextInput
-                  editable={!isReadOnly}
-                  style={[styles.textInput, isReadOnly && styles.readOnlyInput]}
-                  value={lookupCode}
-                  onChangeText={setLookupCode}
-                  placeholder="Nhập mã tra cứu"
-                />
-              </CardContent>
-            </Card>
-
-            {/* Khối người mua */}
-            <Card style={styles.formSectionCard}>
-              <CardHeader>
-                <CardTitle>Người nộp thuế / Thân nhân (Bên mua)</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Text style={styles.fieldLabel}>Họ và tên người mua / Bệnh nhân</Text>
-                <TextInput
-                  editable={!isReadOnly}
-                  style={[styles.textInput, isReadOnly && styles.readOnlyInput]}
-                  value={buyerName}
-                  onChangeText={setBuyerName}
-                  placeholder="NGUYỄN VĂN AN"
-                />
-
-                <Text style={styles.fieldLabel}>Số CCCD người mua</Text>
-                <TextInput
-                  editable={!isReadOnly}
-                  style={[styles.textInput, isReadOnly && styles.readOnlyInput]}
-                  value={buyerIdCard}
-                  onChangeText={setBuyerIdCard}
-                  placeholder="12 chữ số CCCD"
-                  keyboardType="numeric"
-                />
-
-                <Text style={styles.fieldLabel}>Phương thức thanh toán</Text>
-                <TextInput
-                  editable={!isReadOnly}
-                  style={[styles.textInput, isReadOnly && styles.readOnlyInput]}
-                  value={paymentMethod}
-                  onChangeText={setPaymentMethod}
-                  placeholder="Chuyển khoản / Tiền mặt / Thẻ"
-                />
-              </CardContent>
-            </Card>
-          </View>
-        )}
-
-        {/* ===================== TAB 3: BẢNG CHI TIẾT HÀNG HÓA / DỊCH VỤ ===================== */}
-        {activeTab === 'ITEMS' && (
-          <View>
-            <Card style={styles.formSectionCard}>
-              <CardHeader>
-                <View style={styles.itemsHeaderRow}>
-                  <View style={{ flex: 1 }}>
-                    <CardTitle>Bảng kê chi tiết viện phí / học phí</CardTitle>
-                    <CardDescription>
-                      Đã ghi nhận {items.length} dòng mục chi phí
-                    </CardDescription>
-                  </View>
-                  {!isReadOnly && (
-                    <Button
-                      variant="default"
-                      size="sm"
-                      onPress={() => handleOpenItemModal()}
-                      icon={<Ionicons name="add" size={16} color="#FFFFFF" />}
-                    >
-                      Thêm dòng
-                    </Button>
-                  )}
-                </View>
-              </CardHeader>
-              <CardContent>
-                {items.length === 0 ? (
-                  <Text style={styles.noFieldNotice}>
-                    {isReadOnly
-                      ? 'Không có dòng bảng kê chi tiết.'
-                      : "Chưa có dòng kê nào. Bấm 'Thêm dòng' để bổ sung chi tiết."}
-                  </Text>
-                ) : (
-                  items.map((it, idx) => (
-                    <View key={idx} style={styles.itemRowCard}>
-                      <View style={styles.itemOrderBadge}>
-                        <Text style={styles.itemOrderText}>#{it.itemOrder || idx + 1}</Text>
-                      </View>
-
-                      <View style={{ flex: 1, marginHorizontal: 10 }}>
-                        <Text style={styles.itemNameText}>{it.itemName}</Text>
-                        <Text style={styles.itemSubText}>
-                          {it.quantity} {it.unit || 'mục'} x {formatCurrencyVND(it.unitPrice)}
-                        </Text>
-                        <Text style={styles.itemTotalAmount}>
-                          {formatCurrencyVND(it.totalPrice)}
-                        </Text>
-                      </View>
-
+                    <View style={{ flex: 1, marginHorizontal: 10 }}>
+                      <Text style={styles.itemName}>{it.itemName}</Text>
+                      <Text style={styles.itemMeta}>
+                        {it.quantity} {it.unit || 'lần'} × {formatCurrencyVND(it.unitPrice)}
+                      </Text>
+                    </View>
+                    <View style={{ alignItems: 'flex-end' }}>
+                      <Text style={styles.itemAmount}>{formatCurrencyVND(it.totalPrice)}</Text>
                       {!isReadOnly && (
                         <View style={styles.itemActions}>
-                          <TouchableOpacity
-                            style={styles.itemIconBtn}
-                            onPress={() => handleOpenItemModal(idx)}
-                          >
-                            <Ionicons name="pencil" size={16} color={theme.colors.primary} />
+                          <TouchableOpacity onPress={() => handleOpenItemModal(idx)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                            <Ionicons name="pencil-outline" size={14} color="#475569" />
                           </TouchableOpacity>
-                          <TouchableOpacity
-                            style={styles.itemIconBtn}
-                            onPress={() => handleDeleteItem(idx)}
-                          >
-                            <Ionicons name="trash-outline" size={16} color={theme.colors.error} />
+                          <TouchableOpacity onPress={() => handleDeleteItem(idx)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                            <Ionicons name="trash-outline" size={14} color="#EF4444" />
                           </TouchableOpacity>
                         </View>
                       )}
                     </View>
-                  ))
-                )}
+                  </View>
+                ))
+              )}
 
-                <Separator style={{ marginVertical: 14 }} />
-
-                {/* Tổng cộng chi phí */}
-                <View style={styles.totalSummaryRow}>
-                  <Text style={styles.totalSummaryLabel}>TỔNG CỘNG THANH TOÁN:</Text>
-                  <Text style={styles.totalSummaryValue}>{formatCurrencyVND(totalAmount)}</Text>
-                </View>
-              </CardContent>
+              {items.length > 0 && (
+                <>
+                  <Separator style={{ marginVertical: 12 }} />
+                  <View style={styles.totalRow}>
+                    <Text style={styles.totalLabel}>Tổng các dòng:</Text>
+                    <Text style={styles.totalValue}>{formatCurrencyVND(itemsSum)}</Text>
+                  </View>
+                  <View style={[styles.totalRow, { marginTop: 4 }]}>
+                    <Text style={[styles.totalLabel, { color: '#8B1E1E', fontWeight: '700' }]}>Thực tế thanh toán:</Text>
+                    <Text style={[styles.totalValue, { color: '#8B1E1E', fontSize: 16 }]}>{formatCurrencyVND(totalAmount)}</Text>
+                  </View>
+                  {itemsSum !== totalAmount && (
+                    <View style={styles.diffNotice}>
+                      <Ionicons name="information-circle-outline" size={14} color="#D97706" />
+                      <Text style={styles.diffNoticeText}>
+                        Chênh lệch do chiết khấu, bồi thường bảo hiểm hoặc điều chỉnh thực tế.
+                      </Text>
+                    </View>
+                  )}
+                </>
+              )}
             </Card>
           </View>
         )}
 
-        {/* NÚT HÀNH ĐỘNG */}
-        <View style={styles.footerActions}>
-          {isReadOnly ? (
-            <Button
-              variant="outline"
-              size="lg"
-              onPress={() => navigation.goBack()}
-              icon={<Ionicons name="arrow-back-outline" size={20} color="#0F172A" />}
-              style={styles.backBtn}
-            >
-              Quay lại danh sách
-            </Button>
-          ) : (
-            <Button
-              variant="default"
-              size="lg"
-              onPress={handleConfirmReview}
-              loading={saving}
-              icon={<Ionicons name="checkmark-circle-outline" size={20} color="#FFFFFF" />}
-              style={styles.confirmBtn}
-            >
-              {`Xác nhận & Lưu vào ${groupMeta.shortName}`}
-            </Button>
-          )}
-        </View>
-
-        <View style={{ height: 30 }} />
+        <View style={{ height: 100 }} />
       </ScrollView>
 
-      {/* Modal Thêm / Sửa Dòng Hàng Hóa */}
+      {/* STICKY BOTTOM CTA */}
+      <View style={styles.stickyBottom}>
+        {isReadOnly ? (
+          <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.8}>
+            <Ionicons name="arrow-back-outline" size={18} color="#475569" />
+            <Text style={styles.backBtnText}>Quay lại danh sách</Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            style={[styles.confirmBtn, saving && styles.confirmBtnLoading]}
+            onPress={handleConfirmReview}
+            disabled={saving}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="checkmark-circle-outline" size={20} color="#fff" />
+            <Text style={styles.confirmBtnText}>
+              {saving ? 'Đang lưu...' : `Xác nhận & Lưu vào "${groupMeta.shortName}"`}
+            </Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* MODAL THÊM / SỬA DÒNG CHI PHÍ */}
       <Modal visible={itemModalVisible} transparent animationType="slide">
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>
-                {editingItemIndex !== null ? 'Sửa dòng chi phí' : 'Thêm dòng chi phí'}
-              </Text>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>{editingItemIndex !== null ? 'Sửa khoản mục' : 'Thêm khoản mục'}</Text>
               <TouchableOpacity onPress={() => setItemModalVisible(false)}>
-                <Ionicons name="close" size={22} color="#64748B" />
+                <Ionicons name="close" size={20} color="#475569" />
               </TouchableOpacity>
             </View>
-
-            <Text style={styles.fieldLabel}>Tên dịch vụ / Hàng hóa / Viện phí</Text>
-            <TextInput
-              style={styles.textInput}
-              value={itemFormName}
-              onChangeText={setItemFormName}
-              placeholder="Ví dụ: Khám chuyên khoa Nội"
-            />
-
+            <Text style={styles.fieldLabel}>Tên dịch vụ / Khoản mục</Text>
+            <TextInput style={styles.textInput} value={itemFormName} onChangeText={setItemFormName} placeholder="Ví dụ: Khám nội tổng quát" placeholderTextColor="#94A3B8" />
             <View style={styles.rowInputs}>
               <View style={{ flex: 1, marginRight: 6 }}>
                 <Text style={styles.fieldLabel}>Đơn vị tính</Text>
-                <TextInput
-                  style={styles.textInput}
-                  value={itemFormUnit}
-                  onChangeText={setItemFormUnit}
-                  placeholder="Lần, Hộp..."
-                />
+                <TextInput style={styles.textInput} value={itemFormUnit} onChangeText={setItemFormUnit} placeholder="Lần, Hộp..." placeholderTextColor="#94A3B8" />
               </View>
               <View style={{ flex: 1, marginLeft: 6 }}>
                 <Text style={styles.fieldLabel}>Số lượng</Text>
-                <TextInput
-                  style={styles.textInput}
-                  value={itemFormQty}
-                  onChangeText={setItemFormQty}
-                  keyboardType="numeric"
-                  placeholder="1"
-                />
+                <TextInput style={styles.textInput} value={itemFormQty} onChangeText={setItemFormQty} keyboardType="numeric" placeholder="1" placeholderTextColor="#94A3B8" />
               </View>
             </View>
-
             <Text style={styles.fieldLabel}>Đơn giá (VNĐ)</Text>
-            <TextInput
-              style={styles.textInput}
-              value={itemFormPrice}
-              onChangeText={setItemFormPrice}
-              keyboardType="numeric"
-              placeholder="0"
-            />
-
-            <View style={styles.modalBtnRow}>
-              <Button
-                variant="outline"
-                size="default"
-                onPress={() => setItemModalVisible(false)}
-                style={{ flex: 1, marginRight: 8 }}
-              >
-                Hủy
-              </Button>
-              <Button
-                variant="default"
-                size="default"
-                onPress={handleSaveItem}
-                style={{ flex: 1, marginLeft: 8 }}
-              >
-                Lưu dòng
-              </Button>
+            <TextInput style={styles.textInput} value={itemFormPrice} onChangeText={setItemFormPrice} keyboardType="numeric" placeholder="0" placeholderTextColor="#94A3B8" />
+            <View style={styles.rowInputs}>
+              <TouchableOpacity style={styles.modalBtnCancel} onPress={() => setItemModalVisible(false)}>
+                <Text style={styles.modalBtnCancelText}>Hủy</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.modalBtnConfirm} onPress={handleSaveItem}>
+                <Text style={styles.modalBtnConfirmText}>Lưu</Text>
+              </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
 
-      {/* MODAL CHỌN LOẠI CHỨNG TỪ TỪ CẤU HÌNH ADMIN */}
-      <Modal
-        visible={showDocTypeModal}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setShowDocTypeModal(false)}
-      >
+      {/* MODAL CHỌN LOẠI CHỨNG TỪ */}
+      <Modal visible={showDocTypeModal} transparent animationType="slide">
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <View>
-                <Text style={styles.modalTitle}>Chọn loại chứng từ</Text>
-                <Text style={styles.modalSubtitle}>Đồng bộ từ cấu hình hệ thống của quản trị viên</Text>
-              </View>
+          <View style={[styles.modalCard, { maxHeight: '80%' }]}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Chọn loại hóa đơn</Text>
               <TouchableOpacity onPress={() => setShowDocTypeModal(false)}>
-                <Ionicons name="close" size={22} color="#64748B" />
+                <Ionicons name="close" size={20} color="#475569" />
               </TouchableOpacity>
             </View>
-
-            <ScrollView style={{ maxHeight: 380 }} showsVerticalScrollIndicator={false}>
+            <ScrollView>
               {documentTypes.map((t) => {
-                const isSelected = currentDocTypeCode === t.code;
-                const iconName = getDocumentTypeIcon(t.code, t.name);
+                const isSelected = t.code === currentDocTypeCode;
                 return (
                   <TouchableOpacity
                     key={t.code}
-                    style={[styles.modalDocTypeItem, isSelected && styles.modalDocTypeItemSelected]}
-                    onPress={() => {
-                      setCurrentDocTypeCode(t.code);
-                      setShowDocTypeModal(false);
-                    }}
-                    activeOpacity={0.75}
+                    style={[styles.docTypeOption, isSelected && styles.docTypeOptionSelected]}
+                    onPress={() => { setCurrentDocTypeCode(t.code); setShowDocTypeModal(false); }}
                   >
-                    <View
-                      style={[
-                        styles.modalDocTypeIconCircle,
-                        isSelected && { backgroundColor: theme.colors.primary },
-                      ]}
-                    >
-                      <Ionicons
-                        name={iconName as any}
-                        size={18}
-                        color={isSelected ? '#FFFFFF' : theme.colors.primary}
-                      />
+                    <View style={[styles.docTypeOptionIcon, { backgroundColor: isSelected ? '#8B1E1E' : '#F1F5F9' }]}>
+                      <Ionicons name={getDocumentTypeIcon(t.code, t.name) as any} size={16} color={isSelected ? '#fff' : '#475569'} />
                     </View>
                     <View style={{ flex: 1, marginLeft: 10 }}>
-                      <Text
-                        style={[
-                          styles.modalDocTypeName,
-                          isSelected && styles.modalDocTypeNameSelected,
-                        ]}
-                      >
-                        {t.name}
-                      </Text>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2, gap: 6, flexWrap: 'wrap' }}>
-                        <Text style={styles.modalDocTypeCode}>{t.code}</Text>
-                        <Badge variant={t.isTaxEligible ? 'teal' : 'secondary'}>
-                          {t.isTaxEligible ? 'Được giảm trừ' : 'Không giảm trừ'}
-                        </Badge>
-                      </View>
+                      <Text style={[styles.docTypeOptionName, isSelected && { color: '#8B1E1E', fontWeight: '700' }]}>{t.name}</Text>
+                      <Text style={styles.docTypeOptionCode}>{t.code}</Text>
                     </View>
-                    <Ionicons
-                      name={isSelected ? 'radio-button-on' : 'radio-button-off'}
-                      size={20}
-                      color={isSelected ? theme.colors.primary : '#CBD5E1'}
-                    />
+                    {isSelected && <Ionicons name="checkmark-circle" size={18} color="#8B1E1E" />}
                   </TouchableOpacity>
                 );
               })}
@@ -1070,481 +706,191 @@ export const ExpenseReviewScreen: React.FC = () => {
 };
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: '#F8F5EE',
-  },
-  scrollContent: {
+  safeArea: { flex: 1, backgroundColor: '#F8F5EE' },
+  // Sticky header
+  stickyHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingBottom: 40,
-  },
-  aiClassificationCard: {
-    marginTop: 8,
-    marginBottom: 12,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#FFFFFF',
-  },
-  aiClassificationContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-  },
-  aiClassificationIconCircle: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  aiClassificationName: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#0F172A',
-    marginTop: 4,
-  },
-  aiClassificationDesc: {
-    fontSize: 12,
-    color: '#64748B',
-    marginTop: 2,
-    lineHeight: 16,
-  },
-  tabsWrapper: {
-    marginBottom: 12,
-  },
-  visualCard: {
-    borderColor: '#E2E8F0',
-    marginBottom: 12,
-  },
-  imageWrapper: {
-    position: 'relative',
-    width: '100%',
-    height: 240,
-    backgroundColor: '#0F172A',
-    borderRadius: 8,
-    overflow: 'hidden',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  documentImage: {
-    width: '100%',
-    height: '100%',
-  },
-  highlightBoxOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.4)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  simulatedBox: {
-    borderWidth: 2,
-    borderColor: '#FACC15',
-    backgroundColor: 'rgba(250, 204, 21, 0.25)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 4,
-  },
-  simulatedBoxText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 13,
-  },
-  fieldTagsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginTop: 12,
-  },
-  fieldTag: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-    backgroundColor: '#F1F5F9',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  fieldTagSelected: {
-    backgroundColor: '#FEF3C7',
-    borderColor: '#F59E0B',
-  },
-  fieldConfidenceDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    marginRight: 6,
-  },
-  fieldTagText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#334155',
-  },
-  noFieldNotice: {
-    fontSize: 12,
-    color: '#94A3B8',
-    fontStyle: 'italic',
-    paddingVertical: 8,
-  },
-  scoreCard: {
-    borderColor: '#E2E8F0',
-    marginBottom: 12,
-  },
-  scoreTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  meterContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginTop: 4,
-  },
-  meterTrack: {
-    flex: 1,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: '#E2E8F0',
-    overflow: 'hidden',
-  },
-  meterFill: {
-    height: '100%',
-    borderRadius: 5,
-  },
-  meterValText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#0F172A',
-    width: 40,
-    textAlign: 'right',
-  },
-  crucialSection: {
-    marginTop: 14,
-    backgroundColor: '#F8FAFC',
-    padding: 10,
-    borderRadius: 8,
-  },
-  crucialHeader: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#334155',
-    marginBottom: 8,
-  },
-  crucialGrid: {
-    gap: 6,
-  },
-  crucialItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  crucialText: {
-    fontSize: 12,
-    color: '#475569',
-  },
-  errorMatrixCard: {
-    borderColor: '#FCA5A5',
-    backgroundColor: '#FEF2F2',
-    marginBottom: 12,
-  },
-  errorMatrixHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  errorItemBox: {
-    paddingVertical: 6,
-    borderBottomWidth: 1,
-    borderBottomColor: '#FEE2E2',
-  },
-  errorItemTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#DC2626',
-  },
-  errorItemMsg: {
-    fontSize: 12,
-    color: '#475569',
-    marginTop: 2,
-  },
-  errorItemHint: {
-    fontSize: 11,
-    color: '#8B1E1E',
-    marginTop: 2,
-    fontStyle: 'italic',
-  },
-  validMatrixCard: {
-    borderColor: '#BBF7D0',
-    backgroundColor: '#F0FDF4',
-    marginBottom: 12,
-  },
-  validMatrixTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#16A34A',
-  },
-  validMatrixSubtitle: {
-    fontSize: 11,
-    color: '#64748B',
-    marginTop: 2,
-  },
-  formSectionCard: {
-    borderColor: '#E2E8F0',
-    marginBottom: 12,
-  },
-  fieldLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#475569',
-    marginTop: 10,
-    marginBottom: 4,
-  },
-  textInput: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#CBD5E1',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    fontSize: 14,
-    color: '#0F172A',
-  },
-  rowInputs: {
-    flexDirection: 'row',
-  },
-  itemsHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  itemRowCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
     paddingVertical: 10,
+    backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#F1F5F9',
   },
-  itemOrderBadge: {
-    width: 28,
-    height: 28,
-    borderRadius: 6,
-    backgroundColor: '#F1F5F9',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  itemOrderText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#475569',
-  },
-  itemNameText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#0F172A',
-  },
-  itemSubText: {
-    fontSize: 11,
-    color: '#64748B',
-    marginTop: 2,
-  },
-  itemTotalAmount: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#8B1E1E',
-    marginTop: 2,
-  },
-  itemActions: {
+  stickyLeft: { flexDirection: 'row', alignItems: 'center', flex: 1 },
+  stickyIconCircle: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  stickyCategory: { fontSize: 11, fontWeight: '700', color: '#64748B' },
+  stickySellerName: { fontSize: 13, fontWeight: '700', color: '#0F172A', maxWidth: 160 },
+  stickyRight: { alignItems: 'flex-end', gap: 3 },
+  stickyAmount: { fontSize: 16, fontWeight: '800', color: '#8B1E1E' },
+  // Tabs
+  tabBar: {
     flexDirection: 'row',
-    gap: 8,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E2E8F0',
+    paddingHorizontal: 16,
   },
-  itemIconBtn: {
-    padding: 6,
-    borderRadius: 6,
-    backgroundColor: '#F1F5F9',
-  },
-  totalSummaryRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 4,
-  },
-  totalSummaryLabel: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#475569',
-  },
-  totalSummaryValue: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: '#8B1E1E',
-  },
-  footerActions: {
-    marginTop: 12,
-  },
-  confirmBtn: {
-    width: '100%',
-  },
-  modalOverlay: {
+  tabItem: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 20,
+    paddingVertical: 11,
+    gap: 5,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
   },
-  modalContent: {
+  tabItemActive: { borderBottomColor: '#8B1E1E' },
+  tabLabel: { fontSize: 12, fontWeight: '600', color: '#94A3B8' },
+  tabLabelActive: { color: '#8B1E1E', fontWeight: '700' },
+  // Scroll
+  scrollContent: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 20 },
+  // Cards
+  card: {
     backgroundColor: '#FFFFFF',
     borderRadius: 14,
-    padding: 20,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 14,
+    marginBottom: 12,
   },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 10,
-  },
-  modalTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#0F172A',
-  },
-  modalBtnRow: {
-    flexDirection: 'row',
-    marginTop: 20,
-  },
-  verifiedBanner: {
+  cardWarning: { borderColor: '#FDE68A', backgroundColor: '#FFFBEB' },
+  cardSuccess: { borderColor: '#BBF7D0', backgroundColor: '#F0FDF4' },
+  cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
+  cardHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
+  cardHeaderTitle: { fontSize: 13, fontWeight: '700', color: '#0F172A', flex: 1 },
+  // Invoice image
+  invoiceImage: { width: '100%', height: 220, borderRadius: 8, backgroundColor: '#0F172A' },
+  // Confidence
+  confidenceBar: { height: 8, backgroundColor: '#F1F5F9', borderRadius: 4, overflow: 'hidden', marginBottom: 4 },
+  confidenceFill: { height: '100%', borderRadius: 4 },
+  confidencePct: { fontSize: 11, color: '#64748B', marginBottom: 10 },
+  checkGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  checkItem: { flexDirection: 'row', alignItems: 'center', gap: 4, width: '47%' },
+  checkText: { fontSize: 11, color: '#475569', flex: 1 },
+  // Confirmed banner
+  confirmedBanner: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#F0FDF4',
     borderWidth: 1,
-    borderColor: '#86EFAC',
-    borderRadius: 12,
+    borderColor: '#BBF7D0',
+    borderRadius: 10,
     padding: 12,
-    marginTop: 4,
     marginBottom: 12,
   },
-  verifiedIconCircle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#DCFCE7',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  verifiedBannerTitle: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: '#15803D',
-    letterSpacing: 0.3,
-  },
-  verifiedBadge: {
-    backgroundColor: '#DCFCE7',
-    borderColor: '#86EFAC',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-  },
-  verifiedBannerDesc: {
-    fontSize: 11,
-    color: '#166534',
-    marginTop: 3,
-    lineHeight: 15,
-  },
-  readOnlyInput: {
-    backgroundColor: '#F8FAFC',
+  confirmedBannerTitle: { fontSize: 13, fontWeight: '700', color: '#15803D' },
+  confirmedBannerDesc: { fontSize: 11, color: '#16A34A', marginTop: 1 },
+  // Error items
+  errorItem: { marginBottom: 10, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: '#FDE68A' },
+  errorItemTitle: { fontSize: 12, fontWeight: '700', color: '#92400E' },
+  errorItemMsg: { fontSize: 11, color: '#78350F', marginTop: 2 },
+  errorItemHint: { fontSize: 11, color: '#D97706', marginTop: 3 },
+  successDesc: { fontSize: 12, color: '#15803D', lineHeight: 17 },
+  // Commitment
+  commitDesc: { fontSize: 11, color: '#64748B', lineHeight: 16, marginBottom: 10 },
+  commitBox: { flexDirection: 'row', alignItems: 'flex-start', padding: 12, borderRadius: 10, borderWidth: 1.5 },
+  commitBoxChecked: { borderColor: '#8B1E1E', backgroundColor: '#FFF8F8' },
+  commitBoxUnchecked: { borderColor: '#CBD5E1', backgroundColor: '#F8FAFC' },
+  commitTitle: { fontSize: 12, fontWeight: '600', color: '#0F172A', lineHeight: 17 },
+  commitStatus: { fontSize: 11, color: '#64748B', marginTop: 3 },
+  // Doc type
+  docTypeRow: { flexDirection: 'row', alignItems: 'center' },
+  docTypeIcon: { width: 40, height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  docTypeName: { fontSize: 14, fontWeight: '700', color: '#0F172A' },
+  docTypeCode: { fontSize: 10, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', color: '#64748B' },
+  changeCategoryBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, padding: 6, borderRadius: 6, backgroundColor: '#FFF8F8', borderWidth: 1, borderColor: '#FECACA' },
+  changeCategoryText: { fontSize: 11, fontWeight: '700', color: '#8B1E1E' },
+  // Fields
+  fieldGroup: { marginBottom: 10 },
+  fieldLabel: { fontSize: 11, fontWeight: '600', color: '#475569', marginBottom: 4 },
+  textInput: {
+    borderWidth: 1.5,
     borderColor: '#E2E8F0',
-    color: '#334155',
-  },
-  backBtn: {
-    width: '100%',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    fontSize: 13,
+    color: '#0F172A',
     backgroundColor: '#FFFFFF',
-    borderColor: '#CBD5E1',
   },
-  changeDocTypeBtn: {
+  readOnlyInput: { backgroundColor: '#F8FAFC', color: '#64748B', borderColor: '#F1F5F9' },
+  rowInputs: { flexDirection: 'row' },
+  // Items
+  addItemBtn: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 4,
     paddingHorizontal: 10,
     paddingVertical: 5,
-    borderRadius: 6,
-    backgroundColor: '#FFEBEE',
-    gap: 4,
+    borderRadius: 7,
+    backgroundColor: '#8B1E1E',
   },
-  changeDocTypeBtnText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: theme.colors.primary,
-  },
-  docTypeSelectedBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 12,
-    borderRadius: 8,
-    backgroundColor: '#F8FAFC',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  docTypeSelectedIconCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#FFEBEE',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  docTypeSelectedName: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#0F172A',
-  },
-  docTypeCodeMono: {
-    fontSize: 11,
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-    color: '#64748B',
-    backgroundColor: '#E2E8F0',
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 4,
-  },
-  modalSubtitle: {
-    fontSize: 12,
-    color: '#64748B',
-    marginTop: 2,
-  },
-  modalDocTypeItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#F1F5F9',
+  addItemBtnText: { fontSize: 11, fontWeight: '700', color: '#fff' },
+  emptyItems: { fontSize: 12, color: '#94A3B8', textAlign: 'center', paddingVertical: 16 },
+  itemRow: { flexDirection: 'row', alignItems: 'flex-start', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' },
+  itemOrderBadge: { width: 24, height: 24, borderRadius: 6, backgroundColor: '#F1F5F9', alignItems: 'center', justifyContent: 'center', marginTop: 1 },
+  itemOrderText: { fontSize: 10, fontWeight: '700', color: '#64748B' },
+  itemName: { fontSize: 13, fontWeight: '600', color: '#0F172A' },
+  itemMeta: { fontSize: 11, color: '#64748B', marginTop: 2 },
+  itemAmount: { fontSize: 13, fontWeight: '700', color: '#0F172A' },
+  itemActions: { flexDirection: 'row', gap: 10, marginTop: 4 },
+  totalRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  totalLabel: { fontSize: 12, fontWeight: '600', color: '#475569' },
+  totalValue: { fontSize: 14, fontWeight: '700', color: '#0F172A' },
+  diffNotice: { flexDirection: 'row', alignItems: 'flex-start', gap: 6, backgroundColor: '#FFFBEB', padding: 8, borderRadius: 6, marginTop: 8 },
+  diffNoticeText: { flex: 1, fontSize: 11, color: '#92400E', lineHeight: 15 },
+  // Sticky bottom
+  stickyBottom: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     backgroundColor: '#FFFFFF',
-    marginBottom: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
   },
-  modalDocTypeItemSelected: {
-    borderColor: '#8B1E1E',
-    backgroundColor: '#FFF8F8',
-  },
-  modalDocTypeIconCircle: {
-    width: 34,
-    height: 34,
-    borderRadius: 8,
-    backgroundColor: '#FFEBEE',
+  backBtn: {
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 13,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    backgroundColor: '#F8FAFC',
   },
-  modalDocTypeName: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#334155',
+  backBtnText: { fontSize: 14, fontWeight: '600', color: '#475569' },
+  confirmBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: '#8B1E1E',
+    shadowColor: '#8B1E1E',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 4,
   },
-  modalDocTypeNameSelected: {
-    color: '#8B1E1E',
-    fontWeight: '700',
-  },
-  modalDocTypeCode: {
-    fontSize: 10,
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-    color: '#64748B',
-  },
+  confirmBtnLoading: { backgroundColor: '#B45454' },
+  confirmBtnText: { fontSize: 15, fontWeight: '800', color: '#FFFFFF' },
+  // Modal
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  modalCard: { backgroundColor: '#FFFFFF', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, paddingBottom: 34 },
+  modalHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 },
+  modalTitle: { fontSize: 16, fontWeight: '800', color: '#0F172A' },
+  modalBtnCancel: { flex: 1, marginRight: 6, paddingVertical: 12, borderRadius: 10, borderWidth: 1.5, borderColor: '#E2E8F0', alignItems: 'center' },
+  modalBtnCancelText: { fontSize: 14, fontWeight: '600', color: '#475569' },
+  modalBtnConfirm: { flex: 1, marginLeft: 6, paddingVertical: 12, borderRadius: 10, backgroundColor: '#8B1E1E', alignItems: 'center' },
+  modalBtnConfirmText: { fontSize: 14, fontWeight: '700', color: '#FFFFFF' },
+  // Doc type options in modal
+  docTypeOption: { flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: 10, marginBottom: 6, backgroundColor: '#F8FAFC', borderWidth: 1, borderColor: '#F1F5F9' },
+  docTypeOptionSelected: { borderColor: '#8B1E1E', backgroundColor: '#FFF8F8' },
+  docTypeOptionIcon: { width: 34, height: 34, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  docTypeOptionName: { fontSize: 13, fontWeight: '600', color: '#0F172A' },
+  docTypeOptionCode: { fontSize: 10, color: '#94A3B8', marginTop: 1 },
 });

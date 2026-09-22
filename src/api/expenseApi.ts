@@ -1,6 +1,7 @@
 import { config } from '../constants/config';
 import axios from 'axios';
 import { Platform } from 'react-native';
+import * as FileSystem from 'expo-file-system';
 import { apiClient } from './apiClient';
 import type { ApiResponse } from './authApi';
 import {
@@ -23,24 +24,62 @@ async function getFileBase64AndMime(file: {
   uri: string;
   name?: string;
   type?: string;
+  base64?: string;
 }): Promise<{ base64: string; mimeType: string }> {
-  let mimeType = file.type || 'image/jpeg';
+  let mimeType = 'image/jpeg';
   const fileName = (file.name || '').toLowerCase();
   if (fileName.endsWith('.png')) mimeType = 'image/png';
   else if (fileName.endsWith('.pdf')) mimeType = 'application/pdf';
   else if (fileName.endsWith('.webp')) mimeType = 'image/webp';
+  else if (fileName.endsWith('.heic')) mimeType = 'image/heic';
+  else if (fileName.endsWith('.heif')) mimeType = 'image/heif';
+  else if (file.type && file.type.startsWith('image/')) mimeType = file.type;
+  else if (file.type === 'application/pdf') mimeType = 'application/pdf';
 
+  // 1. Ưu tiên Base64 có sẵn (từ camera/thư viện ảnh)
+  if (file.base64 && file.base64.length > 50) {
+    let cleanBase64 = file.base64;
+    if (cleanBase64.includes(',')) {
+      cleanBase64 = cleanBase64.split(',')[1];
+    }
+    return { base64: cleanBase64.trim(), mimeType };
+  }
+
+  // 2. Nếu là Data URL
   if (file.uri.startsWith('data:')) {
     const parts = file.uri.split(',');
     const match = file.uri.match(/data:(.*?);base64/);
-    if (match && match[1]) mimeType = match[1];
+    if (match && match[1] && match[1] !== 'application/octet-stream') {
+      mimeType = match[1];
+    }
     return { base64: parts[1] || '', mimeType };
   }
 
+  // 3. Nếu trên Native (Android / iOS): đọc trực tiếp file hệ thống qua FileSystem (an toàn cho file:// và content://)
+  if (Platform.OS !== 'web') {
+    try {
+      const base64 = await FileSystem.readAsStringAsync(file.uri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+      if (base64 && base64.length > 50) {
+        return { base64: base64.trim(), mimeType };
+      }
+    } catch (fsErr) {
+      console.warn('Không thể đọc Base64 qua FileSystem:', fsErr);
+    }
+  }
+
+  // 4. Fallback (Web): dùng fetch & FileReader
   try {
     const response = await fetch(file.uri);
     const blob = await response.blob();
-    if (blob.type) mimeType = blob.type;
+    if (
+      blob.type &&
+      (blob.type.startsWith('image/') || blob.type === 'application/pdf') &&
+      blob.type !== 'application/octet-stream'
+    ) {
+      mimeType = blob.type;
+    }
 
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -58,19 +97,77 @@ async function getFileBase64AndMime(file: {
   }
 }
 
-export const CATEGORY_NAMES: Record<string, string> = {
-  MEDICAL_EXPENSE_INVOICE: 'Hóa đơn viện phí y tế',
-  EDUCATION_EXPENSE_INVOICE: 'Hóa đơn học phí giáo dục',
-  TUITION_FEE_INVOICE: 'Biên lai, học phí chính quy',
-  DONATION_VOUCHER: 'Chứng từ đóng góp từ thiện',
-  CHARITY_DONATION_RECEIPT: 'Đóng góp từ thiện, nhân đạo',
-  INSURANCE_PREMIUM_RECEIPT: 'Bảo hiểm nhân thọ / hưu trí',
-  SALES_INVOICE: 'Hóa đơn bán hàng',
-  VAT_INVOICE: 'Hóa đơn GTGT',
-  WITHHOLDING_VOUCHER: 'Chứng từ khấu trừ thuế TNCN',
-  UNSUPPORTED: 'Hóa đơn thông thường (không giảm trừ)',
-  NOT_TAX_DOCUMENT: 'Tệp không phải hóa đơn/chứng từ',
-};
+
+/**
+ * Chuyển đổi dữ liệu DocumentReviewResponse từ backend sang ExpenseOcrResult dùng trong giao diện Review và Danh sách
+ */
+export function mapDocumentReviewToOcrResult(
+  doc: DocumentReviewResponse,
+  fallbackYear?: number,
+  documentTypes?: TaxDocumentTypeItem[]
+): ExpenseOcrResult {
+  const matchedType = documentTypes?.find((t) => t.code === doc.docTypeCode);
+  const docTypeCode = doc.docTypeCode || '';
+  const docTypeName = doc.docTypeName || matchedType?.name || (doc.docTypeCode ? doc.docTypeCode : 'Chứng từ chi phí');
+
+  return {
+    id: doc.id,
+    documentId: doc.id,
+    periodId: doc.periodId,
+    docTypeCode,
+    docTypeName,
+    fileUrl: doc.fileUrl,
+    originalFilename: doc.originalFilename || 'expense_document.jpg',
+    sellerName: doc.sellerName || undefined,
+    sellerTaxCode: doc.sellerTaxCode || undefined,
+    sellerAddress: doc.sellerAddress || undefined,
+    sellerPhone: doc.sellerPhone || undefined,
+    invoiceSeries: doc.invoiceSeries || undefined,
+    invoiceNumber: doc.invoiceNumber || undefined,
+    invoiceDate: doc.invoiceDate || undefined,
+    extractedYear: doc.extractedYear || fallbackYear || new Date().getFullYear(),
+    lookupUrl: doc.lookupUrl || undefined,
+    lookupCode: doc.lookupCode || undefined,
+    buyerName: doc.buyerName || undefined,
+    buyerIdCard: doc.buyerIdCard || undefined,
+    buyerTaxCode: doc.buyerTaxCode || undefined,
+    buyerAddress: doc.buyerAddress || undefined,
+    paymentMethod: doc.paymentMethod || 'Chuyển khoản',
+    totalAmount: doc.totalAmount ?? 0,
+    totalAmountInWords: doc.totalAmountInWords || undefined,
+    isNotReimbursed: doc.isNotReimbursed ?? false,
+    items: (doc.items || []).map((it, idx) => ({
+      itemOrder: it.itemOrder || idx + 1,
+      itemName: it.itemName,
+      unit: it.unit || null,
+      quantity: it.quantity ?? 1,
+      unitPrice: it.unitPrice ?? 0,
+      totalPrice: it.totalPrice ?? (it.quantity ?? 1) * (it.unitPrice ?? 0),
+    })),
+    overallConfidence: 0.95,
+    appliedThreshold: 0.8,
+    isPassedThreshold: true,
+    hasCrucialLowConfidence: false,
+    fields: [],
+    qualityEvaluation: {
+      qualityScore: 0.95,
+      requiredThreshold: 0.75,
+      qualityIssues: [],
+      isPassedQuality: true,
+    },
+    validationStatus: {
+      isYearValid: doc.isYearValid ?? true,
+      isDocTypeValid: doc.isTaxEligible ?? true,
+      isIdentityValid: doc.isIdentityValid ?? true,
+      isPassedThreshold: true,
+    },
+    validationErrors: [],
+    status: (doc.status as any) || 'EXTRACTED',
+    createdAt: doc.createdAt,
+  };
+}
+
+export const CATEGORY_NAMES: Record<string, string> = {};
 
 /**
  * Sanitize filename for Supabase Storage - removes Vietnamese/Unicode characters.
@@ -145,7 +242,7 @@ export const expenseApi = {
   /**
    * Tải lên danh sách hóa đơn theo đợt (POST /api/v1/tax-periods/{periodId}/documents/upload)
    */
-  async batchUploadDocuments(
+    async batchUploadDocuments(
     periodId: string,
     files: Array<{ uri: string; name?: string; type?: string }>
   ): Promise<BatchUploadResponse> {
@@ -174,43 +271,22 @@ export const expenseApi = {
       }
     }
 
-    // Sử dụng fetch() thay vì apiClient.post() để tránh default header Content-Type: application/json
-    // apiClient có default Content-Type: application/json - không thể xóa bằng 'undefined' trong request config
-    // fetch() sẽ để browser tự động set Content-Type: multipart/form-data; boundary=... đúng chuẩn
-    let token: string | null = null;
-    if (Platform.OS === 'web') {
-      try { token = localStorage.getItem(config.storageKeys.accessToken); } catch { token = null; }
-    } else {
-      const SecureStore = await import('expo-secure-store');
-      token = await SecureStore.getItemAsync(config.storageKeys.accessToken);
-    }
-
-    const uploadHeaders: Record<string, string> = {};
-    if (token) uploadHeaders['Authorization'] = `Bearer ${token}`;
-    // KHÔNG set Content-Type - để fetch/XHR tự động set với boundary
-
-    const fetchRes = await fetch(
-      `${config.apiBaseUrl}/api/v1/tax-periods/${periodId}/documents/upload`,
+    const res = await apiClient.post<ApiResponse<BatchUploadResponse>>(
+      `/api/v1/tax-periods/${periodId}/documents/upload`,
+      formData,
       {
-        method: 'POST',
-        headers: uploadHeaders,
-        body: formData,
-        signal: AbortSignal.timeout(30000),
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        transformRequest: (data) => data,
+        timeout: 60000,
       }
     );
 
-    if (!fetchRes.ok) {
-      const errText = await fetchRes.text();
-      const err = new Error(`Upload failed: ${fetchRes.status} ${errText}`);
-      (err as any).response = { status: fetchRes.status, data: errText };
-      throw err;
+    if (!res.data?.success || !res.data?.data) {
+      throw new Error(res.data?.message || 'Upload thất bại');
     }
-
-    const json = await fetchRes.json() as ApiResponse<BatchUploadResponse>;
-    if (!json.success || !json.data) {
-      throw new Error(json.message || 'Upload thất bại');
-    }
-    return json.data;
+    return res.data.data;
   },
 
   /**
@@ -229,13 +305,7 @@ export const expenseApi = {
           ? configuredTypes
               .map((t) => `- '${t.code}': ${t.name} (${t.isTaxEligible ? 'Đủ điều kiện giảm trừ thuế TNCN' : 'Không giảm trừ'}).`)
               .join('\n')
-          : `- 'MEDICAL_EXPENSE_INVOICE': Hóa đơn viện phí y tế, khám chữa bệnh, thuốc men điều trị.
-- 'EDUCATION_EXPENSE_INVOICE': Hóa đơn học phí, biên lai trường học chính quy.
-- 'DONATION_VOUCHER': Chứng từ, biên nhận đóng góp từ thiện, cứu trợ nhân đạo.
-- 'INSURANCE_PREMIUM_RECEIPT': Phiếu thu phí bảo hiểm nhân thọ, hưu trí tự nguyện.
-- 'SALES_INVOICE': Hóa đơn bán hàng thông thường.
-- 'VAT_INVOICE': Hóa đơn giá trị gia tăng (GTGT).
-- 'WITHHOLDING_VOUCHER': Chứng từ khấu trừ thuế TNCN.`;
+          : '- Áp dụng mã loại chứng từ chuẩn theo danh mục hệ thống.';
 
       const prompt = `Bạn là AI chuyên gia phân loại và bóc tách chứng từ tài chính / hóa đơn giảm trừ thuế thu nhập cá nhân tại Việt Nam.
 
@@ -249,9 +319,9 @@ Trích xuất chi tiết toàn bộ các trường thông tin từ hóa đơn/ch
 Trả về DUY NHẤT một đối tượng JSON chuẩn xác với các trường sau:
 {
   "isTaxDocument": true,
-  "docTypeCode": "MEDICAL_EXPENSE_INVOICE",
+  "docTypeCode": "MA_LOAI_CHUNG_TU_PHU_HOP",
   "classificationReason": "Lý do phân loại ngắn gọn",
-  "sellerName": "Tên đơn vị bán / Bệnh viện / Trường học / Doanh nghiệp",
+  "sellerName": "Tên cơ quan, tổ chức, doanh nghiệp hoặc đơn vị phát hành chứng từ",
   "sellerTaxCode": "Mã số thuế bên bán (nếu có)",
   "sellerAddress": "Địa chỉ bên bán (nếu có)",
   "sellerPhone": "Số điện thoại bên bán (nếu có)",
@@ -407,89 +477,16 @@ Lưu ý quan trọng: "totalAmount", "quantity", "unitPrice", "totalPrice" phả
           return result;
         }
       }
+      throw new Error('AI không phản hồi dữ liệu trích xuất hợp lệ từ hình ảnh.');
     } catch (aiErr: any) {
-      console.warn('Lỗi khi trích xuất qua AI Gemini Multimodal:', aiErr?.message);
-    }
-
-    // Fallback: Thử gọi qua Backend /api/v1/ocr/direct-extractions
-    try {
-      const formData = new FormData();
-      if (Platform.OS === 'web') {
-        const response = await fetch(file.uri);
-        const blob = await response.blob();
-        formData.append('File', blob, file.name || 'expense_invoice.jpg');
-      } else {
-        formData.append('File', {
-          uri: file.uri,
-          name: file.name || 'expense_invoice.jpg',
-          type: file.type || 'image/jpeg',
-        } as any);
-      }
-
-      const res = await apiClient.post<ApiResponse<any>>(
-        '/api/v1/ocr/direct-extractions',
-        formData,
-        {
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
-          timeout: 30000,
-        }
+      const errDetails = aiErr?.response?.data || aiErr?.message;
+      console.warn('Lỗi khi trích xuất qua AI Gemini Multimodal:', errDetails);
+      throw new Error(
+        `Không thể bóc tách nội dung hóa đơn qua AI: ${
+          aiErr?.response?.data?.error?.message || aiErr?.message || 'Lỗi xử lý hình ảnh'
+        }`
       );
-
-      if (res.data?.data) {
-        const raw = res.data.data;
-        return {
-          documentId: raw.documentId || raw.id || `doc-${Date.now()}`,
-          fileUrl: raw.fileUrl || file.uri,
-          originalFilename: raw.originalFilename || file.name || 'expense_document.jpg',
-          docTypeCode: raw.docTypeCode || 'MEDICAL_EXPENSE_INVOICE',
-          docTypeName: CATEGORY_NAMES[raw.docTypeCode] || 'Chứng từ chi phí',
-          sellerName: raw.sellerName || raw.merchantName,
-          sellerTaxCode: raw.sellerTaxCode,
-          sellerAddress: raw.sellerAddress,
-          sellerPhone: raw.sellerPhone,
-          invoiceSeries: raw.invoiceSeries,
-          invoiceNumber: raw.invoiceNumber,
-          invoiceDate: raw.invoiceDate,
-          extractedYear: raw.extractedYear,
-          lookupUrl: raw.lookupUrl,
-          lookupCode: raw.lookupCode,
-          buyerName: raw.buyerName,
-          buyerIdCard: raw.buyerIdCard,
-          buyerTaxCode: raw.buyerTaxCode,
-          buyerAddress: raw.buyerAddress,
-          paymentMethod: raw.paymentMethod || 'Chuyển khoản',
-          totalAmount: raw.totalAmount ?? 0,
-          totalAmountInWords: raw.totalAmountInWords,
-          items: raw.items || [],
-          overallConfidence: raw.overallConfidence ?? 0.95,
-          appliedThreshold: 0.8,
-          isPassedThreshold: true,
-          hasCrucialLowConfidence: false,
-          fields: [],
-          qualityEvaluation: {
-            qualityScore: 0.95,
-            requiredThreshold: 0.75,
-            qualityIssues: [],
-            isPassedQuality: true,
-          },
-          validationStatus: {
-            isYearValid: true,
-            isDocTypeValid: true,
-            isIdentityValid: true,
-            isPassedThreshold: true,
-          },
-          validationErrors: [],
-          status: 'EXTRACTED',
-          createdAt: new Date().toISOString(),
-        };
-      }
-    } catch (backendErr: any) {
-      console.error('Fallback backend cũng không khả dụng:', backendErr?.message);
     }
-
-    throw new Error('Không thể bóc tách nội dung hóa đơn. Vui lòng kiểm tra lại ảnh chụp hoặc kết nối mạng.');
   },
 
   /**

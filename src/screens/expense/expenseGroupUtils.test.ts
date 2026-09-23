@@ -2,6 +2,9 @@ import {
   getGroupKeyFromDocTypeCode,
   groupExpensesByAiClassification,
   calculateExpenseMetrics,
+  getExpenseMonth,
+  filterExpensesByMonth,
+  filterExpensesByCategory,
 } from './expenseGroupUtils';
 import { ExpenseOcrResult } from '../../types/expense';
 
@@ -122,6 +125,54 @@ describe('expenseGroupUtils', () => {
       expect(metrics.pendingDocs).toBe(0);
       expect(metrics.totalAmount).toBe(0);
       expect(metrics.totalConfirmedAmount).toBe(0);
+    });
+  });
+  describe('Month and Category filters', () => {
+    const mockExpenses: ExpenseOcrResult[] = [
+      {
+        documentId: 'doc-1',
+        docTypeCode: 'MEDICAL_EXPENSE_INVOICE',
+        docTypeName: 'Hóa đơn viện phí',
+        invoiceDate: '2026-03-15',
+        status: 'CONFIRMED',
+      },
+      {
+        documentId: 'doc-2',
+        docTypeCode: 'TUITION_FEE_INVOICE',
+        docTypeName: 'Học phí đào tạo',
+        invoiceDate: '10/05/2026',
+        status: 'EXTRACTED',
+      },
+      {
+        documentId: 'doc-3',
+        docTypeCode: 'CHARITY_DONATION_RECEIPT',
+        docTypeName: 'Ủng hộ từ thiện',
+        createdAt: '2026-08-20T10:00:00Z',
+        status: 'CONFIRMED',
+      },
+    ];
+
+    it('should correctly extract month from invoiceDate and createdAt', () => {
+      expect(getExpenseMonth(mockExpenses[0])).toBe(3);
+      expect(getExpenseMonth(mockExpenses[1])).toBe(5);
+      expect(getExpenseMonth(mockExpenses[2])).toBe(8);
+      expect(getExpenseMonth({} as any)).toBeNull();
+    });
+
+    it('should filter expenses by month correctly', () => {
+      expect(filterExpensesByMonth(mockExpenses, 'ALL')).toHaveLength(3);
+      expect(filterExpensesByMonth(mockExpenses, 3)).toHaveLength(1);
+      expect(filterExpensesByMonth(mockExpenses, 3)[0].documentId).toBe('doc-1');
+      expect(filterExpensesByMonth(mockExpenses, 5)).toHaveLength(1);
+      expect(filterExpensesByMonth(mockExpenses, 12)).toHaveLength(0);
+    });
+
+    it('should filter expenses by category from DB correctly', () => {
+      expect(filterExpensesByCategory(mockExpenses, 'ALL')).toHaveLength(3);
+      expect(filterExpensesByCategory(mockExpenses, 'MEDICAL_EXPENSE_INVOICE')).toHaveLength(1);
+      expect(filterExpensesByCategory(mockExpenses, 'Học phí đào tạo')).toHaveLength(1);
+      expect(filterExpensesByCategory(mockExpenses, 'TO_TU_THIEN')).toHaveLength(1);
+      expect(filterExpensesByCategory(mockExpenses, 'NON_EXISTENT')).toHaveLength(0);
     });
   });
 });

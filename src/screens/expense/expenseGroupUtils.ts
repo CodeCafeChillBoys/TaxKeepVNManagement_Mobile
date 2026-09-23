@@ -67,6 +67,67 @@ export function searchExpenses(expenses: ExpenseOcrResult[], keyword: string): E
 }
 
 /**
+ * Trích xuất tháng (1-12) của hóa đơn dựa trên invoiceDate hoặc createdAt
+ */
+export function getExpenseMonth(doc: ExpenseOcrResult): number | null {
+  const dateStr = doc.invoiceDate || doc.createdAt;
+  if (!dateStr || typeof dateStr !== 'string') return null;
+
+  const trimmed = dateStr.trim();
+  // Check DD/MM/YYYY or DD-MM-YYYY
+  const dmyMatch = trimmed.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+  if (dmyMatch) {
+    const month = parseInt(dmyMatch[2], 10);
+    if (month >= 1 && month <= 12) return month;
+  }
+
+  // Check YYYY-MM-DD or YYYY/MM/DD
+  const ymdMatch = trimmed.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
+  if (ymdMatch) {
+    const month = parseInt(ymdMatch[2], 10);
+    if (month >= 1 && month <= 12) return month;
+  }
+
+  // Fallback to Date.parse
+  const parsed = new Date(trimmed);
+  if (!isNaN(parsed.getTime())) {
+    return parsed.getMonth() + 1;
+  }
+
+  return null;
+}
+
+/**
+ * Lọc chứng từ theo tháng (1-12 hoặc 'ALL')
+ */
+export function filterExpensesByMonth(
+  expenses: ExpenseOcrResult[],
+  month: number | 'ALL'
+): ExpenseOcrResult[] {
+  if (month === 'ALL') return expenses;
+  return expenses.filter((doc) => getExpenseMonth(doc) === month);
+}
+
+/**
+ * Lọc chứng từ theo danh mục cấu hình từ DB (Admin)
+ */
+export function filterExpensesByCategory(
+  expenses: ExpenseOcrResult[],
+  categoryCode: string
+): ExpenseOcrResult[] {
+  if (!categoryCode || categoryCode === 'ALL') return expenses;
+  const target = categoryCode.trim().toLowerCase();
+  return expenses.filter((doc) => {
+    const code = (doc.docTypeCode || '').trim().toLowerCase();
+    const name = (doc.docTypeName || '').trim().toLowerCase();
+    if (code === target) return true;
+    if (name === target) return true;
+    if (getGroupKeyFromDocTypeCode(doc.docTypeCode).toLowerCase() === target) return true;
+    return false;
+  });
+}
+
+/**
  * Lọc chứng từ theo trạng thái
  */
 export function filterExpensesByStatus(

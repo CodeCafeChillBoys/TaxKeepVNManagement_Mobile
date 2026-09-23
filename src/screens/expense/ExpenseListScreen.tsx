@@ -1,4 +1,4 @@
-﻿import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -28,16 +28,15 @@ import {
   ExpenseGroup,
   searchExpenses,
   filterExpensesByStatus,
+  filterExpensesByMonth,
+  filterExpensesByCategory,
+  getExpenseMonth,
+  getDocumentTypeIcon,
   getStatusLabel,
   getStatusBadgeVariant,
 } from './expenseGroupUtils';
 import {
   Card,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-  CardContent,
-  CardFooter,
   Badge,
   Button,
 } from '../../components/ui';
@@ -53,6 +52,8 @@ export const ExpenseListScreen: React.FC = () => {
     availableYears,
     documents,
     periods,
+    documentTypes,
+    isDocumentTypesLoading,
     setSelectedYear,
     addYear,
     removeYear,
@@ -64,9 +65,15 @@ export const ExpenseListScreen: React.FC = () => {
   } = useExpenseStore();
 
   const [refreshing, setRefreshing] = useState<boolean>(false);
-  const [selectedGroupKey, setSelectedGroupKey] = useState<string>('ALL');
+  const [selectedMonth, setSelectedMonth] = useState<number | 'ALL'>('ALL');
+  const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  
+  // Modals
+  const [showMonthDropdown, setShowMonthDropdown] = useState<boolean>(false);
+  const [showCategoryDropdown, setShowCategoryDropdown] = useState<boolean>(false);
+  const [categorySearchQuery, setCategorySearchQuery] = useState<string>('');
   const [showAddYearModal, setShowAddYearModal] = useState<boolean>(false);
   const [newYearInput, setNewYearInput] = useState<string>('');
 
@@ -89,7 +96,10 @@ export const ExpenseListScreen: React.FC = () => {
     await loadFromStorage();
     const state = useExpenseStore.getState();
     const activeYear = state.selectedYear || (state.availableYears.length > 0 ? state.availableYears[0] : new Date().getFullYear());
-    await initPeriodForYear(activeYear, user?.id);
+    await Promise.all([
+      fetchDocumentTypes(),
+      initPeriodForYear(activeYear, user?.id),
+    ]);
     setRefreshing(false);
   };
 
@@ -97,24 +107,127 @@ export const ExpenseListScreen: React.FC = () => {
   const allCurrentExpenses: ExpenseOcrResult[] = selectedYear ? documents[selectedYear] || [] : [];
 
   const metrics = calculateExpenseMetrics(allCurrentExpenses);
-  const groupedExpenses = groupExpensesByAiClassification(allCurrentExpenses, false);
 
-  // Lọc và tìm kiếm
+  // Danh mục được lấy động từ cấu hình Admin (DB) qua documentTypes
+  const categoryOptions = useMemo(() => {
+    // Đếm số lượng hóa đơn theo docTypeCode trong năm hiện tại
+    const counts: Record<string, number> = {};
+    allCurrentExpenses.forEach((doc) => {
+      const code = (doc.docTypeCode || 'OTHER').toUpperCase();
+      counts[code] = (counts[code] || 0) + 1;
+    });
+
+    const options = (documentTypes || []).map((t) => ({
+      code: t.code,
+      name: t.name,
+      description: t.description || '',
+      icon: getDocumentTypeIcon(t.code, t.name),
+      isTaxEligible: t.isTaxEligible,
+      categoryGroup: t.categoryGroup,
+      count: counts[t.code.toUpperCase()] || 0,
+    }));
+
+    // Kiểm tra xem có chứng từ nào chưa nằm trong danh mục admin đã cấu hình
+    const registeredCodes = new Set(options.map((o) => o.code.toUpperCase()));
+    const unclassifiedCount = allCurrentExpenses.filter(
+      (d) => !d.docTypeCode || !registeredCodes.has(d.docTypeCode.toUpperCase())
+    ).length;
+
+    if (unclassifiedCount > 0) {
+      options.push({
+        code: 'OTHER',
+        name: 'Khác / Chưa phân loại',
+        description: 'Hóa đơn chưa khớp danh mục chuẩn',
+        icon: 'folder-outline',
+        isTaxEligible: false,
+        categoryGroup: undefined,
+        count: unclassifiedCount,
+      });
+    }
+
+    return options;
+  }, [documentTypes, allCurrentExpenses]);
+
+  // Lọc danh mục trong modal chọn theo tìm kiếm
+  const filteredCategoryOptions = useMemo(() => {
+    if (!categorySearchQuery.trim()) return categoryOptions;
+    const q = categorySearchQuery.trim().toLowerCase();
+    return categoryOptions.filter(
+      (c) => c.name.toLowerCase().includes(q) || c.code.toLowerCase().includes(q)
+    );
+  }, [categoryOptions, categorySearchQuery]);
+
+  // Thống kê số lượng hóa đơn theo từng tháng
+  const monthCounts = useMemo(() => {
+    const counts: Record<number, number> = {};
+    allCurrentExpenses.forEach((doc) => {
+      const m = getExpenseMonth(doc);
+      if (m !== null) {
+        counts[m] = (counts[m] || 0) + 1;
+      }
+    });
+    return counts;
+  }, [allCurrentExpenses]);
+
+  const monthOptions = useMemo(() => {
+    const list = [];
+    for (let m = 1; m <= 12; m++) {
+      list.push({
+        value: m,
+        label: `Tháng ${m < 10 ? '0' + m : m}`,
+        count: monthCounts[m] || 0,
+      });
+    }
+    return list;
+  }, [monthCounts]);
+
+  // Tên hiển thị của bộ lọc đang chọn
+  const selectedMonthLabel = useMemo(() => {
+    if (selectedMonth === 'ALL') return 'Tất cả các tháng';
+    return `Tháng ${selectedMonth < 10 ? '0' + selectedMonth : selectedMonth}`;
+  }, [selectedMonth]);
+
+  const selectedCategoryLabel = useMemo(() => {
+    if (selectedCategory === 'ALL') return 'Tất cả danh mục';
+    const found = categoryOptions.find((c) => c.code.toUpperCase() === selectedCategory.toUpperCase());
+    return found ? found.name : selectedCategory;
+  }, [selectedCategory, categoryOptions]);
+
+  // Lọc đa chiều: Category (DB) + Tháng + Trạng thái + Từ khóa
   const displayExpenses = useMemo(() => {
     let result = allCurrentExpenses;
-    if (selectedGroupKey !== 'ALL') {
-      const group = groupedExpenses.find((g) => g.key === selectedGroupKey);
-      result = group ? group.items : [];
+    // 1. Lọc theo danh mục từ cấu hình admin DB
+    if (selectedCategory !== 'ALL') {
+      result = filterExpensesByCategory(result, selectedCategory);
     }
+    // 2. Lọc theo tháng
+    if (selectedMonth !== 'ALL') {
+      result = filterExpensesByMonth(result, selectedMonth);
+    }
+    // 3. Lọc theo trạng thái
     result = filterExpensesByStatus(result, statusFilter);
+    // 4. Tìm kiếm từ khóa
     result = searchExpenses(result, searchQuery);
     return result;
-  }, [allCurrentExpenses, selectedGroupKey, statusFilter, searchQuery, groupedExpenses]);
+  }, [allCurrentExpenses, selectedCategory, selectedMonth, statusFilter, searchQuery]);
 
-  // Group lại sau filter để hiển thị
+  // Gom nhóm hiển thị theo Tổ chi phí
   const displayGroups = useMemo(() => {
     return groupExpensesByAiClassification(displayExpenses, false);
   }, [displayExpenses]);
+
+  const hasActiveFilters =
+    selectedMonth !== 'ALL' ||
+    selectedCategory !== 'ALL' ||
+    statusFilter !== 'ALL' ||
+    searchQuery.trim().length > 0;
+
+  const handleResetFilters = () => {
+    setSelectedMonth('ALL');
+    setSelectedCategory('ALL');
+    setStatusFilter('ALL');
+    setSearchQuery('');
+  };
 
   const handleAddNewYear = async () => {
     const yr = parseInt(newYearInput.trim(), 10);
@@ -260,12 +373,12 @@ export const ExpenseListScreen: React.FC = () => {
             </Text>
             <Button
               variant="default"
-              size="default"
+              size="lg"
               onPress={() => setShowAddYearModal(true)}
-              icon={<Ionicons name="add-circle-outline" size={18} color="#fff" />}
               style={styles.emptyStateCta}
+              icon={<Ionicons name="add-circle-outline" size={20} color="#fff" />}
             >
-              Tạo kỳ kê khai năm {new Date().getFullYear()}
+              Tạo kỳ thuế năm {new Date().getFullYear()}
             </Button>
           </View>
         </ScrollView>
@@ -350,10 +463,10 @@ export const ExpenseListScreen: React.FC = () => {
               {allCurrentExpenses.length > 0 ? 'Tải lên hóa đơn mới' : 'Tải lên hóa đơn đầu tiên'}
             </Button>
 
-            {/* SEARCH & FILTER (chỉ khi có chứng từ) */}
+            {/* KHU VỰC TÌM KIẾM & BỘ LỌC ĐA CHIỀU */}
             {allCurrentExpenses.length > 0 && (
-              <>
-                {/* Thanh tìm kiếm */}
+              <View style={styles.filterSection}>
+                {/* 1. Thanh tìm kiếm */}
                 <View style={styles.searchBar}>
                   <Ionicons name="search-outline" size={16} color="#94A3B8" />
                   <TextInput
@@ -365,13 +478,81 @@ export const ExpenseListScreen: React.FC = () => {
                     returnKeyType="search"
                   />
                   {searchQuery.length > 0 && (
-                    <TouchableOpacity onPress={() => setSearchQuery('')}>
+                    <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                       <Ionicons name="close-circle" size={16} color="#94A3B8" />
                     </TouchableOpacity>
                   )}
                 </View>
 
-                {/* Pills lọc trạng thái */}
+                {/* 2. HÀNG 2 DROPDOWN FILTER: THÁNG & DANH MỤC TỪ ADMIN (DB) */}
+                <View style={styles.dropdownRow}>
+                  {/* Dropdown 1: Tháng */}
+                  <TouchableOpacity
+                    style={[styles.dropdownBtn, selectedMonth !== 'ALL' && styles.dropdownBtnActive]}
+                    onPress={() => setShowMonthDropdown(true)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.dropdownBtnContent}>
+                      <View style={[styles.dropdownIconCircle, selectedMonth !== 'ALL' && styles.dropdownIconCircleActive]}>
+                        <Ionicons
+                          name="calendar-outline"
+                          size={13}
+                          color={selectedMonth !== 'ALL' ? '#8B1E1E' : '#64748B'}
+                        />
+                      </View>
+                      <View style={styles.dropdownTextWrap}>
+                        <Text style={styles.dropdownLabel}>Theo tháng</Text>
+                        <Text
+                          style={[styles.dropdownValue, selectedMonth !== 'ALL' && styles.dropdownValueActive]}
+                          numberOfLines={1}
+                        >
+                          {selectedMonthLabel}
+                        </Text>
+                      </View>
+                    </View>
+                    <Ionicons
+                      name="chevron-down"
+                      size={14}
+                      color={selectedMonth !== 'ALL' ? '#8B1E1E' : '#94A3B8'}
+                    />
+                  </TouchableOpacity>
+
+                  {/* Dropdown 2: Danh mục từ Admin (DB) */}
+                  <TouchableOpacity
+                    style={[styles.dropdownBtn, selectedCategory !== 'ALL' && styles.dropdownBtnActive]}
+                    onPress={() => {
+                      setCategorySearchQuery('');
+                      setShowCategoryDropdown(true);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.dropdownBtnContent}>
+                      <View style={[styles.dropdownIconCircle, selectedCategory !== 'ALL' && styles.dropdownIconCircleActive]}>
+                        <Ionicons
+                          name="pricetag-outline"
+                          size={13}
+                          color={selectedCategory !== 'ALL' ? '#8B1E1E' : '#64748B'}
+                        />
+                      </View>
+                      <View style={styles.dropdownTextWrap}>
+                        <Text style={styles.dropdownLabel}>Danh mục (DB)</Text>
+                        <Text
+                          style={[styles.dropdownValue, selectedCategory !== 'ALL' && styles.dropdownValueActive]}
+                          numberOfLines={1}
+                        >
+                          {selectedCategoryLabel}
+                        </Text>
+                      </View>
+                    </View>
+                    <Ionicons
+                      name="chevron-down"
+                      size={14}
+                      color={selectedCategory !== 'ALL' ? '#8B1E1E' : '#94A3B8'}
+                    />
+                  </TouchableOpacity>
+                </View>
+
+                {/* 3. Pills lọc trạng thái */}
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.statusPillsScroll}>
                   <View style={styles.statusPillsRow}>
                     {([
@@ -395,42 +576,62 @@ export const ExpenseListScreen: React.FC = () => {
                   </View>
                 </ScrollView>
 
-                {/* Chips nhóm danh mục (động theo DB) */}
-                {groupedExpenses.length > 1 && (
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.groupChipsScroll}>
-                    <View style={styles.groupChipsRow}>
+                {/* 4. Tag hiển thị bộ lọc đang kích hoạt */}
+                {hasActiveFilters && (
+                  <View style={styles.activeFiltersBar}>
+                    <Text style={styles.activeFilterLead}>Đang lọc:</Text>
+                    {selectedMonth !== 'ALL' && (
                       <TouchableOpacity
-                        style={[styles.groupChip, selectedGroupKey === 'ALL' && styles.groupChipActive]}
-                        onPress={() => setSelectedGroupKey('ALL')}
+                        style={styles.filterChip}
+                        onPress={() => setSelectedMonth('ALL')}
                         activeOpacity={0.7}
                       >
-                        <Text style={[styles.groupChipText, selectedGroupKey === 'ALL' && styles.groupChipTextActive]}>
-                          Tất cả danh mục
-                        </Text>
+                        <Ionicons name="calendar" size={11} color="#8B1E1E" />
+                        <Text style={styles.filterChipText}>{selectedMonthLabel}</Text>
+                        <Ionicons name="close" size={12} color="#8B1E1E" />
                       </TouchableOpacity>
-                      {groupedExpenses.map((g) => (
-                        <TouchableOpacity
-                          key={g.key}
-                          style={[
-                            styles.groupChip,
-                            selectedGroupKey === g.key && { ...styles.groupChipActive, borderColor: g.color, backgroundColor: `${g.color}15` },
-                          ]}
-                          onPress={() => setSelectedGroupKey(g.key)}
-                          activeOpacity={0.7}
-                        >
-                          <Ionicons name={g.icon as any} size={12} color={selectedGroupKey === g.key ? g.color : '#475569'} />
-                          <Text style={[
-                            styles.groupChipText,
-                            selectedGroupKey === g.key && { color: g.color, fontWeight: '700' },
-                          ]}>
-                            {g.shortName} ({g.items.length})
-                          </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-                  </ScrollView>
+                    )}
+                    {selectedCategory !== 'ALL' && (
+                      <TouchableOpacity
+                        style={styles.filterChip}
+                        onPress={() => setSelectedCategory('ALL')}
+                        activeOpacity={0.7}
+                      >
+                        <Ionicons name="pricetag" size={11} color="#8B1E1E" />
+                        <Text style={styles.filterChipText} numberOfLines={1}>
+                          {selectedCategoryLabel}
+                        </Text>
+                        <Ionicons name="close" size={12} color="#8B1E1E" />
+                      </TouchableOpacity>
+                    )}
+                    {statusFilter !== 'ALL' && (
+                      <TouchableOpacity
+                        style={styles.filterChip}
+                        onPress={() => setStatusFilter('ALL')}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.filterChipText}>
+                          {getStatusLabel(statusFilter)}
+                        </Text>
+                        <Ionicons name="close" size={12} color="#8B1E1E" />
+                      </TouchableOpacity>
+                    )}
+                    {searchQuery.trim().length > 0 && (
+                      <TouchableOpacity
+                        style={styles.filterChip}
+                        onPress={() => setSearchQuery('')}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.filterChipText}>"{searchQuery}"</Text>
+                        <Ionicons name="close" size={12} color="#8B1E1E" />
+                      </TouchableOpacity>
+                    )}
+                    <TouchableOpacity onPress={handleResetFilters} style={styles.clearAllBtn} activeOpacity={0.7}>
+                      <Text style={styles.clearAllBtnText}>Đặt lại</Text>
+                    </TouchableOpacity>
+                  </View>
                 )}
-              </>
+              </View>
             )}
 
             {/* DANH SÁCH CHỨNG TỪ */}
@@ -439,14 +640,24 @@ export const ExpenseListScreen: React.FC = () => {
                 <View style={styles.noResultBox}>
                   <Ionicons name="document-text-outline" size={44} color="#CBD5E1" />
                   <Text style={styles.noResultTitle}>
-                    {searchQuery || statusFilter !== 'ALL' ? 'Không tìm thấy kết quả phù hợp' : 'Chưa có hóa đơn chi phí'}
+                    {hasActiveFilters ? 'Không tìm thấy hóa đơn phù hợp' : 'Chưa có hóa đơn chi phí'}
                   </Text>
                   <Text style={styles.noResultSub}>
-                    {searchQuery || statusFilter !== 'ALL'
-                      ? 'Thử điều chỉnh bộ lọc hoặc từ khóa tìm kiếm.'
+                    {hasActiveFilters
+                      ? 'Thử thay đổi bộ lọc tháng, danh mục hoặc từ khóa tìm kiếm.'
                       : 'Tải lên hóa đơn để bắt đầu theo dõi chi phí giảm trừ thuế.'}
                   </Text>
-                  {!(searchQuery || statusFilter !== 'ALL') && (
+                  {hasActiveFilters ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onPress={handleResetFilters}
+                      style={{ marginTop: 12 }}
+                      icon={<Ionicons name="refresh-outline" size={14} color={theme.colors.primary} />}
+                    >
+                      Xóa tất cả bộ lọc
+                    </Button>
+                  ) : (
                     <Button
                       variant="outline"
                       size="sm"
@@ -573,6 +784,220 @@ export const ExpenseListScreen: React.FC = () => {
         </>
       )}
 
+      {/* MODAL DROPDOWN: CHỌN THÁNG */}
+      <Modal visible={showMonthDropdown} transparent animationType="fade">
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowMonthDropdown(false)}
+        >
+          <TouchableOpacity activeOpacity={1} style={styles.pickerModalCard}>
+            <View style={styles.pickerHeader}>
+              <View>
+                <Text style={styles.pickerTitle}>Lọc theo tháng</Text>
+                <Text style={styles.pickerSubtitle}>Năm {selectedYear} • Chọn tháng phát sinh chi phí</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setShowMonthDropdown(false)}
+                style={styles.pickerCloseBtn}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons name="close" size={18} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Tùy chọn "Tất cả các tháng" */}
+            <TouchableOpacity
+              style={[
+                styles.pickerOptionRow,
+                selectedMonth === 'ALL' && styles.pickerOptionRowActive,
+              ]}
+              onPress={() => {
+                setSelectedMonth('ALL');
+                setShowMonthDropdown(false);
+              }}
+              activeOpacity={0.7}
+            >
+              <View style={styles.pickerOptionLeft}>
+                <Ionicons
+                  name={selectedMonth === 'ALL' ? 'radio-button-on' : 'radio-button-off'}
+                  size={18}
+                  color={selectedMonth === 'ALL' ? '#8B1E1E' : '#94A3B8'}
+                />
+                <Text style={[styles.pickerOptionText, selectedMonth === 'ALL' && styles.pickerOptionTextActive]}>
+                  Tất cả các tháng (Cả năm)
+                </Text>
+              </View>
+              <View style={[styles.pickerCountBadge, selectedMonth === 'ALL' && styles.pickerCountBadgeActive]}>
+                <Text style={[styles.pickerCountText, selectedMonth === 'ALL' && styles.pickerCountTextActive]}>
+                  {allCurrentExpenses.length} HĐ
+                </Text>
+              </View>
+            </TouchableOpacity>
+
+            <View style={styles.pickerDivider} />
+
+            {/* Lưới 12 tháng */}
+            <View style={styles.monthGrid}>
+              {monthOptions.map((opt) => {
+                const isSelected = selectedMonth === opt.value;
+                const hasDocs = opt.count > 0;
+                return (
+                  <TouchableOpacity
+                    key={opt.value}
+                    style={[
+                      styles.monthGridCell,
+                      isSelected && styles.monthGridCellActive,
+                      !hasDocs && styles.monthGridCellMuted,
+                    ]}
+                    onPress={() => {
+                      setSelectedMonth(opt.value);
+                      setShowMonthDropdown(false);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.monthCellLabel, isSelected && styles.monthCellLabelActive]}>
+                      {opt.label}
+                    </Text>
+                    <Text style={[styles.monthCellCount, isSelected && styles.monthCellCountActive, hasDocs && styles.monthCellCountBold]}>
+                      {hasDocs ? `${opt.count} HĐ` : '—'}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* MODAL DROPDOWN: CHỌN DANH MỤC TỪ ADMIN (DB) */}
+      <Modal visible={showCategoryDropdown} transparent animationType="fade">
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowCategoryDropdown(false)}
+        >
+          <TouchableOpacity activeOpacity={1} style={styles.pickerModalCardLarge}>
+            <View style={styles.pickerHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.pickerTitle}>Lọc theo danh mục</Text>
+                <Text style={styles.pickerSubtitle}>Cấu hình danh mục chứng từ từ hệ thống quản trị (DB)</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setShowCategoryDropdown(false)}
+                style={styles.pickerCloseBtn}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons name="close" size={18} color="#64748B" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Ô tìm kiếm danh mục trong modal */}
+            <View style={styles.categorySearchBox}>
+              <Ionicons name="search" size={15} color="#94A3B8" />
+              <TextInput
+                style={styles.categorySearchInput}
+                placeholder="Tìm danh mục..."
+                placeholderTextColor="#94A3B8"
+                value={categorySearchQuery}
+                onChangeText={setCategorySearchQuery}
+              />
+              {categorySearchQuery.length > 0 && (
+                <TouchableOpacity onPress={() => setCategorySearchQuery('')}>
+                  <Ionicons name="close-circle" size={15} color="#94A3B8" />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* Danh sách danh mục cuộn */}
+            <ScrollView style={{ maxHeight: 360 }} showsVerticalScrollIndicator={true}>
+              {/* Tùy chọn "Tất cả danh mục" */}
+              <TouchableOpacity
+                style={[
+                  styles.pickerCategoryRow,
+                  selectedCategory === 'ALL' && styles.pickerCategoryRowActive,
+                ]}
+                onPress={() => {
+                  setSelectedCategory('ALL');
+                  setShowCategoryDropdown(false);
+                }}
+                activeOpacity={0.7}
+              >
+                <View style={styles.pickerCategoryLeft}>
+                  <View style={[styles.catIconWrap, { backgroundColor: '#F1F5F9' }]}>
+                    <Ionicons name="apps-outline" size={16} color="#475569" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.pickerCategoryName, selectedCategory === 'ALL' && styles.pickerCategoryNameActive]}>
+                      Tất cả danh mục
+                    </Text>
+                    <Text style={styles.pickerCategorySub}>Hiển thị mọi hóa đơn chi phí</Text>
+                  </View>
+                </View>
+                <View style={[styles.pickerCountBadge, selectedCategory === 'ALL' && styles.pickerCountBadgeActive]}>
+                  <Text style={[styles.pickerCountText, selectedCategory === 'ALL' && styles.pickerCountTextActive]}>
+                    {allCurrentExpenses.length} HĐ
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              {filteredCategoryOptions.map((cat) => {
+                const isSelected = selectedCategory.toUpperCase() === cat.code.toUpperCase();
+                return (
+                  <TouchableOpacity
+                    key={cat.code}
+                    style={[
+                      styles.pickerCategoryRow,
+                      isSelected && styles.pickerCategoryRowActive,
+                    ]}
+                    onPress={() => {
+                      setSelectedCategory(cat.code);
+                      setShowCategoryDropdown(false);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.pickerCategoryLeft}>
+                      <View style={[styles.catIconWrap, { backgroundColor: '#FEF2F2' }]}>
+                        <Ionicons name={cat.icon as any} size={16} color="#8B1E1E" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.pickerCategoryName, isSelected && styles.pickerCategoryNameActive]} numberOfLines={1}>
+                          {cat.name}
+                        </Text>
+                        <View style={styles.categorySubRow}>
+                          <Text style={styles.pickerCategorySub} numberOfLines={1}>
+                            {cat.code}
+                          </Text>
+                          {cat.isTaxEligible && (
+                            <View style={styles.taxEligiblePill}>
+                              <Text style={styles.taxEligiblePillText}>Giảm trừ thuế</Text>
+                            </View>
+                          )}
+                        </View>
+                      </View>
+                    </View>
+                    <View style={[styles.pickerCountBadge, isSelected && styles.pickerCountBadgeActive]}>
+                      <Text style={[styles.pickerCountText, isSelected && styles.pickerCountTextActive]}>
+                        {cat.count} HĐ
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            <View style={styles.pickerFooter}>
+              <Ionicons name="information-circle-outline" size={13} color="#94A3B8" />
+              <Text style={styles.pickerFooterText}>
+                {isDocumentTypesLoading
+                  ? 'Đang đồng bộ danh mục từ cấu hình admin...'
+                  : `${categoryOptions.length} danh mục khả dụng từ hệ thống`}
+              </Text>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
       {/* MODAL THÊM KỲ THUẾ MỚI */}
       <Modal visible={showAddYearModal} transparent animationType="fade">
         <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowAddYearModal(false)}>
@@ -653,35 +1078,28 @@ const styles = StyleSheet.create({
   },
   yearChipTextActive: {
     color: '#FFFFFF',
+    fontWeight: '700',
   },
   yearBadge: {
-    minWidth: 18,
-    height: 18,
-    borderRadius: 9,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 8,
     backgroundColor: '#F1F5F9',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 4,
   },
   yearBadgeActive: {
-    backgroundColor: 'rgba(255,255,255,0.3)',
+    backgroundColor: 'rgba(255,255,255,0.25)',
   },
   yearBadgeText: {
-    fontSize: 9,
+    fontSize: 10,
     fontWeight: '700',
-    color: '#475569',
+    color: '#64748B',
   },
   yearBadgeTextActive: {
     color: '#FFFFFF',
   },
   yearDeleteBtn: {
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    backgroundColor: 'rgba(255,255,255,0.25)',
-    alignItems: 'center',
-    justifyContent: 'center',
     marginLeft: 2,
+    padding: 2,
   },
   addYearBtn: {
     flexDirection: 'row',
@@ -690,84 +1108,83 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: theme.colors.primary,
     borderStyle: 'dashed',
-    gap: 2,
+    backgroundColor: '#FFFFFF',
+    gap: 3,
   },
   addYearBtnText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '600',
-    color: '#8B1E1E',
+    color: theme.colors.primary,
   },
-  // --- Content scroll ---
+  // --- Content ---
   scrollContent: {
     paddingHorizontal: 16,
-    paddingBottom: 30,
     paddingTop: 8,
+    paddingBottom: 24,
   },
-  // --- KPI ---
+  // --- KPI Grid ---
   kpiRow: {
-    flexDirection: 'row',
-    gap: 10,
     marginBottom: 12,
-    alignItems: 'stretch',
+    gap: 8,
   },
   kpiBox: {
-    flex: 1.2,
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
-    padding: 12,
-    borderLeftWidth: 3,
-    borderLeftColor: '#8B1E1E',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-    elevation: 2,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderLeftWidth: 4,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
   kpiBoxVal: {
-    fontSize: 16,
+    fontSize: 20,
     fontWeight: '800',
-    color: '#8B1E1E',
-    flexShrink: 1,
+    color: '#0F172A',
+    lineHeight: 26,
   },
   kpiBoxLabel: {
-    fontSize: 10,
+    fontSize: 11,
     color: '#64748B',
-    marginTop: 3,
+    marginTop: 2,
     fontWeight: '500',
   },
   kpiSmallGrid: {
-    flex: 1,
     flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: 6,
   },
   kpiSmall: {
     flex: 1,
-    minWidth: '45%',
-    borderRadius: 8,
-    padding: 8,
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.04)',
   },
   kpiSmallVal: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '800',
+    lineHeight: 18,
   },
   kpiSmallLabel: {
-    fontSize: 9,
+    fontSize: 9.5,
+    fontWeight: '600',
     color: '#64748B',
-    marginTop: 1,
+    marginTop: 2,
     textAlign: 'center',
-    fontWeight: '500',
   },
   // --- Upload button ---
   uploadBtn: {
-    width: '100%',
     marginBottom: 12,
   },
-  // --- Search ---
+  // --- Filter section ---
+  filterSection: {
+    marginBottom: 12,
+    gap: 8,
+  },
+  // --- Search Bar ---
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -775,7 +1192,6 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    marginBottom: 10,
     borderWidth: 1,
     borderColor: '#E2E8F0',
     gap: 8,
@@ -786,19 +1202,76 @@ const styles = StyleSheet.create({
     color: '#0F172A',
     padding: 0,
   },
+  // --- Dropdown filter row ---
+  dropdownRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  dropdownBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  dropdownBtnActive: {
+    borderColor: '#8B1E1E',
+    backgroundColor: '#FFF8F8',
+  },
+  dropdownBtnContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: 7,
+    marginRight: 4,
+  },
+  dropdownIconCircle: {
+    width: 26,
+    height: 26,
+    borderRadius: 6,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dropdownIconCircleActive: {
+    backgroundColor: '#FEE2E2',
+  },
+  dropdownTextWrap: {
+    flex: 1,
+  },
+  dropdownLabel: {
+    fontSize: 9.5,
+    fontWeight: '600',
+    color: '#94A3B8',
+    textTransform: 'uppercase',
+  },
+  dropdownValue: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+    marginTop: 1,
+  },
+  dropdownValueActive: {
+    color: '#8B1E1E',
+  },
   // --- Status pills ---
   statusPillsScroll: {
-    marginBottom: 8,
+    marginTop: 2,
   },
   statusPillsRow: {
     flexDirection: 'row',
     gap: 6,
   },
   statusPill: {
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
     paddingVertical: 5,
-    borderRadius: 20,
-    backgroundColor: '#F1F5F9',
+    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
     borderColor: '#E2E8F0',
   },
@@ -807,63 +1280,69 @@ const styles = StyleSheet.create({
     borderColor: '#8B1E1E',
   },
   statusPillText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
-    color: '#475569',
+    color: '#64748B',
   },
   statusPillTextActive: {
     color: '#FFFFFF',
-  },
-  // --- Group chips ---
-  groupChipsScroll: {
-    marginBottom: 10,
-  },
-  groupChipsRow: {
-    flexDirection: 'row',
-    gap: 6,
-  },
-  groupChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 16,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    gap: 4,
-  },
-  groupChipActive: {
-    borderColor: '#8B1E1E',
-    backgroundColor: '#FFF8F8',
-  },
-  groupChipText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#475569',
-  },
-  groupChipTextActive: {
-    color: '#8B1E1E',
     fontWeight: '700',
   },
-  // --- Doc list ---
+  // --- Active filters bar ---
+  activeFiltersBar: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 6,
+    paddingTop: 4,
+  },
+  activeFilterLead: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#94A3B8',
+  },
+  filterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+    maxWidth: 160,
+  },
+  filterChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#8B1E1E',
+    maxWidth: 120,
+  },
+  clearAllBtn: {
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+  },
+  clearAllBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#8B1E1E',
+    textDecorationLine: 'underline',
+  },
+  // --- Document List ---
   docListContainer: {
-    marginTop: 2,
+    gap: 16,
   },
   groupSection: {
-    marginBottom: 16,
+    gap: 8,
   },
   groupHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 8,
-    paddingHorizontal: 4,
-    marginBottom: 6,
+    paddingVertical: 6,
   },
   groupIconCircle: {
     width: 32,
     height: 32,
-    borderRadius: 10,
+    borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -875,34 +1354,27 @@ const styles = StyleSheet.create({
   groupSubtitle: {
     fontSize: 11,
     color: '#94A3B8',
-    marginTop: 1,
   },
   groupAmount: {
-    fontSize: 14,
-    fontWeight: '700',
+    fontSize: 13,
+    fontWeight: '800',
     color: '#0F172A',
   },
   groupConfirmedHint: {
     fontSize: 10,
     color: '#16A34A',
-    marginTop: 1,
+    fontWeight: '600',
   },
-  // --- Document Card ---
+  // --- Document card ---
   docCard: {
-    marginBottom: 10,
+    backgroundColor: '#FFFFFF',
     borderRadius: 12,
+    padding: 14,
     borderWidth: 1,
     borderColor: '#E2E8F0',
-    backgroundColor: '#FFFFFF',
-    overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06,
-    shadowRadius: 4,
-    elevation: 2,
   },
   docCardBody: {
-    padding: 14,
+    gap: 4,
   },
   docCardTopRow: {
     flexDirection: 'row',
@@ -991,7 +1463,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#FFFFFF',
   },
-  // --- Empty state ---
+  // --- Empty states ---
   emptyStateWrapper: {
     flex: 1,
     alignItems: 'center',
@@ -1042,16 +1514,249 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 17,
   },
-  // --- Modal ---
+  // --- Picker Modals (Tháng & Category) ---
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.45)',
+    backgroundColor: 'rgba(15, 23, 42, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  pickerModalCard: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.15,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  pickerModalCardLarge: {
+    width: '100%',
+    maxWidth: 440,
+    maxHeight: '85%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.15,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  pickerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 14,
+  },
+  pickerTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#0F172A',
+  },
+  pickerSubtitle: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  pickerCloseBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#F1F5F9',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 24,
   },
+  pickerOptionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    backgroundColor: '#F8FAFC',
+  },
+  pickerOptionRowActive: {
+    backgroundColor: '#FEE2E2',
+  },
+  pickerOptionLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  pickerOptionText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#334155',
+  },
+  pickerOptionTextActive: {
+    color: '#8B1E1E',
+    fontWeight: '700',
+  },
+  pickerCountBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 12,
+    backgroundColor: '#E2E8F0',
+  },
+  pickerCountBadgeActive: {
+    backgroundColor: '#8B1E1E',
+  },
+  pickerCountText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  pickerCountTextActive: {
+    color: '#FFFFFF',
+  },
+  pickerDivider: {
+    height: 1,
+    backgroundColor: '#F1F5F9',
+    marginVertical: 14,
+  },
+  monthGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  monthGridCell: {
+    width: '31%',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  monthGridCellActive: {
+    backgroundColor: '#8B1E1E',
+    borderColor: '#8B1E1E',
+  },
+  monthGridCellMuted: {
+    opacity: 0.7,
+  },
+  monthCellLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#334155',
+  },
+  monthCellLabelActive: {
+    color: '#FFFFFF',
+  },
+  monthCellCount: {
+    fontSize: 10,
+    color: '#94A3B8',
+    marginTop: 2,
+  },
+  monthCellCountActive: {
+    color: 'rgba(255,255,255,0.85)',
+  },
+  monthCellCountBold: {
+    fontWeight: '700',
+    color: '#64748B',
+  },
+  // --- Category Modal Details ---
+  categorySearchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    gap: 8,
+    marginBottom: 12,
+  },
+  categorySearchInput: {
+    flex: 1,
+    fontSize: 13,
+    color: '#0F172A',
+    padding: 0,
+  },
+  pickerCategoryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    marginBottom: 4,
+    borderWidth: 1,
+    borderColor: 'transparent',
+  },
+  pickerCategoryRowActive: {
+    backgroundColor: '#FFF8F8',
+    borderColor: '#8B1E1E',
+  },
+  pickerCategoryLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: 10,
+    marginRight: 8,
+  },
+  catIconWrap: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pickerCategoryName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  pickerCategoryNameActive: {
+    color: '#8B1E1E',
+  },
+  categorySubRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 2,
+  },
+  pickerCategorySub: {
+    fontSize: 11,
+    color: '#64748B',
+  },
+  taxEligiblePill: {
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  taxEligiblePillText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  pickerFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingTop: 12,
+    marginTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  pickerFooterText: {
+    fontSize: 11,
+    color: '#94A3B8',
+    fontStyle: 'italic',
+  },
+  // --- Modal Thêm Năm ---
   modalCard: {
     width: '100%',
+    maxWidth: 380,
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 24,

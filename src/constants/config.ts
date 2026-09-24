@@ -6,7 +6,7 @@ const API_PORT = 5023;
  * IP Wi‑Fi của PC (ipconfig → Wireless LAN).
  * Đổi nếu máy đổi mạng / IP. Máy thật Expo Go bắt buộc dùng LAN, không dùng 10.0.2.2.
  */
-export const DEV_LAN_HOST = '10.87.13.62';
+export const DEV_LAN_HOST = '192.168.2.22';
 
 /** Host Metro / Expo từ bundle URL (nếu có). */
 function getDevServerHost(): string | null {

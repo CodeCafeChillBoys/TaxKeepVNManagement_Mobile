@@ -405,20 +405,6 @@ export const HomeScreen: React.FC = () => {
             <Text style={styles.gridSubtitle}>Đã duyệt & Upload</Text>
           </TouchableOpacity>
 
-          {/* Tiện ích 7: Quyết toán thuế (Flow 03) */}
-          <TouchableOpacity
-            style={styles.gridCard}
-            onPress={() => navigation.navigate('SettlementHome')}
-            accessibilityRole="button"
-            accessibilityLabel="Quyết toán thuế"
-            testID="homeSettlementCard"
-          >
-            <View style={styles.gridIconCircle}>
-              <Ionicons name="calculator-outline" size={22} color={theme.colors.primary} />
-            </View>
-            <Text style={styles.gridTitle}>Quyết toán thuế</Text>
-            <Text style={styles.gridSubtitle}>Lập hồ sơ TNCN</Text>
-          </TouchableOpacity>
         </View>
 
         {/* Thông tin tài khoản hiện tại */}

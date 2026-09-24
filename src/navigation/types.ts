@@ -38,9 +38,6 @@ export type RootStackParamList = {
   ChangePassword: undefined;
   LawConditions: undefined;
   DependentList: undefined;
-  SettlementHome: { taxYear?: number } | undefined;
-  SettlementReview: { dossierId: string };
-  SettlementResult: { dossierId: string };
   ExpenseList: undefined;
   ExpenseUpload: { targetYear?: number; periodId?: string } | undefined;
   ExpenseReview: { ocrResult: import('../types/expense').ExpenseOcrResult; periodId?: string; isReadOnly?: boolean };

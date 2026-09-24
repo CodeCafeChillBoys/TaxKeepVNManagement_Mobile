@@ -94,8 +94,9 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
       try {
         if (period?.periodId) {
           const docsPaged = await expenseApi.getDocumentsByPeriod(period.periodId, { size: 100 });
-          if (docsPaged && Array.isArray(docsPaged.items)) {
-            serverDocs = docsPaged.items.map((doc: any) => ({
+          const docList = Array.isArray(docsPaged) ? docsPaged : (docsPaged as any)?.items || [];
+          if (Array.isArray(docList) && docList.length > 0) {
+            serverDocs = docList.map((doc: any) => ({
               id: doc.id,
               documentId: doc.id,
               periodId: doc.periodId,

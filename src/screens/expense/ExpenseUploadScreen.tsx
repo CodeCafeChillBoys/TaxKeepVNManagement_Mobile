@@ -196,7 +196,7 @@ export const ExpenseUploadScreen: React.FC = () => {
 
       // Polling đợi AI xử lý
       let extractedDoc: any = null;
-      const maxAttempts = 12;
+      const maxAttempts = 22;
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         await new Promise((res) => setTimeout(res, 1500));
         try {
@@ -826,3 +826,4 @@ const styles = StyleSheet.create({
     color: '#94A3B8',
   },
 });
+

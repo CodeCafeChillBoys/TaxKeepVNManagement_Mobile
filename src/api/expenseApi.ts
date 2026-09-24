@@ -1,8 +1,7 @@
 import { config } from '../constants/config';
-import axios from 'axios';
 import { Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system';
-import { apiClient } from './apiClient';
+import { apiClient, storageHelper } from './apiClient';
 import type { ApiResponse } from './authApi';
 import {
   BatchUploadResponse,
@@ -36,7 +35,7 @@ async function getFileBase64AndMime(file: {
   else if (file.type && file.type.startsWith('image/')) mimeType = file.type;
   else if (file.type === 'application/pdf') mimeType = 'application/pdf';
 
-  // 1. Ưu tiên Base64 có sẵn (từ camera/thư viện ảnh)
+  // 1. Base64 có sẵn
   if (file.base64 && file.base64.length > 50) {
     let cleanBase64 = file.base64;
     if (cleanBase64.includes(',')) {
@@ -45,7 +44,7 @@ async function getFileBase64AndMime(file: {
     return { base64: cleanBase64.trim(), mimeType };
   }
 
-  // 2. Nếu là Data URL
+  // 2. Data URL
   if (file.uri.startsWith('data:')) {
     const parts = file.uri.split(',');
     const match = file.uri.match(/data:(.*?);base64/);
@@ -55,7 +54,7 @@ async function getFileBase64AndMime(file: {
     return { base64: parts[1] || '', mimeType };
   }
 
-  // 3. Nếu trên Native (Android / iOS): đọc trực tiếp file hệ thống qua FileSystem (an toàn cho file:// và content://)
+  // 3. Native (Android / iOS)
   if (Platform.OS !== 'web') {
     try {
       const base64 = await FileSystem.readAsStringAsync(file.uri, {
@@ -69,7 +68,7 @@ async function getFileBase64AndMime(file: {
     }
   }
 
-  // 4. Fallback (Web): dùng fetch & FileReader
+  // 4. Web fallback
   try {
     const response = await fetch(file.uri);
     const blob = await response.blob();
@@ -92,11 +91,10 @@ async function getFileBase64AndMime(file: {
       reader.readAsDataURL(blob);
     });
   } catch (err) {
-    console.warn('Không thể đọc file sang Base64 qua fetch, thử phương thức fallback:', err);
+    console.warn('Không thể đọc file sang Base64 qua fetch:', err);
     throw err;
   }
 }
-
 
 /**
  * Chuyển đổi dữ liệu DocumentReviewResponse từ backend sang ExpenseOcrResult dùng trong giao diện Review và Danh sách
@@ -161,7 +159,34 @@ export function mapDocumentReviewToOcrResult(
       isIdentityValid: doc.isIdentityValid ?? true,
       isPassedThreshold: true,
     },
-    validationErrors: [],
+    validationErrors: (() => {
+      const errs: any[] = [];
+      if (doc.isIdentityValid === false) {
+        errs.push({
+          code: 'ERR_IDENTITY_MISMATCH',
+          field: 'buyer_name',
+          message: 'Thông tin người mua trên hóa đơn (' + (doc.buyerName || 'Trống') + ') không khớp với Người nộp thuế hoặc Người phụ thuộc đã đăng ký.',
+          severity: 'error',
+        });
+      }
+      if (doc.isYearValid === false) {
+        errs.push({
+          code: 'ERR_YEAR_MISMATCH',
+          field: 'invoice_date',
+          message: 'Năm lập trên hóa đơn (' + (doc.extractedYear || 'N/A') + ') không khớp với năm tính thuế đang kê khai.',
+          severity: 'warning',
+        });
+      }
+      if (doc.isTaxEligible === false) {
+        errs.push({
+          code: 'ERR_INVALID_DOC_TYPE',
+          field: 'doc_type_code',
+          message: 'Loại chứng từ này không thuộc danh mục được xét giảm trừ thuế theo quy định.',
+          severity: 'warning',
+        });
+      }
+      return errs;
+    })(),
     status: (doc.status as any) || 'EXTRACTED',
     createdAt: doc.createdAt,
   };
@@ -170,40 +195,40 @@ export function mapDocumentReviewToOcrResult(
 export const CATEGORY_NAMES: Record<string, string> = {};
 
 /**
- * Sanitize filename for Supabase Storage - removes Vietnamese/Unicode characters.
- * Supabase S3 rejects storage keys containing non-ASCII characters.
+ * Sanitize filename cho Backend & Supabase Storage.
+ * Backend BE chỉ chấp nhận .jpg, .jpeg, .png, .pdf
  */
-function sanitizeFileName(name: string): string {
+function sanitizeFileName(name: string, mimeType?: string): { sanitizedName: string; validMime: string } {
   const VIET_MAP: Record<string, string> = {
-    '\u00e0':'a','\u00e1':'a','\u00e2':'a','\u00e3':'a','\u00e4':'a','\u00e5':'a',
-    '\u00e8':'e','\u00e9':'e','\u00ea':'e','\u00eb':'e',
-    '\u00ec':'i','\u00ed':'i','\u00ee':'i','\u00ef':'i',
-    '\u00f2':'o','\u00f3':'o','\u00f4':'o','\u00f5':'o','\u00f6':'o',
-    '\u00f9':'u','\u00fa':'u','\u00fb':'u','\u00fc':'u',
-    '\u00fd':'y','\u00ff':'y',
-    '\u00c0':'A','\u00c1':'A','\u00c2':'A','\u00c3':'A','\u00c4':'A','\u00c5':'A',
-    '\u00c8':'E','\u00c9':'E','\u00ca':'E','\u00cb':'E',
-    '\u00cc':'I','\u00cd':'I','\u00ce':'I','\u00cf':'I',
-    '\u00d2':'O','\u00d3':'O','\u00d4':'O','\u00d5':'O','\u00d6':'O',
-    '\u00d9':'U','\u00da':'U','\u00db':'U','\u00dc':'U',
-    '\u00dd':'Y',
-    // Vietnamese specific
-    '\u0103':'a','\u0102':'A','\u0111':'d','\u0110':'D',
-    '\u01a1':'o','\u01a0':'O','\u01b0':'u','\u01af':'U',
-    '\u1ea1':'a','\u1ea3':'a','\u1ea5':'a','\u1ea7':'a','\u1ea9':'a','\u1eab':'a','\u1ead':'a','\u1eaf':'a','\u1eb1':'a','\u1eb3':'a','\u1eb5':'a','\u1eb7':'a',
-    '\u1eA0':'A','\u1eA2':'A','\u1eA4':'A','\u1eA6':'A','\u1eA8':'A','\u1eAa':'A','\u1eAc':'A','\u1eAe':'A','\u1eB0':'A','\u1eB2':'A','\u1eB4':'A','\u1eB6':'A',
-    '\u1eb9':'e','\u1ebb':'e','\u1ebd':'e','\u1ebf':'e','\u1ec1':'e','\u1ec3':'e','\u1ec5':'e','\u1ec7':'e',
-    '\u1eB8':'E','\u1eBa':'E','\u1eBc':'E','\u1eBe':'E','\u1eC0':'E','\u1eC2':'E','\u1eC4':'E','\u1eC6':'E',
-    '\u1ec9':'i','\u1ecb':'i','\u1ec8':'I','\u1eca':'I',
-    '\u1ecd':'o','\u1ecf':'o','\u1ed1':'o','\u1ed3':'o','\u1ed5':'o','\u1ed7':'o','\u1ed9':'o','\u1edb':'o','\u1edd':'o','\u1edf':'o','\u1ee1':'o','\u1ee3':'o',
-    '\u1ecc':'O','\u1ece':'O','\u1ed0':'O','\u1ed2':'O','\u1ed4':'O','\u1ed6':'O','\u1ed8':'O','\u1eda':'O','\u1edc':'O','\u1ede':'O','\u1ee0':'O','\u1ee2':'O',
-    '\u1ee5':'u','\u1ee7':'u','\u1ee9':'u','\u1eeb':'u','\u1eed':'u','\u1eef':'u','\u1ef1':'u',
-    '\u1ee4':'U','\u1ee6':'U','\u1ee8':'U','\u1eea':'U','\u1eec':'U','\u1eee':'U','\u1ef0':'U',
-    '\u1ef3':'y','\u1ef5':'y','\u1ef7':'y','\u1ef9':'y',
-    '\u1ef2':'Y','\u1ef4':'Y','\u1ef6':'Y','\u1ef8':'Y',
+    'à':'a','á':'a','â':'a','ã':'a','ä':'a','å':'a',
+    'è':'e','é':'e','ê':'e','ë':'e',
+    'ì':'i','í':'i','î':'i','ï':'i',
+    'ò':'o','ó':'o','ô':'o','õ':'o','ö':'o',
+    'ù':'u','ú':'u','û':'u','ü':'u',
+    'ý':'y','ÿ':'y',
+    'À':'A','Á':'A','Â':'A','Ã':'A','Ä':'A','Å':'A',
+    'È':'E','É':'E','Ê':'E','Ë':'E',
+    'Ì':'I','Í':'I','Î':'I','Ï':'I',
+    'Ò':'O','Ó':'O','Ô':'O','Õ':'O','Ö':'O',
+    'Ù':'U','Ú':'U','Û':'U','Ü':'U',
+    'Ý':'Y',
+    'ă':'a','Ă':'A','đ':'d','Đ':'D',
+    'ơ':'o','Ơ':'O','ư':'u','Ư':'U',
+    'ạ':'a','ả':'a','ấ':'a','ầ':'a','ẩ':'a','ẫ':'a','ậ':'a','ắ':'a','ằ':'a','ẳ':'a','ẵ':'a','ặ':'a',
+    'Ạ':'A','Ả':'A','Ấ':'A','Ầ':'A','Ẩ':'A','Ẫ':'A','Ậ':'A','Ắ':'A','Ằ':'A','Ẳ':'A','Ẵ':'A','Ặ':'A',
+    'ẹ':'e','ẻ':'e','ẽ':'e','ế':'e','ề':'e','ể':'e','ễ':'e','ệ':'e',
+    'Ẹ':'E','Ẻ':'E','Ẽ':'E','Ế':'E','Ề':'E','Ể':'E','Ễ':'E','Ệ':'E',
+    'ỉ':'i','ị':'i','Ỉ':'I','Ị':'I',
+    'ọ':'o','ỏ':'o','ố':'o','ồ':'o','ổ':'o','ỗ':'o','ộ':'o','ớ':'o','ờ':'o','ở':'o','ỡ':'o','ợ':'o',
+    'Ọ':'O','Ỏ':'O','Ố':'O','Ồ':'O','Ổ':'O','Ỗ':'O','Ộ':'O','Ớ':'O','Ờ':'O','Ở':'O','Ỡ':'O','Ợ':'O',
+    'ụ':'u','ủ':'u','ứ':'u','ừ':'u','ử':'u','ữ':'u','ự':'u',
+    'Ụ':'U','Ủ':'U','Ứ':'U','Ừ':'U','Ử':'U','Ữ':'U','Ự':'U',
+    'ỳ':'y','ỷ':'y','ỹ':'y','ỵ':'y',
+    'Ỳ':'Y','Ỷ':'Y','Ỹ':'Y','Ỵ':'Y',
   };
+
   const dotIdx = name.lastIndexOf('.');
-  const ext = dotIdx !== -1 ? name.slice(dotIdx).toLowerCase() : '';
+  let ext = dotIdx !== -1 ? name.slice(dotIdx).toLowerCase() : '';
   const base = dotIdx !== -1 ? name.slice(0, dotIdx) : name;
   const sanitized = base
     .split('')
@@ -212,19 +237,81 @@ function sanitizeFileName(name: string): string {
     .replace(/[^a-zA-Z0-9._-]/g, '_')
     .replace(/_+/g, '_')
     .replace(/^_+|_+$/g, '');
-  return (sanitized || 'invoice') + ext;
+
+  let validMime = mimeType || 'image/jpeg';
+  const allowedExts = ['.jpg', '.jpeg', '.png', '.pdf'];
+  if (!allowedExts.includes(ext)) {
+    if (validMime === 'application/pdf') {
+      ext = '.pdf';
+    } else if (validMime === 'image/png') {
+      ext = '.png';
+    } else {
+      ext = '.jpg';
+      validMime = 'image/jpeg';
+    }
+  } else {
+    if (ext === '.pdf') validMime = 'application/pdf';
+    else if (ext === '.png') validMime = 'image/png';
+    else validMime = 'image/jpeg';
+  }
+
+  const finalName = (sanitized || 'invoice_' + Date.now()) + ext;
+  return { sanitizedName: finalName, validMime };
+}
+
+/**
+ * Lấy UserId từ store hoặc storage để gửi kèm request
+ */
+async function resolveUserId(userId?: string): Promise<string | undefined> {
+  if (userId) return userId;
+  try {
+    const { useAuthStore } = await import('../stores/useAuthStore');
+    const storeUserId = useAuthStore.getState().user?.id;
+    if (storeUserId) return storeUserId;
+  } catch {}
+
+  try {
+    const userDataStr = await storageHelper.getItem(config.storageKeys.userData);
+    if (userDataStr) {
+      const user = JSON.parse(userDataStr);
+      if (user?.id) return user.id;
+    }
+  } catch {}
+
+  try {
+    const token = await storageHelper.getItem(config.storageKeys.accessToken);
+    if (token) {
+      const parts = token.split('.');
+      if (parts.length === 3) {
+        const payloadStr = atob(parts[1].replace(/-/g, '+').replace(/_/g, '/'));
+        const payload = JSON.parse(payloadStr);
+        return payload.userId || payload.sub;
+      }
+    }
+  } catch {}
+
+  return undefined;
 }
 
 export const expenseApi = {
   /**
    * Khởi tạo hoặc lấy kỳ tính thuế theo năm (POST /api/v1/tax-periods)
+   * BE TaxPeriodController yêu cầu cả TaxYear và UserId trong body
    */
   async initOrGetPeriod(taxYear: number, userId?: string): Promise<TaxPeriodItem> {
+    const effectiveUserId = await resolveUserId(userId);
     const res = await apiClient.post<ApiResponse<TaxPeriodItem>>('/api/v1/tax-periods', {
       taxYear,
-      userId: userId || undefined,
+      userId: effectiveUserId,
     });
     return res.data.data!;
+  },
+
+  /**
+   * Alias tương thích với các màn hình gọi createOrGetTaxPeriod
+   */
+  async createOrGetTaxPeriod(taxYear: number, userId?: string): Promise<TaxPeriodItem> {
+    return this.initOrGetPeriod(taxYear, userId);
   },
 
   /**
@@ -242,37 +329,38 @@ export const expenseApi = {
   /**
    * Tải lên danh sách hóa đơn theo đợt (POST /api/v1/tax-periods/{periodId}/documents/upload)
    */
-    async batchUploadDocuments(
+  async batchUploadDocuments(
     periodId: string,
-    files: Array<{ uri: string; name?: string; type?: string }>
+    files: Array<{ uri: string; name?: string; type?: string; base64?: string }>
   ): Promise<BatchUploadResponse> {
     const formData = new FormData();
 
     for (const file of files) {
+      const { sanitizedName, validMime } = sanitizeFileName(file.name || 'expense_invoice.jpg', file.type);
+
       if (Platform.OS === 'web') {
         try {
-          // Trên web: fetch blob từ URI (data: hoặc blob: URL) và append đúng chuẩn
           const response = await fetch(file.uri);
           const blob = await response.blob();
-          formData.append('files', blob, sanitizeFileName(file.name || 'expense_invoice.jpg'));
+          formData.append('files', blob, sanitizedName);
         } catch {
           formData.append('files', {
             uri: file.uri,
-            name: sanitizeFileName(file.name || 'expense_invoice.jpg'),
-            type: file.type || 'image/jpeg',
+            name: sanitizedName,
+            type: validMime,
           } as any);
         }
       } else {
         formData.append('files', {
           uri: file.uri,
-          name: sanitizeFileName(file.name || 'expense_invoice.jpg'),
-          type: file.type || 'image/jpeg',
+          name: sanitizedName,
+          type: validMime,
         } as any);
       }
     }
 
     const res = await apiClient.post<ApiResponse<BatchUploadResponse>>(
-      `/api/v1/tax-periods/${periodId}/documents/upload`,
+      `${config.apiBaseUrl}/api/v1/tax-periods/${periodId}/documents/upload`,
       formData,
       {
         headers: {
@@ -290,22 +378,34 @@ export const expenseApi = {
   },
 
   /**
-   * Xác nhận và lưu trữ chính thức dữ liệu chứng từ sau khi review (PUT /api/v1/tax-periods/{periodId}/documents/{documentId}/confirm)
+   * Tải lên một hóa đơn đơn lẻ (gọi batchUploadDocuments với 1 phần tử)
+   */
+  async uploadDocument(
+    periodId: string,
+    file: { uri: string; name?: string; type?: string; base64?: string },
+    docTypeCode?: string
+  ): Promise<BatchUploadResponse> {
+    return this.batchUploadDocuments(periodId, [file]);
+  },
+
+  /**
+   * Xác nhận và lưu trữ chính thức dữ liệu chứng từ sau khi review
+   * PUT /api/v1/tax-periods/{periodId}/documents/{documentId}/confirm
    */
   async confirmDocumentReview(
     periodId: string,
     documentId: string,
     data: ConfirmDocumentReviewRequest
-  ): Promise<any> {
-    const res = await apiClient.put<ApiResponse<any>>(
+  ): Promise<DocumentReviewResponse> {
+    const res = await apiClient.put<ApiResponse<DocumentReviewResponse>>(
       `/api/v1/tax-periods/${periodId}/documents/${documentId}/confirm`,
       data
     );
-    return res.data;
+    return res.data.data!;
   },
 
   /**
-   * Kích hoạt lại bóc tách OCR cho một chứng từ cụ thể (chỉ cho phép khi ở trạng thái UPLOADED)
+   * Kích hoạt lại bóc tách OCR cho một chứng từ cụ thể (khi ở trạng thái UPLOADED hoặc FAILED)
    * POST /api/v1/tax-periods/{periodId}/documents/{documentId}/extract
    */
   async triggerDocumentOcr(
@@ -319,22 +419,29 @@ export const expenseApi = {
   },
 
   /**
-   * Lấy danh sách chứng từ theo kỳ tính thuế (hỗ trợ phân trang, tìm kiếm, lọc theo DocType/Status, sắp xếp)
-   * GET /api/v1/tax-periods/{periodId}/documents?page=1&size=10&docTypeCode=VAT_INVOICE&status=CONFIRMED&search=congty
+   * Lấy danh sách chứng từ theo kỳ tính thuế (GET /api/v1/tax-periods/{periodId}/documents)
+   * Backend trả về ApiResponse<List<DocumentReviewResponseDto>>
    */
   async getDocumentsByPeriod(
     periodId: string,
     query?: DocumentQueryParameters
-  ): Promise<PagedResult<DocumentReviewResponse>> {
-    const res = await apiClient.get<ApiResponse<PagedResult<DocumentReviewResponse>>>(
+  ): Promise<DocumentReviewResponse[]> {
+    const res = await apiClient.get<ApiResponse<any>>(
       `/api/v1/tax-periods/${periodId}/documents`,
       { params: query }
     );
-    return res.data.data!;
+    const raw = res.data?.data;
+    if (Array.isArray(raw)) {
+      return raw;
+    }
+    if (raw && Array.isArray(raw.items)) {
+      return raw.items;
+    }
+    return [];
   },
 
   /**
-   * Xem thông tin chi tiết của một chứng từ cụ thể theo ID (kèm thông tin DocType và các dòng chi tiết Items)
+   * Xem thông tin chi tiết của một chứng từ theo ID
    * GET /api/v1/tax-periods/{periodId}/documents/{documentId}
    */
   async getDocumentById(
@@ -343,6 +450,16 @@ export const expenseApi = {
   ): Promise<DocumentReviewResponse> {
     const res = await apiClient.get<ApiResponse<DocumentReviewResponse>>(
       `/api/v1/tax-periods/${periodId}/documents/${documentId}`
+    );
+    return res.data.data!;
+  },
+
+  /**
+   * Nộp và khóa kỳ tính thuế (POST /api/v1/tax-periods/{periodId}/submit)
+   */
+  async submitTaxPeriod(periodId: string): Promise<TaxPeriodItem> {
+    const res = await apiClient.post<ApiResponse<TaxPeriodItem>>(
+      `/api/v1/tax-periods/${periodId}/submit`
     );
     return res.data.data!;
   },

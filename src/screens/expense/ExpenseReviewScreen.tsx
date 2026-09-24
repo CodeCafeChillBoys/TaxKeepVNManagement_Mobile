@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -17,7 +17,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { HeaderMotif } from '../../components/common/HeaderMotif';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
-import { ExpenseOcrResult, InvoiceLineItem } from '../../types/expense';
+import { ExpenseOcrResult, InvoiceLineItem, ValidationErrorItem } from '../../types/expense';
 import {
   formatCurrencyVND,
   calculateItemsTotal,
@@ -46,7 +46,7 @@ export const ExpenseReviewScreen: React.FC = () => {
   const isConfirmed = initialData.status === 'CONFIRMED';
   const isReadOnly = Boolean(route.params?.isReadOnly || isConfirmed);
 
-  const { addOrUpdateDocument, setSelectedYear, documentTypes, fetchDocumentTypes } = useExpenseStore();
+  const { addOrUpdateDocument, setSelectedYear, documentTypes, fetchDocumentTypes, documents, selectedYear } = useExpenseStore();
 
   const [currentDocTypeCode, setCurrentDocTypeCode] = useState<string>(
     initialData.docTypeCode || (documentTypes && documentTypes.length > 0 ? documentTypes[0].code : '')
@@ -96,7 +96,45 @@ export const ExpenseReviewScreen: React.FC = () => {
   });
 
   const crucialCheck = validateCrucialFields(initialData.fields || [], initialData.appliedThreshold || 0.8);
-  const validationErrors = initialData.validationErrors || [];
+
+  const isDuplicate = useMemo(() => {
+    const year = selectedYear || initialData.extractedYear || new Date().getFullYear();
+    const currentYearDocs = documents[year] || [];
+    const normInv = invoiceNumber.trim().toLowerCase();
+    const normSeller = sellerTaxCode.trim().toLowerCase();
+    if (!normInv || !normSeller) return false;
+
+    return currentYearDocs.some(
+      (d) =>
+        (d.documentId !== initialData.documentId && d.id !== initialData.id) &&
+        d.invoiceNumber?.trim().toLowerCase() === normInv &&
+        d.sellerTaxCode?.trim().toLowerCase() === normSeller
+    );
+  }, [documents, selectedYear, initialData, invoiceNumber, sellerTaxCode]);
+
+  const validationErrors = useMemo<ValidationErrorItem[]>(() => {
+    const list = [...(initialData.validationErrors || [])];
+
+    if (initialData.validationStatus?.isIdentityValid === false && !list.some((e) => e.code === 'ERR_IDENTITY_MISMATCH')) {
+      list.push({
+        code: 'ERR_IDENTITY_MISMATCH',
+        field: 'buyer_name',
+        message: 'Thông tin người mua trên hóa đơn (' + (buyerName.trim() || initialData.buyerName || 'Trống') + ') không khớp với Người nộp thuế hoặc bất kỳ Người phụ thuộc nào đã đăng ký.',
+        severity: 'error',
+      });
+    }
+
+    if (isDuplicate && !list.some((e) => e.code === 'ERR_DUPLICATE_DOCUMENT')) {
+      list.push({
+        code: 'ERR_DUPLICATE_DOCUMENT',
+        field: 'invoice_number',
+        message: 'Hóa đơn số ' + invoiceNumber.trim() + ' (MST người bán: ' + sellerTaxCode.trim() + ') đã tồn tại trong kỳ tính thuế này.',
+        severity: 'error',
+      });
+    }
+
+    return list;
+  }, [initialData, buyerName, isDuplicate, invoiceNumber, sellerTaxCode]);
 
   const handleOpenItemModal = (index?: number) => {
     if (isReadOnly) return;
@@ -151,6 +189,25 @@ export const ExpenseReviewScreen: React.FC = () => {
 
   const executeConfirm = async () => {
     if (isReadOnly) return;
+
+    if (initialData.validationStatus?.isIdentityValid === false) {
+      Alert.alert(
+        'Không thể xác nhận',
+        'Thông tin người mua ("' + (buyerName.trim() || initialData.buyerName || 'Chưa rõ') + '") không khớp với Người nộp thuế hoặc bất kỳ Người phụ thuộc nào trong hồ sơ của bạn.\n\nTheo quy định thuế, chi phí giảm trừ gia cảnh chỉ được chấp nhận cho chính người nộp thuế hoặc người phụ thuộc hợp pháp.',
+        [{ text: 'Đã hiểu' }]
+      );
+      return;
+    }
+
+    if (isDuplicate) {
+      Alert.alert(
+        'Hóa đơn bị trùng lặp',
+        'Hóa đơn số ' + invoiceNumber.trim() + ' của đơn vị có MST ' + sellerTaxCode.trim() + ' đã tồn tại trong kỳ tính thuế này. Hệ thống không cho phép lưu trùng hóa đơn.',
+        [{ text: 'Đã hiểu' }]
+      );
+      return;
+    }
+
     setSaving(true);
     try {
       const cleanDate = invoiceDate.trim();
@@ -894,3 +951,4 @@ const styles = StyleSheet.create({
   docTypeOptionName: { fontSize: 13, fontWeight: '600', color: '#0F172A' },
   docTypeOptionCode: { fontSize: 10, color: '#94A3B8', marginTop: 1 },
 });
+

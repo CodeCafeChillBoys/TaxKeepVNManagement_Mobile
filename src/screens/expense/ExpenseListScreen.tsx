@@ -82,12 +82,28 @@ export const ExpenseListScreen: React.FC = () => {
   useFocusEffect(
     useCallback(() => {
       const syncData = async () => {
-        await loadFromStorage();
-        const state = useExpenseStore.getState();
-        const activeYear = state.selectedYear || (state.availableYears.length > 0 ? state.availableYears[0] : new Date().getFullYear());
-        if (!state.selectedYear) setSelectedYear(activeYear);
+        await loadFromStorage(user?.id);
         await fetchDocumentTypes();
-        await initPeriodForYear(activeYear, user?.id);
+        const state = useExpenseStore.getState();
+        // Chỉ đồng bộ khi người dùng thực sự có năm kê khai trong danh sách
+        if (state.availableYears && state.availableYears.length > 0) {
+          const activeYear =
+            state.selectedYear && state.availableYears.includes(state.selectedYear)
+              ? state.selectedYear
+              : state.availableYears[0];
+          if (state.selectedYear !== activeYear) {
+            setSelectedYear(activeYear);
+          }
+          try {
+            await initPeriodForYear(activeYear, user?.id);
+          } catch {}
+        } else {
+          // Người dùng chưa có năm nào (hoặc đã xóa hết trong DB):
+          // Không tự ý khởi tạo năm dưới DB, giữ selectedYear là null để hiển thị màn hình trống
+          if (state.selectedYear !== null) {
+            setSelectedYear(null);
+          }
+        }
       };
       syncData();
     }, [user?.id])
@@ -95,13 +111,18 @@ export const ExpenseListScreen: React.FC = () => {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadFromStorage();
+    await loadFromStorage(user?.id);
+    await fetchDocumentTypes();
     const state = useExpenseStore.getState();
-    const activeYear = state.selectedYear || (state.availableYears.length > 0 ? state.availableYears[0] : new Date().getFullYear());
-    await Promise.all([
-      fetchDocumentTypes(),
-      initPeriodForYear(activeYear, user?.id),
-    ]);
+    if (state.availableYears && state.availableYears.length > 0) {
+      const activeYear =
+        state.selectedYear && state.availableYears.includes(state.selectedYear)
+          ? state.selectedYear
+          : state.availableYears[0];
+      try {
+        await initPeriodForYear(activeYear, user?.id);
+      } catch {}
+    }
     setRefreshing(false);
   };
 
@@ -337,12 +358,20 @@ export const ExpenseListScreen: React.FC = () => {
     }
 
     let fullDoc = doc;
-    if (periodId && docId && (!doc.items || doc.items.length === 0)) {
+    const isGuid = (val?: string) => !!val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+    if (isGuid(periodId) && isGuid(docId)) {
       try {
-        const detail = await expenseApi.getDocumentById(periodId, docId);
+        const detail = await expenseApi.getDocumentById(periodId!, docId!);
         fullDoc = mapDocumentReviewToOcrResult(detail, selectedYear || undefined);
         addOrUpdateDocument(selectedYear || new Date().getFullYear(), fullDoc);
-      } catch (err) {
+      } catch (err: any) {
+        if (err?.response?.status === 404) {
+          toast.error('Hóa đơn này đã bị xóa hoặc không còn tồn tại trên máy chủ.', 'Không tìm thấy chứng từ');
+          if (selectedYear && docId) {
+            await removeDocument(selectedYear, docId);
+          }
+          return;
+        }
         console.warn('Không thể tải chi tiết, dùng bản cache:', err);
       }
     }
@@ -397,7 +426,16 @@ export const ExpenseListScreen: React.FC = () => {
             <Button
               variant="default"
               size="lg"
-              onPress={() => setShowAddYearModal(true)}
+              onPress={async () => {
+                const yr = new Date().getFullYear();
+                try {
+                  addYear(yr);
+                  await initPeriodForYear(yr, user?.id);
+                  toast.success(`Đã khởi tạo kỳ quyết toán thuế năm ${yr}.`, 'Thành công');
+                } catch (err: any) {
+                  toast.error(err?.message || 'Không thể khởi tạo kỳ tính thuế.', 'Lỗi');
+                }
+              }}
               style={styles.emptyStateCta}
               icon={<Ionicons name="add-circle-outline" size={20} color="#fff" />}
             >

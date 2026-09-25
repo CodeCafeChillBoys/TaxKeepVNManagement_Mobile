@@ -33,6 +33,10 @@ export const useAuthStore = create<AuthState>((set) => ({
     if (refreshToken) {
       await storageHelper.setItem(config.storageKeys.refreshToken, refreshToken);
     }
+    try {
+      const { useExpenseStore } = await import('./useExpenseStore');
+      await useExpenseStore.getState().switchUser(user.id);
+    } catch {}
     set({ token, user, isAuthenticated: true, isLoading: false });
   },
 
@@ -56,6 +60,10 @@ export const useAuthStore = create<AuthState>((set) => ({
       const userDataStr = await storageHelper.getItem(config.storageKeys.userData);
       if (token && userDataStr) {
         const user = JSON.parse(userDataStr);
+        try {
+          const { useExpenseStore } = await import('./useExpenseStore');
+          await useExpenseStore.getState().loadFromStorage(user.id);
+        } catch {}
         set({ token, user, isAuthenticated: true, isLoading: false });
         return;
       }

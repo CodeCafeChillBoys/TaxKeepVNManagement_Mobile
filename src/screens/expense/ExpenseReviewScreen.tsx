@@ -46,7 +46,7 @@ export const ExpenseReviewScreen: React.FC = () => {
   const periodIdParam = route.params?.periodId || initialData.periodId;
 
   const { toast } = useToast();
-  const { addOrUpdateDocument, setSelectedYear, documentTypes, fetchDocumentTypes, documents, selectedYear, periods } = useExpenseStore();
+  const { addOrUpdateDocument, removeDocument, setSelectedYear, documentTypes, fetchDocumentTypes, documents, selectedYear, periods } = useExpenseStore();
 
   const activeTaxYear = selectedYear || initialData.extractedYear || new Date().getFullYear();
   const activePeriod = periods[activeTaxYear];
@@ -62,6 +62,22 @@ export const ExpenseReviewScreen: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabType>('KIEM_TRA');
 
   useEffect(() => { fetchDocumentTypes(); }, [fetchDocumentTypes]);
+
+  // Kiểm tra tính tồn tại của chứng từ trên máy chủ, nếu đã xóa trong DB thì quay lại
+  useEffect(() => {
+    const isGuid = (val?: string) => !!val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+    if (isGuid(periodIdParam) && isGuid(initialData.documentId)) {
+      expenseApi.getDocumentById(periodIdParam!, initialData.documentId!).catch(async (err) => {
+        if (err?.response?.status === 404) {
+          toast.error('Hóa đơn này đã bị xóa hoặc không còn tồn tại trong hệ thống.', 'Chứng từ không tồn tại');
+          if (selectedYear && initialData.documentId) {
+            await removeDocument(selectedYear, initialData.documentId);
+          }
+          navigation.goBack();
+        }
+      });
+    }
+  }, [periodIdParam, initialData.documentId]);
 
   const groupKey = getGroupKeyFromDocTypeCode(currentDocTypeCode);
   const groupMeta = getGroupMetadata(groupKey);

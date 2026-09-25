@@ -1,14 +1,21 @@
-﻿import { create } from 'zustand';
+import { create } from 'zustand';
 import { storageHelper } from '../api/apiClient';
 import { ExpenseOcrResult, TaxPeriodItem, TaxDocumentTypeItem } from '../types/expense';
 import { expenseApi } from '../api/expenseApi';
 
-const EXPENSE_STORAGE_KEY = 'taxkeep_expense_store_v6';
+// Tạo khóa lưu trữ riêng biệt cho từng tài khoản người dùng, tránh lộ hóa đơn giữa các user
+export const getExpenseStorageKey = (userId?: string | null): string => {
+  if (userId && typeof userId === 'string' && userId.trim()) {
+    return `taxkeep_expense_store_u_${userId.trim()}`;
+  }
+  return 'taxkeep_expense_store_guest';
+};
 
 // Danh mục loại chứng từ được tải trực tiếp từ DB của admin qua API /tax-document-types
 export const DEFAULT_DOCUMENT_TYPES: TaxDocumentTypeItem[] = [];
 
 interface ExpenseState {
+  currentUserId: string | null;
   selectedYear: number | null;
   availableYears: number[];
   periods: Record<number, TaxPeriodItem>;
@@ -19,6 +26,7 @@ interface ExpenseState {
   error: string | null;
 
   // Actions
+  switchUser: (userId?: string | null) => Promise<void>;
   setSelectedYear: (year: number | null) => void;
   addYear: (year: number) => void;
   removeYear: (year: number) => void;
@@ -33,10 +41,11 @@ interface ExpenseState {
   removeDocument: (year: number, documentId: string) => Promise<void>;
   clearAllExpenses: () => Promise<void>;
   saveToStorage: () => Promise<void>;
-  loadFromStorage: () => Promise<void>;
+  loadFromStorage: (explicitUserId?: string | null) => Promise<void>;
 }
 
 export const useExpenseStore = create<ExpenseState>((set, get) => ({
+  currentUserId: null,
   selectedYear: null,
   availableYears: [],
   periods: {},
@@ -45,6 +54,18 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
   isDocumentTypesLoading: false,
   isLoading: false,
   error: null,
+
+  switchUser: async (userId?: string | null) => {
+    const nextUserId = userId || null;
+    set({
+      currentUserId: nextUserId,
+      selectedYear: null,
+      availableYears: [],
+      periods: {},
+      documents: {},
+    });
+    await get().loadFromStorage(nextUserId);
+  },
 
   setSelectedYear: (year: number | null) => {
     set({ selectedYear: year });
@@ -87,6 +108,10 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
   initPeriodForYear: async (year: number, userId?: string) => {
     set({ isLoading: true, error: null });
     try {
+      if (userId && get().currentUserId !== userId) {
+        set({ currentUserId: userId });
+      }
+
       const period = await expenseApi.initOrGetPeriod(year, userId);
 
       // Tải danh sách chứng từ từ server cho kỳ tính thuế này
@@ -95,7 +120,9 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
         if (period?.periodId) {
           const docsPaged = await expenseApi.getDocumentsByPeriod(period.periodId, { size: 100 });
           const docList = Array.isArray(docsPaged) ? docsPaged : (docsPaged as any)?.items || [];
-          if (Array.isArray(docList) && docList.length > 0) {
+          
+          // Luôn ánh xạ khi API trả về mảng (kể cả mảng rỗng [] khi đã xóa hết trong DB)
+          if (Array.isArray(docList)) {
             serverDocs = docList.map((doc: any) => ({
               id: doc.id,
               documentId: doc.id,
@@ -162,7 +189,18 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
             }));
           }
         }
-      } catch (fetchErr) {
+      } catch (fetchErr: any) {
+        if (fetchErr?.response?.status === 404 || fetchErr?.message?.includes('Tax period not found')) {
+          // Kỳ tính thuế đã bị xóa trên máy chủ DB!
+          get().removeYear(year);
+          set({ isLoading: false });
+          return {
+            periodId: '',
+            taxYear: year,
+            status: 'DRAFT',
+            createdAt: new Date().toISOString(),
+          };
+        }
         console.warn(`Không thể tải documents từ server cho kỳ ${period?.periodId}:`, fetchErr);
       }
 
@@ -172,14 +210,11 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
           ? state.availableYears
           : [year, ...state.availableYears].sort((a, b) => b - a);
 
-        const currentYearDocs = state.documents[year] || [];
-        let finalDocs = currentYearDocs;
+        let finalDocs = state.documents[year] || [];
         if (serverDocs !== null) {
-          const serverDocIds = new Set(serverDocs.map((d) => d.documentId));
-          const localOnlyDocs = currentYearDocs.filter(
-            (d) => d.documentId && !serverDocIds.has(d.documentId) && d.documentId.startsWith('doc-')
-          );
-          finalDocs = [...serverDocs, ...localOnlyDocs];
+          // Server là nguồn dữ liệu chuẩn xác nhất:
+          // Nếu đã xóa chứng từ trong DB, serverDocs sẽ là [] -> xóa ngay khỏi UI
+          finalDocs = serverDocs;
         }
 
         return {
@@ -197,19 +232,36 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
       get().saveToStorage();
       return period;
     } catch (err: any) {
+      const isSubmitted =
+        err?.response?.status === 403 ||
+        err?.message?.toLowerCase().includes('submitted') ||
+        err?.message?.toLowerCase().includes('locked');
+
+      if (isSubmitted) {
+        const existingPeriod = get().periods[year];
+        const submittedPeriod: TaxPeriodItem = {
+          periodId: existingPeriod?.periodId || `period-${year}-submitted`,
+          taxYear: year,
+          status: 'SUBMITTED',
+          createdAt: existingPeriod?.createdAt || new Date().toISOString(),
+        };
+
+        set((state) => ({
+          periods: { ...state.periods, [year]: submittedPeriod },
+          isLoading: false,
+        }));
+        get().saveToStorage();
+        return submittedPeriod;
+      }
+
+      if (err?.response?.status === 404) {
+        // Kỳ tính thuế không tồn tại hoặc đã bị xóa trong DB
+        get().removeYear(year);
+      }
+
       console.warn(`Lỗi khi khởi tạo TaxPeriod cho năm ${year}:`, err);
-      const localPeriod: TaxPeriodItem = {
-        periodId: `period-${year}-${Date.now()}`,
-        taxYear: year,
-        status: 'DRAFT',
-        createdAt: new Date().toISOString(),
-      };
-      set((state) => ({
-        periods: { ...state.periods, [year]: localPeriod },
-        documents: { ...state.documents, [year]: state.documents[year] || [] },
-        isLoading: false,
-      }));
-      return localPeriod;
+      set({ isLoading: false });
+      throw err;
     }
   },
 
@@ -310,20 +362,26 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
   },
 
   clearAllExpenses: async () => {
+    const targetUserId = get().currentUserId;
     set({
       documents: {},
       availableYears: [],
       selectedYear: null,
       periods: {},
       documentTypes: DEFAULT_DOCUMENT_TYPES,
+      currentUserId: null,
     });
     try {
-      await storageHelper.removeItem(EXPENSE_STORAGE_KEY);
-      await storageHelper.removeItem('taxkeep_expense_store_v1');
-      await storageHelper.removeItem('taxkeep_expense_store_v2');
-      await storageHelper.removeItem('taxkeep_expense_store_v3');
-      await storageHelper.removeItem('taxkeep_expense_store_v4');
+      if (targetUserId) {
+        await storageHelper.removeItem(getExpenseStorageKey(targetUserId));
+      }
+      await storageHelper.removeItem('taxkeep_expense_store_guest');
+      await storageHelper.removeItem('taxkeep_expense_store_v6');
       await storageHelper.removeItem('taxkeep_expense_store_v5');
+      await storageHelper.removeItem('taxkeep_expense_store_v4');
+      await storageHelper.removeItem('taxkeep_expense_store_v3');
+      await storageHelper.removeItem('taxkeep_expense_store_v2');
+      await storageHelper.removeItem('taxkeep_expense_store_v1');
     } catch (e) {
       console.warn('Lỗi clear storage:', e);
     }
@@ -331,7 +389,15 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
 
   saveToStorage: async () => {
     try {
-      const { availableYears, periods, documents, selectedYear, documentTypes } = get();
+      const { currentUserId, availableYears, periods, documents, selectedYear, documentTypes } = get();
+      let targetUserId = currentUserId;
+      if (!targetUserId) {
+        try {
+          const { useAuthStore } = await import('./useAuthStore');
+          targetUserId = useAuthStore.getState().user?.id || null;
+        } catch {}
+      }
+      const key = getExpenseStorageKey(targetUserId);
       const payload = JSON.stringify({
         availableYears,
         periods,
@@ -339,15 +405,42 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
         selectedYear,
         documentTypes,
       });
-      await storageHelper.setItem(EXPENSE_STORAGE_KEY, payload);
+      await storageHelper.setItem(key, payload);
     } catch (e) {
       console.warn('Lỗi lưu useExpenseStore vào storage:', e);
     }
   },
 
-  loadFromStorage: async () => {
+  loadFromStorage: async (explicitUserId?: string | null) => {
     try {
-      const dataStr = await storageHelper.getItem(EXPENSE_STORAGE_KEY);
+      // Dọn dẹp triệt để các key cache cũ dùng chung không theo userId
+      try {
+        await storageHelper.removeItem('taxkeep_expense_store_v6');
+        await storageHelper.removeItem('taxkeep_expense_store_v5');
+        await storageHelper.removeItem('taxkeep_expense_store_v4');
+      } catch {}
+
+      let targetUserId = explicitUserId !== undefined ? explicitUserId : get().currentUserId;
+      if (!targetUserId) {
+        try {
+          const { useAuthStore } = await import('./useAuthStore');
+          targetUserId = useAuthStore.getState().user?.id || null;
+        } catch {}
+      }
+
+      // Nếu chuyển user khác, reset trắng state trước khi nạp dữ liệu của user mới
+      if (targetUserId !== get().currentUserId) {
+        set({
+          currentUserId: targetUserId || null,
+          availableYears: [],
+          selectedYear: null,
+          periods: {},
+          documents: {},
+        });
+      }
+
+      const key = getExpenseStorageKey(targetUserId);
+      const dataStr = await storageHelper.getItem(key);
       if (dataStr) {
         const parsed = JSON.parse(dataStr);
         const loadedYears = Array.isArray(parsed.availableYears) ? parsed.availableYears : [];

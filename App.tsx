@@ -3,6 +3,7 @@ import { LogBox } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { RootNavigator } from './src/navigation/RootNavigator';
+import { ToastProvider } from './src/components/ui/Toast';
 
 // Bo qua canh bao mat ket noi HMR tam thoi khi mo Camera/Gallery tren thiet bi that
 LogBox.ignoreLogs(['Cannot connect to Expo CLI']);
@@ -10,8 +11,10 @@ LogBox.ignoreLogs(['Cannot connect to Expo CLI']);
 export default function App() {
   return (
     <SafeAreaProvider>
-      <StatusBar style="dark" />
-      <RootNavigator />
+      <ToastProvider>
+        <StatusBar style="dark" />
+        <RootNavigator />
+      </ToastProvider>
     </SafeAreaProvider>
   );
 }

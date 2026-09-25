@@ -39,6 +39,7 @@ import {
   Card,
   Badge,
   Button,
+  useToast,
 } from '../../components/ui';
 
 type StatusFilter = 'ALL' | 'CONFIRMED' | 'EXTRACTED' | 'UPLOADED' | 'FAILED';
@@ -46,6 +47,7 @@ type StatusFilter = 'ALL' | 'CONFIRMED' | 'EXTRACTED' | 'UPLOADED' | 'FAILED';
 export const ExpenseListScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
   const { user } = useAuthStore();
+  const { toast } = useToast();
 
   const {
     selectedYear,
@@ -247,13 +249,20 @@ export const ExpenseListScreen: React.FC = () => {
   };
 
   const handleDeleteYear = (yr: number) => {
+    if (periods[yr]?.status === 'SUBMITTED') {
+      toast.error(
+        `Kỳ tính thuế năm ${yr} đã hoàn tất quyết toán. Không thể xóa kỳ tính thuế đã khóa.`,
+        'Kỳ tính thuế đã khóa'
+      );
+      return;
+    }
     if (Platform.OS === 'web') {
-      const ok = window.confirm(`Xóa toàn bộ hóa đơn năm ${yr}? Hành động này không thể hoàn tác.`);
+      const ok = window.confirm(`Xóa toàn bộ chứng từ năm ${yr}? Hành động này không thể hoàn tác.`);
       if (ok) removeYear(yr);
     } else {
       Alert.alert(
         'Xóa kỳ tính thuế',
-        `Xóa toàn bộ hóa đơn năm ${yr}? Hành động này không thể hoàn tác.`,
+        `Xóa toàn bộ chứng từ năm ${yr}? Hành động này không thể hoàn tác.`,
         [
           { text: 'Hủy', style: 'cancel' },
           { text: 'Xóa', style: 'destructive', onPress: () => removeYear(yr) },
@@ -265,6 +274,13 @@ export const ExpenseListScreen: React.FC = () => {
   const handleNavigateUpload = () => {
     if (!selectedYear) {
       setShowAddYearModal(true);
+      return;
+    }
+    if (currentPeriod?.status === 'SUBMITTED') {
+      toast.error(
+        `Kỳ tính thuế năm ${selectedYear} đã hoàn tất quyết toán và nộp cho cơ quan thuế. Không thể thêm chứng từ vào kỳ này.`,
+        'Kỳ tính thuế đã khóa'
+      );
       return;
     }
     navigation.navigate('ExpenseUpload', {
@@ -340,6 +356,13 @@ export const ExpenseListScreen: React.FC = () => {
 
   const handleDeleteDoc = (docId?: string) => {
     if (!docId || !selectedYear) return;
+    if (currentPeriod?.status === 'SUBMITTED') {
+      toast.error(
+        'Kỳ tính thuế này đã hoàn tất quyết toán. Không thể xóa chứng từ khỏi hồ sơ đã khóa.',
+        'Kỳ tính thuế đã khóa'
+      );
+      return;
+    }
     if (Platform.OS === 'web') {
       const ok = window.confirm('Xóa chứng từ này khỏi hồ sơ thuế?');
       if (ok) removeDocument(selectedYear, docId);
@@ -426,6 +449,19 @@ export const ExpenseListScreen: React.FC = () => {
             showsVerticalScrollIndicator={false}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[theme.colors.primary]} />}
           >
+            {/* BANNER KỲ ĐÃ QUYẾT TOÁN / KHÓA */}
+            {currentPeriod?.status === 'SUBMITTED' && (
+              <View style={styles.periodLockedBanner}>
+                <Ionicons name="lock-closed" size={18} color="#DC2626" />
+                <View style={{ flex: 1, marginLeft: 8 }}>
+                  <Text style={styles.periodLockedTitle}>Hồ sơ thuế năm {selectedYear} đã khóa</Text>
+                  <Text style={styles.periodLockedDesc}>
+                    Kỳ tính thuế này đã hoàn tất quyết toán và nộp cho cơ quan thuế. Chế độ chỉ xem, không thể thêm hoặc xóa chứng từ.
+                  </Text>
+                </View>
+              </View>
+            )}
+
             {/* KPI TỔNG QUAN - Grid 4 ô nhỏ */}
             <View style={styles.kpiRow}>
               <View style={[styles.kpiBox, { borderLeftColor: '#8B1E1E' }]}>
@@ -1035,6 +1071,27 @@ export const ExpenseListScreen: React.FC = () => {
 };
 
 const styles = StyleSheet.create({
+  periodLockedBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+  },
+  periodLockedTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#991B1B',
+  },
+  periodLockedDesc: {
+    fontSize: 11.5,
+    color: '#7F1D1D',
+    marginTop: 2,
+    lineHeight: 16,
+  },
   safeArea: {
     flex: 1,
     backgroundColor: '#F8F5EE',

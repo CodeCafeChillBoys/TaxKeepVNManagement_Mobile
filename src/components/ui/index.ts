@@ -3,3 +3,4 @@ export * from './Badge';
 export * from './Button';
 export * from './Tabs';
 export * from './Separator';
+export * from './Toast';

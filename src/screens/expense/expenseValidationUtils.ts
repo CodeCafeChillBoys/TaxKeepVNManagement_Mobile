@@ -199,3 +199,131 @@ export function getValidationMatrixErrorDetails(code: ValidationErrorCode | stri
       };
   }
 }
+
+/**
+ * Chuyển đổi mã lỗi và phản hồi từ máy chủ thành thông điệp tiếng Việt thân thiện,
+ * chuẩn mực về thuế, tuyệt đối không chứa thuật ngữ IT hoặc mã lỗi kỹ thuật.
+ */
+export function parseBackendError(err: any): { title: string; message: string } {
+  const status = err?.response?.status;
+  const data = err?.response?.data;
+  const errorCode = data?.errorCode;
+  const rawMessage: string = data?.message || err?.message || '';
+
+  // 1. Kỳ quyết toán đã nộp / kết toán và bị khóa
+  if (
+    status === 403 ||
+    errorCode === 'FORBIDDEN' ||
+    rawMessage.toLowerCase().includes('submitted') ||
+    rawMessage.toLowerCase().includes('locked')
+  ) {
+    return {
+      title: 'Kỳ tính thuế đã khóa',
+      message: 'Hồ sơ kỳ tính thuế này đã hoàn tất quyết toán và nộp cho cơ quan thuế. Bạn không thể tải thêm hoặc sửa đổi chứng từ.',
+    };
+  }
+
+  // 2. Không đúng định dạng tệp
+  if (
+    errorCode === 'UNSUPPORTED_FORMAT' ||
+    rawMessage.toLowerCase().includes('unsupported') ||
+    rawMessage.toLowerCase().includes('only jpg, png')
+  ) {
+    return {
+      title: 'Định dạng tệp không hợp lệ',
+      message: 'Hệ thống chỉ chấp nhận tệp hình ảnh (JPG, PNG) hoặc tài liệu PDF.',
+    };
+  }
+
+  // 3. Dung lượng tệp vượt quá 10MB
+  if (
+    errorCode === 'FILE_SIZE_EXCEEDED' ||
+    rawMessage.toLowerCase().includes('10mb') ||
+    rawMessage.toLowerCase().includes('exceeded')
+  ) {
+    return {
+      title: 'Dung lượng tệp quá lớn',
+      message: 'Dung lượng tệp vượt quá 10MB. Vui lòng chọn tệp có kích thước nhỏ hơn.',
+    };
+  }
+
+  // 4. Chưa có tệp
+  if (
+    errorCode === 'FILES_REQUIRED' ||
+    rawMessage.toLowerCase().includes('required')
+  ) {
+    return {
+      title: 'Thiếu tệp chứng từ',
+      message: 'Vui lòng chọn hoặc chụp ảnh hóa đơn chứng từ trước khi tiếp tục.',
+    };
+  }
+
+  // 5. Trùng lặp hóa đơn trong cùng kỳ tính thuế
+  if (
+    status === 409 ||
+    errorCode === 'ERR_DUPLICATE_DOCUMENT' ||
+    errorCode === 'DUPLICATE_DOCUMENT' ||
+    rawMessage.toLowerCase().includes('duplicate') ||
+    rawMessage.toLowerCase().includes('already exists')
+  ) {
+    return {
+      title: 'Hóa đơn đã tồn tại',
+      message: 'Hóa đơn này đã được lưu trong kỳ tính thuế (trùng số hóa đơn hoặc đơn vị phát hành).',
+    };
+  }
+
+  // 6. Thông tin người mua không khớp
+  if (
+    errorCode === 'ERR_IDENTITY_MISMATCH' ||
+    rawMessage.includes('không trùng khớp với Người nộp thuế')
+  ) {
+    return {
+      title: 'Thông tin người mua không khớp',
+      message: rawMessage || 'Thông tin người mua trên hóa đơn không trùng khớp với Người nộp thuế hoặc Người phụ thuộc đã đăng ký.',
+    };
+  }
+
+  // 7. Loại chứng từ không hợp lệ
+  if (
+    errorCode === 'INVALID_DOC_TYPE' ||
+    rawMessage.includes('loại chứng từ')
+  ) {
+    return {
+      title: 'Danh mục chi phí không hợp lệ',
+      message: rawMessage || 'Mã danh mục chi phí không tồn tại trong hệ thống quy định.',
+    };
+  }
+
+  // 8. Không tìm thấy kỳ tính thuế
+  if (
+    status === 404 ||
+    errorCode === 'NOT_FOUND' ||
+    rawMessage.toLowerCase().includes('not found')
+  ) {
+    return {
+      title: 'Không tìm thấy dữ liệu',
+      message: 'Không tìm thấy thông tin kỳ tính thuế hoặc chứng từ tương ứng.',
+    };
+  }
+
+  // 9. Lỗi máy chủ 500
+  if (status === 500 || errorCode === 'INTERNAL_SERVER_ERROR') {
+    return {
+      title: 'Hệ thống đang bận',
+      message: 'Máy chủ đang gặp trục trặc khi tiếp nhận và xử lý tệp. Vui lòng kiểm tra lại ảnh chụp rõ nét hoặc thử lại sau.',
+    };
+  }
+
+  // 10. Mất kết nối mạng
+  if (err?.code === 'ECONNABORTED' || err?.message?.toLowerCase().includes('network') || !err?.response) {
+    return {
+      title: 'Lỗi kết nối mạng',
+      message: 'Không thể kết nối đến máy chủ. Vui lòng kiểm tra kết nối mạng của bạn.',
+    };
+  }
+
+  return {
+    title: 'Tải lên không thành công',
+    message: rawMessage || 'Có lỗi xảy ra khi xử lý hóa đơn chứng từ. Vui lòng thử lại.',
+  };
+}

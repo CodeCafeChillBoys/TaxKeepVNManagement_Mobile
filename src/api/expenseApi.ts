@@ -360,11 +360,11 @@ export const expenseApi = {
     }
 
     const res = await apiClient.post<ApiResponse<BatchUploadResponse>>(
-      `${config.apiBaseUrl}/api/v1/tax-periods/${periodId}/documents/upload`,
+      `/api/v1/tax-periods/${periodId}/documents/upload`,
       formData,
       {
         headers: {
-          'Content-Type': 'multipart/form-data',
+          Accept: 'application/json',
         },
         transformRequest: (data) => data,
         timeout: 60000,

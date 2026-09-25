@@ -33,7 +33,9 @@ import {
   Badge,
   Button,
   Separator,
+  useToast,
 } from '../../components/ui';
+import { parseBackendError } from './expenseValidationUtils';
 
 type TabType = 'KIEM_TRA' | 'THONG_TIN';
 
@@ -43,10 +45,15 @@ export const ExpenseReviewScreen: React.FC = () => {
   const initialData: ExpenseOcrResult = route.params?.ocrResult || {};
   const periodIdParam = route.params?.periodId || initialData.periodId;
 
-  const isConfirmed = initialData.status === 'CONFIRMED';
-  const isReadOnly = Boolean(route.params?.isReadOnly || isConfirmed);
+  const { toast } = useToast();
+  const { addOrUpdateDocument, setSelectedYear, documentTypes, fetchDocumentTypes, documents, selectedYear, periods } = useExpenseStore();
 
-  const { addOrUpdateDocument, setSelectedYear, documentTypes, fetchDocumentTypes, documents, selectedYear } = useExpenseStore();
+  const activeTaxYear = selectedYear || initialData.extractedYear || new Date().getFullYear();
+  const activePeriod = periods[activeTaxYear];
+  const isPeriodSubmitted = activePeriod?.status === 'SUBMITTED';
+
+  const isConfirmed = initialData.status === 'CONFIRMED';
+  const isReadOnly = Boolean(route.params?.isReadOnly || isConfirmed || isPeriodSubmitted);
 
   const [currentDocTypeCode, setCurrentDocTypeCode] = useState<string>(
     initialData.docTypeCode || (documentTypes && documentTypes.length > 0 ? documentTypes[0].code : '')
@@ -190,20 +197,26 @@ export const ExpenseReviewScreen: React.FC = () => {
   const executeConfirm = async () => {
     if (isReadOnly) return;
 
+    if (isPeriodSubmitted) {
+      toast.error(
+        `Kỳ quyết toán thuế năm ${activeTaxYear} đã hoàn tất và bị khóa. Không thể chỉnh sửa chứng từ.`,
+        'Kỳ tính thuế đã khóa'
+      );
+      return;
+    }
+
     if (initialData.validationStatus?.isIdentityValid === false) {
-      Alert.alert(
-        'Không thể xác nhận',
-        'Thông tin người mua ("' + (buyerName.trim() || initialData.buyerName || 'Chưa rõ') + '") không khớp với Người nộp thuế hoặc bất kỳ Người phụ thuộc nào trong hồ sơ của bạn.\n\nTheo quy định thuế, chi phí giảm trừ gia cảnh chỉ được chấp nhận cho chính người nộp thuế hoặc người phụ thuộc hợp pháp.',
-        [{ text: 'Đã hiểu' }]
+      toast.error(
+        'Thông tin người mua ("' + (buyerName.trim() || initialData.buyerName || 'Chưa rõ') + '") không khớp với Người nộp thuế hoặc bất kỳ Người phụ thuộc nào trong hồ sơ của bạn.',
+        'Người mua không khớp'
       );
       return;
     }
 
     if (isDuplicate) {
-      Alert.alert(
-        'Hóa đơn bị trùng lặp',
-        'Hóa đơn số ' + invoiceNumber.trim() + ' của đơn vị có MST ' + sellerTaxCode.trim() + ' đã tồn tại trong kỳ tính thuế này. Hệ thống không cho phép lưu trùng hóa đơn.',
-        [{ text: 'Đã hiểu' }]
+      toast.error(
+        'Hóa đơn số ' + invoiceNumber.trim() + ' của đơn vị có MST ' + sellerTaxCode.trim() + ' đã tồn tại trong kỳ tính thuế này.',
+        'Hóa đơn bị trùng lặp'
       );
       return;
     }
@@ -250,8 +263,8 @@ export const ExpenseReviewScreen: React.FC = () => {
           });
         } catch (apiErr: any) {
           setSaving(false);
-          const displayMsg = apiErr?.response?.data?.message || apiErr?.message || 'Máy chủ từ chối xác nhận.';
-          Alert.alert('Không thể xác nhận', displayMsg);
+          const parsed = parseBackendError(apiErr);
+          toast.error(parsed.message, parsed.title);
           return;
         }
       }
@@ -285,11 +298,8 @@ export const ExpenseReviewScreen: React.FC = () => {
       setSelectedYear(cleanYear);
       setSaving(false);
 
-      Alert.alert(
-        '✓ Đã xác nhận thành công!',
-        `Hóa đơn đã được lưu vào danh mục "${groupMeta.name}".`,
-        [{ text: 'Về danh sách', onPress: () => navigation.navigate('ExpenseList') }]
-      );
+      toast.success(`Hóa đơn đã được lưu vào danh mục "${groupMeta.name}".`, 'Xác nhận thành công');
+      navigation.navigate('ExpenseList');
     } catch (err: any) {
       setSaving(false);
       Alert.alert('Lỗi xác nhận', err?.message || 'Không thể xác nhận chứng từ.');
@@ -384,8 +394,22 @@ export const ExpenseReviewScreen: React.FC = () => {
         {/* ===== TAB 1: KIỂM TRA & XÁC NHẬN ===== */}
         {activeTab === 'KIEM_TRA' && (
           <View>
+            {/* Banner kỳ đã nộp / khóa */}
+            {isPeriodSubmitted && (
+              <View style={styles.lockedPeriodBanner}>
+                <Ionicons name="lock-closed" size={20} color="#DC2626" />
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Text style={styles.lockedPeriodTitle}>Kỳ quyết toán thuế đã khóa</Text>
+                  <Text style={styles.lockedPeriodDesc}>
+                    Kỳ tính thuế năm {activeTaxYear} đã nộp quyết toán cho cơ quan thuế. Hồ sơ đã khóa, chế độ chỉ xem.
+                  </Text>
+                </View>
+                <Badge variant="destructive">Đã khóa</Badge>
+              </View>
+            )}
+
             {/* Banner đã duyệt */}
-            {isReadOnly && (
+            {!isPeriodSubmitted && isReadOnly && (
               <View style={styles.confirmedBanner}>
                 <Ionicons name="shield-checkmark" size={20} color="#16A34A" />
                 <View style={{ flex: 1, marginLeft: 10 }}>
@@ -828,6 +852,26 @@ const styles = StyleSheet.create({
   checkItem: { flexDirection: 'row', alignItems: 'center', gap: 4, width: '47%' },
   checkText: { fontSize: 11, color: '#475569', flex: 1 },
   // Confirmed banner
+  lockedPeriodBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+  },
+  lockedPeriodTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#991B1B',
+  },
+  lockedPeriodDesc: {
+    fontSize: 11.5,
+    color: '#7F1D1D',
+    marginTop: 2,
+  },
   confirmedBanner: {
     flexDirection: 'row',
     alignItems: 'center',

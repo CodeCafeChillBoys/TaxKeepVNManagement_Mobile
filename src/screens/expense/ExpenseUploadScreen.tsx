@@ -6,7 +6,6 @@ import {
   ScrollView,
   TouchableOpacity,
   Image,
-  Alert,
   ActivityIndicator,
   Platform,
 } from 'react-native';
@@ -15,13 +14,13 @@ import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { Ionicons } from '@expo/vector-icons';
-import { theme } from '../../constants/theme';
 import { HeaderMotif } from '../../components/common/HeaderMotif';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { expenseApi, mapDocumentReviewToOcrResult } from '../../api/expenseApi';
 import { useExpenseStore } from '../../stores/useExpenseStore';
 import { getDocumentTypeIcon } from './expenseGroupUtils';
-import { Badge } from '../../components/ui';
+import { Badge, useToast } from '../../components/ui';
+import { parseBackendError } from './expenseValidationUtils';
 
 // Các bước trong luồng tải lên
 type UploadStep = 1 | 2 | 3;
@@ -33,7 +32,11 @@ export const ExpenseUploadScreen: React.FC = () => {
   const targetYear = route.params?.targetYear || currentTaxYear;
   const periodId = route.params?.periodId;
 
-  const { documentTypes, fetchDocumentTypes, isDocumentTypesLoading, addOrUpdateDocument } = useExpenseStore();
+  const { toast } = useToast();
+  const { periods, documentTypes, fetchDocumentTypes, isDocumentTypesLoading, addOrUpdateDocument } = useExpenseStore();
+
+  const activePeriod = periods[targetYear];
+  const isPeriodSubmitted = activePeriod?.status === 'SUBMITTED';
 
   useEffect(() => {
     fetchDocumentTypes();
@@ -42,8 +45,8 @@ export const ExpenseUploadScreen: React.FC = () => {
   const categoryOptions = useMemo(() => {
     const autoOption = {
       code: 'AUTO',
-      name: 'Tự động nhận diện',
-      description: 'Hệ thống đọc và phân loại hóa đơn theo nội dung',
+      name: 'Tự động phân loại',
+      description: 'Hệ thống tự động đọc và phân loại theo nội dung chứng từ',
       icon: 'sparkles',
       badge: 'Khuyên dùng',
       isTaxEligible: true,
@@ -70,6 +73,7 @@ export const ExpenseUploadScreen: React.FC = () => {
     size?: number;
     base64?: string;
   } | null>(null);
+
   const [processing, setProcessing] = useState<boolean>(false);
   const [processingStage, setProcessingStage] = useState<string>('');
   const [processingProgress, setProcessingProgress] = useState<number>(0);
@@ -81,11 +85,58 @@ export const ExpenseUploadScreen: React.FC = () => {
     }
   }, [selectedFile]);
 
+  // Kiểm tra tính hợp lệ của tệp theo quy định của hệ thống thuế
+  const validateFile = (file: { name?: string; type?: string; size?: number }): boolean => {
+    if (!file) {
+      toast.warning('Vui lòng chọn hoặc chụp ảnh hóa đơn chứng từ.', 'Chưa chọn tệp');
+      return false;
+    }
+
+    const name = (file.name || '').toLowerCase();
+    const allowedExts = ['.jpg', '.jpeg', '.png', '.pdf'];
+    const hasValidExt = allowedExts.some((ext) => name.endsWith(ext));
+    const validMimes = [
+      'image/jpeg',
+      'image/jpg',
+      'image/pjpeg',
+      'image/png',
+      'image/x-png',
+      'application/pdf',
+    ];
+    const hasValidMime = !file.type || validMimes.includes(file.type.toLowerCase());
+
+    if (!hasValidExt && !hasValidMime) {
+      toast.error(
+        'Định dạng tệp không được hỗ trợ. Vui lòng chỉ tải lên tệp ảnh (JPG, PNG) hoặc tệp PDF.',
+        'Định dạng tệp không hợp lệ'
+      );
+      return false;
+    }
+
+    if (file.size && file.size > 10 * 1024 * 1024) {
+      toast.error(
+        `Dung lượng tệp (${(file.size / (1024 * 1024)).toFixed(1)}MB) vượt quá giới hạn 10MB cho phép.`,
+        'Tệp vượt quá dung lượng'
+      );
+      return false;
+    }
+
+    return true;
+  };
+
   const handleTakePhoto = async () => {
+    if (isPeriodSubmitted) {
+      toast.error(
+        `Kỳ quyết toán thuế năm ${targetYear} đã hoàn tất và bị khóa. Không thể tải thêm chứng từ.`,
+        'Kỳ tính thuế đã khóa'
+      );
+      return;
+    }
+
     try {
       const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert('Cần cấp quyền', 'Vui lòng cho phép truy cập camera để chụp hóa đơn.');
+        toast.warning('Vui lòng cho phép truy cập máy ảnh để chụp chứng từ.', 'Cần cấp quyền');
         return;
       }
       const result = await ImagePicker.launchCameraAsync({
@@ -96,25 +147,41 @@ export const ExpenseUploadScreen: React.FC = () => {
       });
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const asset = result.assets[0];
-        setSelectedFile({
+        const newFile = {
           uri: asset.uri,
-          name: asset.fileName || `hoadon_camera_${Date.now()}.jpg`,
+          name: asset.fileName || `chung_tu_chup_${Date.now()}.jpg`,
           type: 'image/jpeg',
           size: asset.fileSize,
           base64: asset.base64 || undefined,
-        });
+        };
+
+        if (validateFile(newFile)) {
+          setSelectedFile(newFile);
+          toast.success('Đã chọn ảnh chụp thành công.', 'Đã tải ảnh lên');
+        }
       }
     } catch (err) {
-      Alert.alert('Lỗi', 'Không thể khởi động camera.');
+      toast.error('Không thể khởi động máy ảnh. Vui lòng thử lại.', 'Lỗi thiết bị');
     }
   };
 
   const handlePickImage = async () => {
-    if (Platform.OS === 'web') { await handlePickDocument(); return; }
+    if (isPeriodSubmitted) {
+      toast.error(
+        `Kỳ quyết toán thuế năm ${targetYear} đã hoàn tất và bị khóa. Không thể tải thêm chứng từ.`,
+        'Kỳ tính thuế đã khóa'
+      );
+      return;
+    }
+
+    if (Platform.OS === 'web') {
+      await handlePickDocument();
+      return;
+    }
     try {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert('Cần cấp quyền', 'Vui lòng cho phép truy cập thư viện ảnh.');
+        toast.warning('Vui lòng cho phép truy cập thư viện ảnh.', 'Cần cấp quyền');
         return;
       }
       const result = await ImagePicker.launchImageLibraryAsync({
@@ -125,24 +192,37 @@ export const ExpenseUploadScreen: React.FC = () => {
       });
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const asset = result.assets[0];
-        setSelectedFile({
+        const newFile = {
           uri: asset.uri,
-          name: asset.fileName || `hoadon_${Date.now()}.jpg`,
+          name: asset.fileName || `chung_tu_${Date.now()}.jpg`,
           type: 'image/jpeg',
           size: asset.fileSize,
           base64: asset.base64 || undefined,
-        });
+        };
+
+        if (validateFile(newFile)) {
+          setSelectedFile(newFile);
+          toast.success('Đã chọn ảnh từ thư viện thành công.', 'Đã tải ảnh lên');
+        }
       }
     } catch (err: any) {
       if (err?.message?.includes('application/pdf') || err?.message?.includes('Unsupported file type')) {
         await handlePickDocument();
         return;
       }
-      Alert.alert('Lỗi', 'Không thể chọn ảnh từ thư viện.');
+      toast.error('Không thể chọn ảnh từ thư viện thiết bị.', 'Lỗi chọn tệp');
     }
   };
 
   const handlePickDocument = async () => {
+    if (isPeriodSubmitted) {
+      toast.error(
+        `Kỳ quyết toán thuế năm ${targetYear} đã hoàn tất và bị khóa. Không thể tải thêm chứng từ.`,
+        'Kỳ tính thuế đã khóa'
+      );
+      return;
+    }
+
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: ['application/pdf', 'image/*'],
@@ -150,71 +230,120 @@ export const ExpenseUploadScreen: React.FC = () => {
       });
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const asset = result.assets[0];
-        const fileName = asset.name || `hoadon_${Date.now()}`;
+        const fileName = asset.name || `chung_tu_${Date.now()}`;
         const isPdf = fileName.toLowerCase().endsWith('.pdf') || asset.mimeType === 'application/pdf';
-        setSelectedFile({
+        const newFile = {
           uri: asset.uri,
           name: fileName,
           type: asset.mimeType || (isPdf ? 'application/pdf' : 'image/jpeg'),
           size: asset.size,
-        });
+        };
+
+        if (validateFile(newFile)) {
+          setSelectedFile(newFile);
+          toast.success('Đã chọn tệp chứng từ thành công.', 'Đã chọn tệp');
+        }
       }
     } catch (err) {
-      Alert.alert('Lỗi', 'Không thể chọn tệp.');
+      toast.error('Không thể chọn tệp tài liệu.', 'Lỗi chọn tệp');
     }
   };
 
   const handleSubmit = async () => {
+    // 1. Kiểm tra trạng thái kỳ tính thuế (sau kết toán thì không cho phép up)
+    if (isPeriodSubmitted) {
+      toast.error(
+        `Kỳ quyết toán thuế năm ${targetYear} đã hoàn tất và bị khóa. Quý khách không thể tải thêm chứng từ.`,
+        'Kỳ tính thuế đã khóa'
+      );
+      return;
+    }
+
+    // 2. Kiểm tra chọn tệp
     if (!selectedFile) {
-      Alert.alert('Chưa chọn hóa đơn', 'Vui lòng chụp ảnh hoặc chọn tệp hóa đơn trước.');
+      toast.warning('Vui lòng chọn ảnh hoặc tệp hóa đơn chứng từ trước.', 'Chưa chọn tệp');
+      return;
+    }
+
+    // 3. Kiểm tra định dạng & dung lượng
+    if (!validateFile(selectedFile)) {
       return;
     }
 
     setProcessing(true);
     setCurrentStep(3);
     setProcessingProgress(10);
-    setProcessingStage('Đang chuẩn bị kết nối...');
+    setProcessingStage('Đang chuẩn bị kết nối hồ sơ quyết toán...');
 
     try {
       let activePeriodId = periodId;
       if (!activePeriodId) {
-        setProcessingStage('Đang tạo hồ sơ kê khai...');
+        setProcessingStage('Đang kiểm tra thông tin kỳ tính thuế...');
         setProcessingProgress(20);
         const period = await expenseApi.createOrGetTaxPeriod(targetYear);
+        if (period.status === 'SUBMITTED') {
+          setProcessing(false);
+          setCurrentStep(1);
+          toast.error(
+            `Kỳ quyết toán thuế năm ${targetYear} đã hoàn tất và bị khóa. Quý khách không thể tải thêm chứng từ.`,
+            'Kỳ tính thuế đã khóa'
+          );
+          return;
+        }
         activePeriodId = period.periodId;
       }
 
-      setProcessingStage('Đang tải hóa đơn lên máy chủ...');
+      setProcessingStage('Đang gửi chứng từ lên hệ thống lưu trữ...');
       setProcessingProgress(40);
 
-      const uploadResult = await expenseApi.uploadDocument(activePeriodId!, selectedFile, selectedCategory !== 'AUTO' ? selectedCategory : undefined);
+      const uploadResult = await expenseApi.uploadDocument(
+        activePeriodId!,
+        selectedFile,
+        selectedCategory !== 'AUTO' ? selectedCategory : undefined
+      );
+
+      if (!uploadResult?.documents || uploadResult.documents.length === 0) {
+        throw new Error('Máy chủ không phản hồi thông tin chứng từ tải lên.');
+      }
+
       const uploadedDoc = uploadResult.documents[0];
       const docId = uploadedDoc.id;
 
-      setProcessingStage('Hệ thống đang đọc thông tin hóa đơn...');
+      setProcessingStage('Hệ thống đang nhận diện nội dung chứng từ...');
       setProcessingProgress(60);
 
-      // Polling đợi AI xử lý
+      // Polling đợi hệ thống đọc thông tin
       let extractedDoc: any = null;
       const maxAttempts = 22;
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         await new Promise((res) => setTimeout(res, 1500));
         try {
           const docDetail = await expenseApi.getDocumentById(activePeriodId!, docId);
-          if (docDetail.status === 'EXTRACTED' || docDetail.status === 'FAILED') {
+          if (docDetail.status === 'EXTRACTED') {
             extractedDoc = docDetail;
             break;
+          }
+          if (docDetail.status === 'FAILED') {
+            // Hệ thống bóc tách thất bại
+            setProcessing(false);
+            setCurrentStep(2);
+            toast.error(
+              'Không thể nhận diện nội dung trên chứng từ. Vui lòng kiểm tra ảnh chụp rõ nét hơn hoặc thử lại với tệp khác.',
+              'Nhận diện không thành công'
+            );
+            // Tuyệt đối không cho vào danh sách chờ xét duyệt
+            return;
           }
         } catch (_) {}
         const pct = 60 + Math.round((attempt / maxAttempts) * 30);
         setProcessingProgress(pct);
-        setProcessingStage(`Đang phân tích nội dung... (lần ${attempt}/${maxAttempts})`);
+        setProcessingStage(`Đang phân tích dữ liệu hóa đơn... (lần ${attempt}/${maxAttempts})`);
       }
 
       setProcessingProgress(100);
       setProcessing(false);
 
-      if (extractedDoc) {
+      if (extractedDoc && extractedDoc.status === 'EXTRACTED') {
         const ocrResult = mapDocumentReviewToOcrResult(extractedDoc, targetYear, documentTypes);
         if (selectedCategory !== 'AUTO') {
           ocrResult.docTypeCode = selectedCategory;
@@ -227,36 +356,31 @@ export const ExpenseUploadScreen: React.FC = () => {
             ocrResult.docTypeName = defaultType.name;
           }
         }
+
+        // Chỉ thêm vào danh sách xét duyệt khi nhận diện thành công
         addOrUpdateDocument(targetYear, ocrResult);
+        toast.success('Hóa đơn đã được đọc thông tin thành công.', 'Nhận diện hoàn tất');
         navigation.navigate('ExpenseReview', { ocrResult, periodId: activePeriodId });
       } else {
-        const fallbackDoc = {
-          id: docId,
-          documentId: docId,
-          periodId: activePeriodId,
-          fileUrl: uploadedDoc.fileUrl,
-          originalFilename: uploadedDoc.originalFilename || selectedFile.name,
-          docTypeCode: selectedCategory !== 'AUTO' ? selectedCategory : null,
-          extractedYear: targetYear,
-          status: 'UPLOADED' as const,
-          createdAt: uploadedDoc.createdAt || new Date().toISOString(),
-        };
-        addOrUpdateDocument(targetYear, fallbackDoc as any);
-        Alert.alert(
-          'Hóa đơn đã được lưu',
-          'Hệ thống đang tiếp tục đọc thông tin hóa đơn trong nền. Bạn có thể kiểm tra kết quả sau vài giây tại danh sách hóa đơn.',
-          [{ text: 'Về danh sách', onPress: () => navigation.navigate('ExpenseList') }]
+        // Hết thời gian chờ hoặc chưa nhận diện được
+        setCurrentStep(2);
+        toast.warning(
+          'Hệ thống đang tiếp tục xử lý chứng từ trong nền. Vui lòng làm mới danh sách sau ít phút.',
+          'Đang xử lý trong nền'
         );
+        // Không thêm bản ghi lỗi vào danh sách chờ xét duyệt
       }
     } catch (err: any) {
       setProcessing(false);
-      setCurrentStep(2);
-      Alert.alert('Tải lên thất bại', err?.message || 'Có lỗi xảy ra. Vui lòng thử lại.');
+      setCurrentStep(selectedFile ? 2 : 1);
+      const parsed = parseBackendError(err);
+      toast.error(parsed.message, parsed.title);
+      // Tuyệt đối không thêm vào danh sách chờ xét duyệt
     }
   };
 
   const STEPS = [
-    { num: 1, label: 'Chọn hóa đơn' },
+    { num: 1, label: 'Chọn chứng từ' },
     { num: 2, label: 'Phân loại' },
     { num: 3, label: 'Đang xử lý' },
   ];
@@ -273,21 +397,27 @@ export const ExpenseUploadScreen: React.FC = () => {
           return (
             <React.Fragment key={step.num}>
               <View style={styles.stepItem}>
-                <View style={[
-                  styles.stepCircle,
-                  isActive && styles.stepCircleActive,
-                  isDone && styles.stepCircleDone,
-                ]}>
+                <View
+                  style={[
+                    styles.stepCircle,
+                    isActive && styles.stepCircleActive,
+                    isDone && styles.stepCircleDone,
+                  ]}
+                >
                   {isDone ? (
                     <Ionicons name="checkmark" size={14} color="#fff" />
                   ) : (
-                    <Text style={[styles.stepNum, (isActive || isDone) && { color: '#fff' }]}>{step.num}</Text>
+                    <Text style={[styles.stepNum, (isActive || isDone) && { color: '#fff' }]}>
+                      {step.num}
+                    </Text>
                   )}
                 </View>
-                <Text style={[styles.stepLabel, isActive && styles.stepLabelActive]}>{step.label}</Text>
+                <Text style={[styles.stepLabel, isActive && styles.stepLabelActive]}>
+                  {step.label}
+                </Text>
               </View>
               {idx < STEPS.length - 1 && (
-                <View style={[styles.stepLine, (currentStep > step.num) && styles.stepLineDone]} />
+                <View style={[styles.stepLine, currentStep > step.num && styles.stepLineDone]} />
               )}
             </React.Fragment>
           );
@@ -295,11 +425,25 @@ export const ExpenseUploadScreen: React.FC = () => {
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* BANNER KỲ KÊ KHAI */}
-        <View style={styles.yearBanner}>
-          <Ionicons name="calendar-outline" size={14} color="#8B1E1E" />
-          <Text style={styles.yearBannerText}>Hóa đơn cho kỳ quyết toán thuế năm {targetYear}</Text>
-        </View>
+        {/* BANNER KỲ ĐÃ KẾT TOÁN / KHÓA */}
+        {isPeriodSubmitted ? (
+          <View style={styles.lockedBanner}>
+            <Ionicons name="lock-closed" size={20} color="#DC2626" />
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <Text style={styles.lockedBannerTitle}>Kỳ quyết toán thuế đã khóa</Text>
+              <Text style={styles.lockedBannerDesc}>
+                Kỳ tính thuế năm {targetYear} đã hoàn tất quyết toán và nộp cơ quan thuế. Hồ sơ đã được khóa, bạn không thể tải thêm hóa đơn chứng từ vào kỳ này.
+              </Text>
+            </View>
+          </View>
+        ) : (
+          <View style={styles.yearBanner}>
+            <Ionicons name="calendar-outline" size={14} color="#8B1E1E" />
+            <Text style={styles.yearBannerText}>
+              Hóa đơn cho kỳ quyết toán thuế năm {targetYear}
+            </Text>
+          </View>
+        )}
 
         {/* BƯỚC 1 & 2: CHỌN FILE + PHÂN LOẠI (ẩn khi đang xử lý) */}
         {!processing && (
@@ -313,14 +457,23 @@ export const ExpenseUploadScreen: React.FC = () => {
                   ) : (
                     <View style={styles.pdfPreview}>
                       <Ionicons name="document-text" size={48} color="#8B1E1E" />
-                      <Text style={styles.pdfName} numberOfLines={2}>{selectedFile.name}</Text>
+                      <Text style={styles.pdfName} numberOfLines={2}>
+                        {selectedFile.name}
+                      </Text>
                       <Text style={styles.pdfSize}>
                         {selectedFile.size ? `${(selectedFile.size / 1024).toFixed(0)} KB` : 'Tài liệu PDF'}
                       </Text>
                     </View>
                   )}
                   <View style={styles.previewActions}>
-                    <TouchableOpacity style={styles.changeFileBtn} onPress={() => { setSelectedFile(null); setCurrentStep(1); }}>
+                    <TouchableOpacity
+                      style={styles.changeFileBtn}
+                      disabled={isPeriodSubmitted}
+                      onPress={() => {
+                        setSelectedFile(null);
+                        setCurrentStep(1);
+                      }}
+                    >
                       <Ionicons name="refresh-outline" size={14} color="#475569" />
                       <Text style={styles.changeFileBtnText}>Chọn hóa đơn khác</Text>
                     </TouchableOpacity>
@@ -328,55 +481,83 @@ export const ExpenseUploadScreen: React.FC = () => {
                 </View>
               ) : (
                 <View style={styles.uploadPlaceholder}>
-                  <View style={styles.uploadIconRing}>
-                    <Ionicons name="cloud-upload-outline" size={32} color="#8B1E1E" />
+                  <View style={[styles.uploadIconRing, isPeriodSubmitted && { backgroundColor: '#F1F5F9' }]}>
+                    <Ionicons
+                      name={isPeriodSubmitted ? 'lock-closed-outline' : 'cloud-upload-outline'}
+                      size={32}
+                      color={isPeriodSubmitted ? '#94A3B8' : '#8B1E1E'}
+                    />
                   </View>
-                  <Text style={styles.uploadTitle}>Chọn ảnh hoặc tệp hóa đơn</Text>
+                  <Text style={styles.uploadTitle}>
+                    {isPeriodSubmitted ? 'Kỳ tính thuế đã đóng' : 'Chọn ảnh hoặc tệp chứng từ'}
+                  </Text>
                   <Text style={styles.uploadSubtitle}>
-                    Hỗ trợ ảnh JPG, PNG và tài liệu PDF (tối đa 10MB)
+                    {isPeriodSubmitted
+                      ? 'Hồ sơ năm này đã nộp cơ quan thuế và không thể nhận thêm chứng từ.'
+                      : 'Hỗ trợ ảnh chụp JPG, PNG và tài liệu PDF (tối đa 10MB)'}
                   </Text>
 
-                  <View style={styles.uploadBtnRow}>
-                    <TouchableOpacity style={styles.uploadBtnItem} onPress={handleTakePhoto} activeOpacity={0.8}>
-                      <View style={[styles.uploadBtnIcon, { backgroundColor: '#8B1E1E' }]}>
-                        <Ionicons name="camera" size={20} color="#fff" />
-                      </View>
-                      <Text style={styles.uploadBtnLabel}>Chụp ảnh</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.uploadBtnItem} onPress={handlePickImage} activeOpacity={0.8}>
-                      <View style={[styles.uploadBtnIcon, { backgroundColor: '#0284C7' }]}>
-                        <Ionicons name="images-outline" size={20} color="#fff" />
-                      </View>
-                      <Text style={styles.uploadBtnLabel}>Thư viện</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.uploadBtnItem} onPress={handlePickDocument} activeOpacity={0.8}>
-                      <View style={[styles.uploadBtnIcon, { backgroundColor: '#D97706' }]}>
-                        <Ionicons name="document-attach-outline" size={20} color="#fff" />
-                      </View>
-                      <Text style={styles.uploadBtnLabel}>Tệp PDF</Text>
-                    </TouchableOpacity>
-                  </View>
+                  {!isPeriodSubmitted && (
+                    <View style={styles.uploadBtnRow}>
+                      <TouchableOpacity
+                        style={styles.uploadBtnItem}
+                        onPress={handleTakePhoto}
+                        activeOpacity={0.8}
+                      >
+                        <View style={[styles.uploadBtnIcon, { backgroundColor: '#8B1E1E' }]}>
+                          <Ionicons name="camera" size={20} color="#fff" />
+                        </View>
+                        <Text style={styles.uploadBtnLabel}>Chụp ảnh</Text>
+                      </TouchableOpacity>
 
-                  <View style={styles.tipsRow}>
-                    <Ionicons name="bulb-outline" size={13} color="#D97706" />
-                    <Text style={styles.tipsText}>Mẹo: Chụp rõ mã số thuế, số hóa đơn và tổng tiền để đạt kết quả tốt nhất.</Text>
-                  </View>
+                      <TouchableOpacity
+                        style={styles.uploadBtnItem}
+                        onPress={handlePickImage}
+                        activeOpacity={0.8}
+                      >
+                        <View style={[styles.uploadBtnIcon, { backgroundColor: '#0284C7' }]}>
+                          <Ionicons name="images-outline" size={20} color="#fff" />
+                        </View>
+                        <Text style={styles.uploadBtnLabel}>Thư viện</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.uploadBtnItem}
+                        onPress={handlePickDocument}
+                        activeOpacity={0.8}
+                      >
+                        <View style={[styles.uploadBtnIcon, { backgroundColor: '#D97706' }]}>
+                          <Ionicons name="document-attach-outline" size={20} color="#fff" />
+                        </View>
+                        <Text style={styles.uploadBtnLabel}>Tệp PDF</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+
+                  {!isPeriodSubmitted && (
+                    <View style={styles.tipsRow}>
+                      <Ionicons name="bulb-outline" size={13} color="#D97706" />
+                      <Text style={styles.tipsText}>
+                        Mẹo: Đặt hóa đơn ngay ngắn, chụp rõ mã số thuế, số hóa đơn và tổng tiền để hệ thống đọc thông tin nhanh chóng và chính xác.
+                      </Text>
+                    </View>
+                  )}
                 </View>
               )}
             </View>
 
             {/* BƯỚC 2: PHÂN LOẠI CHỨNG TỪ (hiện khi đã chọn file) */}
-            {selectedFile && (
+            {selectedFile && !isPeriodSubmitted && (
               <View style={styles.categoryCard}>
                 <View style={styles.categoryHeader}>
                   <View style={styles.categoryHeaderLeft}>
                     <Ionicons name="albums-outline" size={16} color="#8B1E1E" />
-                    <Text style={styles.categoryTitle}>Loại hóa đơn chi phí</Text>
+                    <Text style={styles.categoryTitle}>Danh mục chi phí</Text>
                   </View>
                   {isDocumentTypesLoading && <ActivityIndicator size="small" color="#8B1E1E" />}
                 </View>
                 <Text style={styles.categorySubtitle}>
-                  Chọn đúng loại để hệ thống xác định mức giảm trừ thuế phù hợp
+                  Chọn danh mục phù hợp để hệ thống xác định chính xác quyền lợi giảm trừ thuế
                 </Text>
 
                 <View style={styles.categoryGrid}>
@@ -389,15 +570,32 @@ export const ExpenseUploadScreen: React.FC = () => {
                         onPress={() => setSelectedCategory(cat.code)}
                         activeOpacity={0.75}
                       >
-                        <View style={[styles.categoryIconWrap, isSelected && { backgroundColor: '#8B1E1E' }]}>
-                          <Ionicons name={cat.icon as any} size={16} color={isSelected ? '#fff' : '#8B1E1E'} />
+                        <View
+                          style={[
+                            styles.categoryIconWrap,
+                            isSelected && { backgroundColor: '#8B1E1E' },
+                          ]}
+                        >
+                          <Ionicons
+                            name={cat.icon as any}
+                            size={16}
+                            color={isSelected ? '#fff' : '#8B1E1E'}
+                          />
                         </View>
                         <View style={{ flex: 1, marginLeft: 8 }}>
-                          <Text style={[styles.categoryName, isSelected && styles.categoryNameSelected]} numberOfLines={2}>
+                          <Text
+                            style={[
+                              styles.categoryName,
+                              isSelected && styles.categoryNameSelected,
+                            ]}
+                            numberOfLines={2}
+                          >
                             {cat.name}
                           </Text>
                           {cat.badge && (
-                            <Badge variant="teal" style={{ alignSelf: 'flex-start', marginTop: 2 }}>{cat.badge}</Badge>
+                            <Badge variant="teal" style={{ alignSelf: 'flex-start', marginTop: 2 }}>
+                              {cat.badge}
+                            </Badge>
                           )}
                         </View>
                         <Ionicons
@@ -413,14 +611,14 @@ export const ExpenseUploadScreen: React.FC = () => {
             )}
 
             {/* NÚT GỬI */}
-            {selectedFile && (
+            {selectedFile && !isPeriodSubmitted && (
               <TouchableOpacity
                 style={[styles.submitBtn, !selectedFile && styles.submitBtnDisabled]}
                 onPress={handleSubmit}
                 activeOpacity={0.85}
               >
                 <Ionicons name="sparkles" size={18} color="#fff" />
-                <Text style={styles.submitBtnText}>Đọc thông tin & Lưu hóa đơn</Text>
+                <Text style={styles.submitBtnText}>Đọc thông tin & Lưu chứng từ</Text>
               </TouchableOpacity>
             )}
           </>
@@ -432,7 +630,7 @@ export const ExpenseUploadScreen: React.FC = () => {
             <View style={styles.processingIconCircle}>
               <ActivityIndicator size="large" color="#8B1E1E" />
             </View>
-            <Text style={styles.processingTitle}>Đang xử lý hóa đơn...</Text>
+            <Text style={styles.processingTitle}>Đang xử lý chứng từ...</Text>
             <Text style={styles.processingStage}>{processingStage}</Text>
 
             {/* Progress bar */}
@@ -443,9 +641,9 @@ export const ExpenseUploadScreen: React.FC = () => {
 
             <View style={styles.processingSteps}>
               {[
-                { pct: 20, label: 'Tải hóa đơn lên' },
-                { pct: 60, label: 'Nhận diện thông tin' },
-                { pct: 90, label: 'Phân loại danh mục' },
+                { pct: 20, label: 'Tải tệp lên hệ thống' },
+                { pct: 60, label: 'Nhận diện nội dung chứng từ' },
+                { pct: 90, label: 'Phân loại danh mục giảm trừ' },
               ].map((s) => (
                 <View key={s.pct} style={styles.processingStepItem}>
                   <Ionicons
@@ -453,7 +651,12 @@ export const ExpenseUploadScreen: React.FC = () => {
                     size={15}
                     color={processingProgress >= s.pct ? '#16A34A' : '#CBD5E1'}
                   />
-                  <Text style={[styles.processingStepText, processingProgress >= s.pct && { color: '#16A34A', fontWeight: '600' }]}>
+                  <Text
+                    style={[
+                      styles.processingStepText,
+                      processingProgress >= s.pct && { color: '#16A34A', fontWeight: '600' },
+                    ]}
+                  >
                     {s.label}
                   </Text>
                 </View>
@@ -552,6 +755,29 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: '#8B1E1E',
+  },
+  // Locked banner
+  lockedBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 14,
+  },
+  lockedBannerTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#991B1B',
+    marginBottom: 3,
+  },
+  lockedBannerDesc: {
+    fontSize: 12,
+    color: '#7F1D1D',
+    lineHeight: 17,
   },
   // Upload card
   uploadCard: {
@@ -826,4 +1052,3 @@ const styles = StyleSheet.create({
     color: '#94A3B8',
   },
 });
-

@@ -44,13 +44,19 @@ export const apiClient = axios.create({
   timeout: 15000,
 });
 
-// Request Interceptor: baseURL động (LAN máy thật) + Bearer Token
+// Request Interceptor: baseURL động (LAN máy thật) + Bearer Token + FormData boundary fix
 apiClient.interceptors.request.use(
   async (reqConfig) => {
     reqConfig.baseURL = getLocalApiBaseUrl();
     const token = await storageHelper.getItem(config.storageKeys.accessToken);
     if (token && reqConfig.headers) {
       reqConfig.headers.Authorization = `Bearer ${token}`;
+    }
+    // Khi gửi FormData, xóa Content-Type để React Native / trình duyệt tự tạo boundary
+    if (reqConfig.data && typeof FormData !== 'undefined' && reqConfig.data instanceof FormData) {
+      if (reqConfig.headers) {
+        delete reqConfig.headers['Content-Type'];
+      }
     }
     return reqConfig;
   },

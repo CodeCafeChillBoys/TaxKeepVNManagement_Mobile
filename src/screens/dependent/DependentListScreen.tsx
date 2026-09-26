@@ -16,6 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
+import { formatPersonName } from '../../utils/formatPersonName';
 import { RootNavigationProp } from '../../navigation/types';
 import {
   dependentDocumentApi,
@@ -400,7 +401,7 @@ export const DependentListScreen: React.FC = () => {
                     />
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.cardName}>{dep.fullName}</Text>
+                    <Text style={styles.cardName}>{formatPersonName(dep.fullName)}</Text>
                     <View style={styles.badgesRow}>
                       <View style={styles.relationBadge}>
                         <Text style={styles.relationBadgeText}>
@@ -533,7 +534,7 @@ export const DependentListScreen: React.FC = () => {
                 {/* Header Modal */}
                 <View style={styles.detailHeaderRow}>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.detailModalTitle}>{selectedDetail.fullName}</Text>
+                    <Text style={styles.detailModalTitle}>{formatPersonName(selectedDetail.fullName)}</Text>
                     <Text style={styles.detailModalSubtitle}>
                       {getRelationshipLabel(selectedDetail.relationship)} • {getGroupTitle(selectedDetail.currentGroup)}
                     </Text>

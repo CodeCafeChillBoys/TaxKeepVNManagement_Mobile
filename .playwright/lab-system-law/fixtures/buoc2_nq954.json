@@ -1,0 +1,29 @@
+{
+  "document": {
+    "documentNumber": "954/2020/UBTVQH14",
+    "documentType": "NGHI_QUYET",
+    "issuer": "ỦY BAN THƯỜNG VỤ QUỐC HỘI",
+    "title": "Nghị quyết điều chỉnh mức giảm trừ gia cảnh thuế thu nhập cá nhân",
+    "issuedDate": "2020-06-02",
+    "effectiveDate": "2020-07-01"
+  },
+  "relations": [],
+  "operations": [
+    {
+      "opKey": "op-1",
+      "op": "UPDATE",
+      "ruleCode": "PIT_DEDUCTION_PERSONAL",
+      "after": { "valueNumber": 11000000, "unit": "VND/month" },
+      "applyFrom": "2020-01-01",
+      "citation": { "article": "1" }
+    },
+    {
+      "opKey": "op-2",
+      "op": "UPDATE",
+      "ruleCode": "PIT_DEDUCTION_DEPENDENT",
+      "after": { "valueNumber": 4400000, "unit": "VND/person/month" },
+      "applyFrom": "2020-01-01",
+      "citation": { "article": "1" }
+    }
+  ]
+}

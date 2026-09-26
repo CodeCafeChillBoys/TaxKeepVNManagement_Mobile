@@ -508,9 +508,14 @@ export const TaxRegistrationScreen: React.FC = () => {
 
         {/* Trường 5: Thời điểm bắt đầu tính hiệu lực giảm trừ gia cảnh */}
         <View style={styles.formGroup}>
-          <Text style={styles.fieldLabel}>
-            Thời điểm bắt đầu tính hiệu lực giảm trừ gia cảnh <Text style={styles.required}>*Bắt buộc</Text>
-          </Text>
+          <View style={styles.longLabelRow}>
+            <Text style={[styles.fieldLabel, styles.longLabelText]}>
+              Thời điểm bắt đầu tính hiệu lực giảm trừ gia cảnh
+            </Text>
+            <Text style={styles.requiredMark} testID="effectiveStartRequiredMark">
+              Bắt buộc
+            </Text>
+          </View>
           <View style={styles.dateSelectorRow}>
             {/* Ngày */}
             <TouchableOpacity
@@ -811,6 +816,22 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#1A1A1A',
     marginBottom: 8,
+  },
+  longLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginBottom: 8,
+  },
+  longLabelText: {
+    flex: 1,
+    marginBottom: 0,
+  },
+  requiredMark: {
+    color: '#E53935',
+    fontSize: 13,
+    fontWeight: '600',
+    marginTop: 1,
   },
   required: {
     color: '#E53935',

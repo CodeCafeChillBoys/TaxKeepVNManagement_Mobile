@@ -32,6 +32,7 @@ import {
   proofNavFromAgeReminder,
 } from './homeAgeReminderBanner';
 import { Dialog } from '../../components/common/Dialog';
+import { humanizeGroupCodes } from '../dependent/dependentGroupUtils';
 
 export const HomeScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
@@ -326,8 +327,10 @@ export const HomeScreen: React.FC = () => {
             <View style={styles.gridIconCircleHighlight}>
               <Ionicons name="document-text" size={24} color="#FFFFFF" />
             </View>
-            <Text style={styles.gridTitleHighlight}>Đơn đăng ký người phụ thuộc</Text>
-            <Text style={styles.gridSubtitleHighlight}>Khai người phụ thuộc theo luật</Text>
+            <View style={styles.gridHighlightText}>
+              <Text style={styles.gridTitleHighlight}>Đơn đăng ký người phụ thuộc</Text>
+              <Text style={styles.gridSubtitleHighlight}>Khai người phụ thuộc theo luật</Text>
+            </View>
           </TouchableOpacity>
 
           {/* Tiện ích 2: Danh sách người phụ thuộc */}
@@ -559,15 +562,15 @@ export const HomeScreen: React.FC = () => {
                             styles.notifItemTitle,
                             !item.isRead && styles.notifItemTitleUnread,
                           ]}
-                          numberOfLines={1}
+                          numberOfLines={2}
                         >
-                          {item.title}
+                          {humanizeGroupCodes(item.title)}
                         </Text>
                         {!item.isRead && <View style={styles.unreadDot} />}
                       </View>
 
-                      <Text style={styles.notifMessage} numberOfLines={3}>
-                        {item.message}
+                      <Text style={styles.notifMessage} numberOfLines={4}>
+                        {humanizeGroupCodes(item.message)}
                       </Text>
 
                       <View style={styles.notifFooterRow}>
@@ -848,6 +851,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 14,
+  },
+  gridHighlightText: {
+    flex: 1,
+    flexShrink: 1,
   },
   gridTitleHighlight: {
     ...theme.typography.titleMedium,

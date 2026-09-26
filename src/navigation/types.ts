@@ -15,6 +15,13 @@ export type RootStackParamList = {
     lockedCitizenId?: string;
   };
   TaxRegistration: { ocrDependentFill?: OcrDependentFill } | undefined;
+  DependentSaved: {
+    fullName: string;
+    relationship: string;
+    groupCode: string;
+    groupId?: number;
+    effectiveFromMonth: string;
+  };
   ProofDocuments:
     | {
         groupIndex?: number;

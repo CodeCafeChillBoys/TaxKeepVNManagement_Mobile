@@ -614,6 +614,27 @@ export const ProofDocumentsScreen: React.FC = () => {
 
       setUploading(false);
 
+      const saved = route.params?.dependentData;
+      if (saved?.fullName && saved.relationship && saved.effectiveFromMonth) {
+        navigation.reset({
+          index: 1,
+          routes: [
+            { name: 'Home' },
+            {
+              name: 'DependentSaved',
+              params: {
+                fullName: saved.fullName,
+                relationship: saved.relationship,
+                groupCode: saved.groupCode,
+                groupId: saved.groupId,
+                effectiveFromMonth: saved.effectiveFromMonth,
+              },
+            },
+          ],
+        });
+        return;
+      }
+
       const msg = uploadCount > 0
         ? `Đã lưu hồ sơ và tải lên thành công ${uploadCount} giấy tờ minh chứng!`
         : 'Đã lưu thông tin hồ sơ người phụ thuộc thành công!';

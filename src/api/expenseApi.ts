@@ -161,6 +161,16 @@ export function mapDocumentReviewToOcrResult(
     },
     validationErrors: (() => {
       const errs: any[] = [];
+      (doc.validationErrors || []).forEach((message) => {
+        if (message && !errs.some((error) => error.message === message)) {
+          errs.push({
+            code: 'ERR_AI_VALIDATION',
+            field: 'document',
+            message,
+            severity: 'error',
+          });
+        }
+      });
       if (doc.isIdentityValid === false) {
         errs.push({
           code: 'ERR_IDENTITY_MISMATCH',
@@ -308,6 +318,15 @@ export const expenseApi = {
   },
 
   /**
+   * Lấy toàn bộ kỳ tính thuế của người dùng hiện tại
+   * GET /api/v1/tax-periods
+   */
+  async getTaxPeriods(): Promise<TaxPeriodItem[]> {
+    const res = await apiClient.get<ApiResponse<TaxPeriodItem[]>>('/api/v1/tax-periods');
+    return Array.isArray(res.data?.data) ? res.data.data : [];
+  },
+
+  /**
    * Alias tương thích với các màn hình gọi createOrGetTaxPeriod
    */
   async createOrGetTaxPeriod(taxYear: number, userId?: string): Promise<TaxPeriodItem> {
@@ -452,6 +471,16 @@ export const expenseApi = {
       `/api/v1/tax-periods/${periodId}/documents/${documentId}`
     );
     return res.data.data!;
+  },
+
+  /**
+   * Xóa chứng từ khỏi kỳ tính thuế
+   * DELETE /api/v1/tax-periods/{periodId}/documents/{documentId}
+   */
+  async deleteDocument(periodId: string, documentId: string): Promise<void> {
+    await apiClient.delete(
+      `/api/v1/tax-periods/${periodId}/documents/${documentId}`
+    );
   },
 
   /**

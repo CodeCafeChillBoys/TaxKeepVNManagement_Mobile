@@ -60,6 +60,7 @@ export const ExpenseListScreen: React.FC = () => {
     addYear,
     removeYear,
     initPeriodForYear,
+    submitPeriodForYear,
     removeDocument,
     loadFromStorage,
     addOrUpdateDocument,
@@ -84,6 +85,11 @@ export const ExpenseListScreen: React.FC = () => {
       const syncData = async () => {
         await loadFromStorage(user?.id);
         await fetchDocumentTypes();
+        try {
+          await useExpenseStore.getState().syncPeriods(await expenseApi.getTaxPeriods());
+        } catch {
+          // BE chưa hỗ trợ GET thì tiếp tục dùng dữ liệu local và POST theo từng năm.
+        }
         const state = useExpenseStore.getState();
         // Chỉ đồng bộ khi người dùng thực sự có năm kê khai trong danh sách
         if (state.availableYears && state.availableYears.length > 0) {
@@ -113,6 +119,11 @@ export const ExpenseListScreen: React.FC = () => {
     setRefreshing(true);
     await loadFromStorage(user?.id);
     await fetchDocumentTypes();
+    try {
+      await useExpenseStore.getState().syncPeriods(await expenseApi.getTaxPeriods());
+    } catch {
+      // BE chưa hỗ trợ GET thì tiếp tục dùng dữ liệu local và POST theo từng năm.
+    }
     const state = useExpenseStore.getState();
     if (state.availableYears && state.availableYears.length > 0) {
       const activeYear =
@@ -263,10 +274,17 @@ export const ExpenseListScreen: React.FC = () => {
       }
       return;
     }
-    addYear(yr);
-    await initPeriodForYear(yr, user?.id);
-    setNewYearInput('');
-    setShowAddYearModal(false);
+    try {
+      addYear(yr);
+      await initPeriodForYear(yr, user?.id);
+      setNewYearInput('');
+      setShowAddYearModal(false);
+    } catch (err: any) {
+      toast.error(
+        err?.response?.data?.message || err?.message || 'Không thể tạo kỳ tính thuế.',
+        'Không thể tạo kỳ'
+      );
+    }
   };
 
   const handleDeleteYear = (yr: number) => {
@@ -308,6 +326,27 @@ export const ExpenseListScreen: React.FC = () => {
       targetYear: selectedYear,
       periodId: currentPeriod?.periodId,
     });
+  };
+
+  const handleSubmitPeriod = () => {
+    if (!selectedYear || !currentPeriod?.periodId) return;
+    const submit = async () => {
+      try {
+        await submitPeriodForYear(selectedYear);
+        toast.success('Đã nộp kỳ tính thuế và khóa hồ sơ.', 'Nộp hồ sơ thành công');
+      } catch (err: any) {
+        toast.error(err?.response?.data?.message || err?.message || 'Không thể nộp kỳ tính thuế.', 'Lỗi');
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      if (window.confirm('Nộp kỳ tính thuế này? Sau khi nộp, hồ sơ sẽ bị khóa.')) submit();
+      return;
+    }
+    Alert.alert('Nộp kỳ tính thuế', 'Sau khi nộp, hồ sơ sẽ bị khóa và không thể chỉnh sửa.', [
+      { text: 'Hủy', style: 'cancel' },
+      { text: 'Nộp hồ sơ', style: 'destructive', onPress: submit },
+    ]);
   };
 
   const handleViewDetail = async (doc: ExpenseOcrResult) => {
@@ -383,7 +422,7 @@ export const ExpenseListScreen: React.FC = () => {
     });
   };
 
-  const handleDeleteDoc = (docId?: string) => {
+  const handleDeleteDoc = (docId?: string, status?: ExpenseOcrResult['status']) => {
     if (!docId || !selectedYear) return;
     if (currentPeriod?.status === 'SUBMITTED') {
       toast.error(
@@ -392,13 +431,32 @@ export const ExpenseListScreen: React.FC = () => {
       );
       return;
     }
+    if (status === 'CONFIRMED') {
+      toast.error(
+        'Chứng từ đã xác nhận nên không thể xóa khỏi hồ sơ.',
+        'Không thể xóa chứng từ'
+      );
+      return;
+    }
+
+    const remove = async () => {
+      try {
+        await removeDocument(selectedYear, docId);
+      } catch (err: any) {
+        toast.error(
+          err?.response?.data?.message || err?.message || 'Không thể xóa chứng từ.',
+          'Xóa chứng từ thất bại'
+        );
+      }
+    };
+
     if (Platform.OS === 'web') {
       const ok = window.confirm('Xóa chứng từ này khỏi hồ sơ thuế?');
-      if (ok) removeDocument(selectedYear, docId);
+      if (ok) void remove();
     } else {
       Alert.alert('Xóa chứng từ', 'Xóa chứng từ này khỏi hồ sơ thuế?', [
         { text: 'Hủy', style: 'cancel' },
-        { text: 'Xóa', style: 'destructive', onPress: () => removeDocument(selectedYear, docId) },
+        { text: 'Xóa', style: 'destructive', onPress: () => void remove() },
       ]);
     }
   };
@@ -536,6 +594,18 @@ export const ExpenseListScreen: React.FC = () => {
             >
               {allCurrentExpenses.length > 0 ? 'Tải lên hóa đơn mới' : 'Tải lên hóa đơn đầu tiên'}
             </Button>
+
+            {allCurrentExpenses.length > 0 && currentPeriod?.status !== 'SUBMITTED' && (
+              <Button
+                variant="outline"
+                size="default"
+                onPress={handleSubmitPeriod}
+                style={styles.submitPeriodBtn}
+                icon={<Ionicons name="lock-closed-outline" size={18} color={theme.colors.primary} />}
+              >
+                Nộp và khóa kỳ tính thuế
+              </Button>
+            )}
 
             {/* KHU VỰC TÌM KIẾM & BỘ LỌC ĐA CHIỀU */}
             {allCurrentExpenses.length > 0 && (
@@ -825,13 +895,15 @@ export const ExpenseListScreen: React.FC = () => {
                                   </Text>
                                 </View>
                                 <View style={styles.docActions}>
-                                  <TouchableOpacity
-                                    onPress={() => handleDeleteDoc(doc.documentId)}
-                                    style={styles.docDeleteBtn}
-                                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                                  >
-                                    <Ionicons name="trash-outline" size={15} color="#EF4444" />
-                                  </TouchableOpacity>
+                                  {doc.status !== 'CONFIRMED' && (
+                                    <TouchableOpacity
+                                      onPress={() => handleDeleteDoc(doc.documentId, doc.status)}
+                                      style={styles.docDeleteBtn}
+                                      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                                    >
+                                      <Ionicons name="trash-outline" size={15} color="#EF4444" />
+                                    </TouchableOpacity>
+                                  )}
                                   <TouchableOpacity
                                     style={styles.docDetailBtn}
                                     onPress={() => handleViewDetail(doc)}
@@ -1273,6 +1345,10 @@ const styles = StyleSheet.create({
   // --- Upload button ---
   uploadBtn: {
     marginBottom: 12,
+  },
+  submitPeriodBtn: {
+    marginBottom: 12,
+    borderColor: theme.colors.primary,
   },
   // --- Filter section ---
   filterSection: {

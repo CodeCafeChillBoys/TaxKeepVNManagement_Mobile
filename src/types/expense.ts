@@ -77,6 +77,7 @@ export interface ExpenseOcrResult {
   docTypeCode?: string | null;
   docTypeName?: string | null;
   fileUrl?: string;
+  originalFileUri?: string;
   originalFilename?: string;
   
   // Bên bán (Bệnh viện / Cơ sở đào tạo / Nhà cung cấp)
@@ -129,6 +130,7 @@ export interface ExpenseOcrResult {
 export interface TaxPeriodItem {
   periodId: string;
   taxYear: number;
+  originalFileUri?: string;
   status: 'DRAFT' | 'SUBMITTED' | 'CLOSED' | string;
   createdAt: string;
 }
@@ -227,6 +229,7 @@ export interface DocumentReviewResponse {
   extractedYear?: number | null;
   isYearValid?: boolean | null;
   isIdentityValid?: boolean | null;
+  validationErrors?: string[];
   isNotReimbursed?: boolean | null;
   status: 'UPLOADED' | 'EXTRACTED' | 'CONFIRMED' | 'FAILED' | string;
   createdAt: string;

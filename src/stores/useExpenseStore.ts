@@ -30,7 +30,9 @@ interface ExpenseState {
   setSelectedYear: (year: number | null) => void;
   addYear: (year: number) => void;
   removeYear: (year: number) => void;
+  syncPeriods: (periods: TaxPeriodItem[]) => Promise<void>;
   initPeriodForYear: (year: number, userId?: string) => Promise<TaxPeriodItem>;
+  submitPeriodForYear: (year: number) => Promise<TaxPeriodItem>;
   fetchDocumentTypes: (isTaxEligible?: boolean) => Promise<TaxDocumentTypeItem[]>;
   addOrUpdateDocument: (year: number, document: ExpenseOcrResult) => Promise<void>;
   confirmDocument: (
@@ -105,6 +107,29 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
     get().saveToStorage();
   },
 
+  syncPeriods: async (serverPeriods: TaxPeriodItem[]) => {
+    const years = serverPeriods.map((period) => period.taxYear).filter(Boolean).sort((a, b) => b - a);
+    const currentState = get();
+    const documents = years.reduce<Record<number, ExpenseOcrResult[]>>((result, year) => {
+      result[year] = currentState.documents[year] || [];
+      return result;
+    }, {});
+    const periods = serverPeriods.reduce<Record<number, TaxPeriodItem>>((result, period) => {
+      result[period.taxYear] = period;
+      return result;
+    }, {});
+
+    set({
+      availableYears: years,
+      selectedYear: currentState.selectedYear && years.includes(currentState.selectedYear)
+        ? currentState.selectedYear
+        : years[0] || null,
+      documents,
+      periods,
+    });
+    await get().saveToStorage();
+  },
+
   initPeriodForYear: async (year: number, userId?: string) => {
     set({ isLoading: true, error: null });
     try {
@@ -123,7 +148,19 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
           
           // Luôn ánh xạ khi API trả về mảng (kể cả mảng rỗng [] khi đã xóa hết trong DB)
           if (Array.isArray(docList)) {
-            serverDocs = docList.map((doc: any) => ({
+            const failedDocs = docList.filter((doc: any) => doc.status === 'FAILED');
+            await Promise.all(
+              failedDocs.map((doc: any) =>
+                expenseApi.deleteDocument(period.periodId, doc.id).catch(() => undefined)
+              )
+            );
+            serverDocs = docList
+              .filter((doc: any) => doc.status !== 'FAILED')
+              .map((doc: any) => {
+              const cachedDoc = get().documents[year]?.find(
+                (existingDoc) => existingDoc.documentId === doc.id
+              );
+              return ({
               id: doc.id,
               documentId: doc.id,
               periodId: doc.periodId,
@@ -133,6 +170,7 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
                 get().documentTypes.find((t) => t.code === doc.docTypeCode)?.name ||
                 (doc.docTypeCode ? doc.docTypeCode : 'Chứng từ chi phí'),
               fileUrl: doc.fileUrl,
+              originalFileUri: cachedDoc?.originalFileUri,
               originalFilename: doc.originalFilename || 'invoice.jpg',
               sellerName: doc.sellerName,
               sellerTaxCode: doc.sellerTaxCode,
@@ -186,7 +224,8 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
                   ? 'EXTRACTED'
                   : doc.status || 'EXTRACTED',
               createdAt: doc.createdAt,
-            }));
+                });
+                });
           }
         }
       } catch (fetchErr: any) {
@@ -263,6 +302,20 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
       set({ isLoading: false });
       throw err;
     }
+  },
+
+  submitPeriodForYear: async (year: number) => {
+    const period = get().periods[year];
+    if (!period?.periodId) {
+      throw new Error('Chưa có kỳ tính thuế để nộp.');
+    }
+
+    const submittedPeriod = await expenseApi.submitTaxPeriod(period.periodId);
+    set((state) => ({
+      periods: { ...state.periods, [year]: submittedPeriod },
+    }));
+    await get().saveToStorage();
+    return submittedPeriod;
   },
 
   fetchDocumentTypes: async (isTaxEligible?: boolean) => {
@@ -347,6 +400,17 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
   },
 
   removeDocument: async (year: number, documentId: string) => {
+    const periodId = get().periods[year]?.periodId;
+    if (periodId) {
+      try {
+        await expenseApi.deleteDocument(periodId, documentId);
+      } catch (error: any) {
+        if (error?.response?.status !== 404) {
+          throw error;
+        }
+      }
+    }
+
     set((state) => {
       const currentList = state.documents[year] || [];
       const updatedList = currentList.filter((doc) => doc.documentId !== documentId);

@@ -72,6 +72,12 @@ apiClient.interceptors.response.use(
       await storageHelper.removeItem(config.storageKeys.refreshToken);
       await storageHelper.removeItem(config.storageKeys.userData);
     }
+    if (error.response?.status === 400) {
+      console.warn(
+        `[API 400] ${error.config?.method?.toUpperCase()} ${error.config?.baseURL || ''}${error.config?.url || ''}`,
+        error.response?.data
+      );
+    }
     return Promise.reject(error);
   }
 );

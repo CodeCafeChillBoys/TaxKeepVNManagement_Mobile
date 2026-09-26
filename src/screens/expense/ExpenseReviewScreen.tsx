@@ -53,7 +53,7 @@ export const ExpenseReviewScreen: React.FC = () => {
   const isPeriodSubmitted = activePeriod?.status === 'SUBMITTED';
 
   const isConfirmed = initialData.status === 'CONFIRMED';
-  const isReadOnly = Boolean(route.params?.isReadOnly || isConfirmed || isPeriodSubmitted);
+  const isRouteReadOnly = Boolean(route.params?.isReadOnly || isConfirmed || isPeriodSubmitted);
 
   const [currentDocTypeCode, setCurrentDocTypeCode] = useState<string>(
     initialData.docTypeCode || (documentTypes && documentTypes.length > 0 ? documentTypes[0].code : '')
@@ -101,6 +101,10 @@ export const ExpenseReviewScreen: React.FC = () => {
   const [items, setItems] = useState<InvoiceLineItem[]>(initialData.items || []);
   const [isNotReimbursed, setIsNotReimbursed] = useState<boolean>(initialData.isNotReimbursed ?? true);
   const [saving, setSaving] = useState<boolean>(false);
+  const [invoiceImageUri, setInvoiceImageUri] = useState<string | undefined>(
+    initialData.fileUrl || initialData.originalFileUri
+  );
+  const [invoiceImageFailed, setInvoiceImageFailed] = useState<boolean>(false);
 
   // Item modal state
   const [itemModalVisible, setItemModalVisible] = useState<boolean>(false);
@@ -134,6 +138,10 @@ export const ExpenseReviewScreen: React.FC = () => {
         d.sellerTaxCode?.trim().toLowerCase() === normSeller
     );
   }, [documents, selectedYear, initialData, invoiceNumber, sellerTaxCode]);
+
+  const isIdentityMismatch = initialData.validationStatus?.isIdentityValid === false;
+  const isValidationBlocked = isDuplicate || isIdentityMismatch;
+  const isReadOnly = Boolean(isRouteReadOnly || isValidationBlocked);
 
   const validationErrors = useMemo<ValidationErrorItem[]>(() => {
     const list = [...(initialData.validationErrors || [])];
@@ -221,7 +229,7 @@ export const ExpenseReviewScreen: React.FC = () => {
       return;
     }
 
-    if (initialData.validationStatus?.isIdentityValid === false) {
+    if (isIdentityMismatch) {
       toast.error(
         'Thông tin người mua ("' + (buyerName.trim() || initialData.buyerName || 'Chưa rõ') + '") không khớp với Người nộp thuế hoặc bất kỳ Người phụ thuộc nào trong hồ sơ của bạn.',
         'Người mua không khớp'
@@ -425,7 +433,7 @@ export const ExpenseReviewScreen: React.FC = () => {
             )}
 
             {/* Banner đã duyệt */}
-            {!isPeriodSubmitted && isReadOnly && (
+            {!isPeriodSubmitted && isRouteReadOnly && (
               <View style={styles.confirmedBanner}>
                 <Ionicons name="shield-checkmark" size={20} color="#16A34A" />
                 <View style={{ flex: 1, marginLeft: 10 }}>
@@ -436,20 +444,49 @@ export const ExpenseReviewScreen: React.FC = () => {
               </View>
             )}
 
+            {!isPeriodSubmitted && isValidationBlocked && (
+              <View style={styles.validationBlockedBanner}>
+                <Ionicons name="lock-closed" size={20} color="#B91C1C" />
+                <View style={{ flex: 1, marginLeft: 10 }}>
+                  <Text style={styles.validationBlockedTitle}>Không thể chỉnh sửa hóa đơn</Text>
+                  <Text style={styles.validationBlockedDesc}>
+                    {isIdentityMismatch
+                      ? 'Thông tin người mua không khớp với người nộp thuế hoặc người phụ thuộc.'
+                      : 'Hóa đơn bị trùng mã số thuế và số hóa đơn trong cùng kỳ tính thuế.'}
+                  </Text>
+                </View>
+                <Badge variant="destructive">Đã khóa</Badge>
+              </View>
+            )}
+
             {/* Ảnh hóa đơn */}
-            {initialData.fileUrl && (
+            {invoiceImageUri && !invoiceImageFailed ? (
               <Card style={styles.card}>
                 <View style={styles.cardHeader}>
                   <Ionicons name="image-outline" size={15} color="#475569" />
                   <Text style={styles.cardHeaderTitle}>Ảnh hóa đơn gốc</Text>
                 </View>
                 <Image
-                  source={{ uri: initialData.fileUrl }}
+                  source={{ uri: invoiceImageUri }}
                   style={styles.invoiceImage}
                   resizeMode="contain"
+                  onError={() => {
+                    if (initialData.originalFileUri && invoiceImageUri !== initialData.originalFileUri) {
+                      setInvoiceImageUri(initialData.originalFileUri);
+                      return;
+                    }
+                    setInvoiceImageFailed(true);
+                  }}
                 />
               </Card>
-            )}
+            ) : invoiceImageFailed ? (
+              <Card style={styles.card}>
+                <View style={styles.imageErrorBox}>
+                  <Ionicons name="image-outline" size={28} color="#94A3B8" />
+                  <Text style={styles.imageErrorText}>Không tải được ảnh hóa đơn gốc.</Text>
+                </View>
+              </Card>
+            ) : null}
 
             {/* Đánh giá mức độ tin cậy */}
             <Card style={styles.card}>
@@ -860,6 +897,15 @@ const styles = StyleSheet.create({
   cardHeaderTitle: { fontSize: 13, fontWeight: '700', color: '#0F172A', flex: 1 },
   // Invoice image
   invoiceImage: { width: '100%', height: 220, borderRadius: 8, backgroundColor: '#0F172A' },
+  imageErrorBox: {
+    height: 160,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 8,
+    gap: 8,
+  },
+  imageErrorText: { fontSize: 12, color: '#64748B' },
   // Confidence
   confidenceBar: { height: 8, backgroundColor: '#F1F5F9', borderRadius: 4, overflow: 'hidden', marginBottom: 4 },
   confidenceFill: { height: '100%', borderRadius: 4 },
@@ -900,6 +946,18 @@ const styles = StyleSheet.create({
   },
   confirmedBannerTitle: { fontSize: 13, fontWeight: '700', color: '#15803D' },
   confirmedBannerDesc: { fontSize: 11, color: '#16A34A', marginTop: 1 },
+  validationBlockedBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF1F2',
+    borderWidth: 1,
+    borderColor: '#FECDD3',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 12,
+  },
+  validationBlockedTitle: { fontSize: 13, fontWeight: '700', color: '#9F1239' },
+  validationBlockedDesc: { fontSize: 11, color: '#BE123C', marginTop: 2, lineHeight: 16 },
   // Error items
   errorItem: { marginBottom: 10, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: '#FDE68A' },
   errorItemTitle: { fontSize: 12, fontWeight: '700', color: '#92400E' },

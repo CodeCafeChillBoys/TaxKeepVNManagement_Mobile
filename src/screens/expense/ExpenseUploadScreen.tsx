@@ -77,6 +77,7 @@ export const ExpenseUploadScreen: React.FC = () => {
   const [processing, setProcessing] = useState<boolean>(false);
   const [processingStage, setProcessingStage] = useState<string>('');
   const [processingProgress, setProcessingProgress] = useState<number>(0);
+  const [uploadError, setUploadError] = useState<{ title: string; message: string } | null>(null);
 
   // Chuyển bước khi chọn file
   useEffect(() => {
@@ -156,6 +157,7 @@ export const ExpenseUploadScreen: React.FC = () => {
         };
 
         if (validateFile(newFile)) {
+          setUploadError(null);
           setSelectedFile(newFile);
           toast.success('Đã chọn ảnh chụp thành công.', 'Đã tải ảnh lên');
         }
@@ -201,6 +203,7 @@ export const ExpenseUploadScreen: React.FC = () => {
         };
 
         if (validateFile(newFile)) {
+          setUploadError(null);
           setSelectedFile(newFile);
           toast.success('Đã chọn ảnh từ thư viện thành công.', 'Đã tải ảnh lên');
         }
@@ -240,6 +243,7 @@ export const ExpenseUploadScreen: React.FC = () => {
         };
 
         if (validateFile(newFile)) {
+          setUploadError(null);
           setSelectedFile(newFile);
           toast.success('Đã chọn tệp chứng từ thành công.', 'Đã chọn tệp');
         }
@@ -319,19 +323,75 @@ export const ExpenseUploadScreen: React.FC = () => {
         await new Promise((res) => setTimeout(res, 1500));
         try {
           const docDetail = await expenseApi.getDocumentById(activePeriodId!, docId);
+          const validationErrors = Array.isArray(docDetail.validationErrors)
+            ? docDetail.validationErrors
+            : [];
+          const firstValidationError = validationErrors[0];
+          const invoiceYear = docDetail.extractedYear ||
+            (typeof docDetail.invoiceDate === 'string' && /^\d{4}/.test(docDetail.invoiceDate)
+              ? Number(docDetail.invoiceDate.slice(0, 4))
+              : undefined);
+          const isYearMismatch = docDetail.isYearValid === false ||
+            (invoiceYear !== undefined && invoiceYear !== targetYear);
+          const aiErrorMessage = isYearMismatch
+            ? `AI đọc hóa đơn năm ${invoiceYear || 'không xác định'}, không khớp kỳ thuế ${targetYear}.`
+            : docDetail.isIdentityValid === false
+              ? 'AI xác định thông tin người mua không khớp với người nộp thuế hoặc người phụ thuộc.'
+              : docDetail.docTypeCode === 'UNSUPPORTED'
+                ? 'AI không xác định được loại chứng từ hợp lệ trong danh mục hệ thống.'
+                : docDetail.status === 'FAILED' && !docDetail.docTypeCode
+                  ? 'AI nhận diện loại chứng từ chưa được Admin cho phép kê khai giảm trừ thuế.'
+                : firstValidationError?.message || 'AI không thể xác nhận tính hợp lệ của chứng từ.';
+          const hasAiValidationError =
+            isYearMismatch ||
+            docDetail.isIdentityValid === false ||
+            validationErrors.length > 0 ||
+            docDetail.docTypeCode === 'UNSUPPORTED';
+
+          if (docDetail.status === 'EXTRACTED' && hasAiValidationError) {
+            try {
+              await expenseApi.deleteDocument(activePeriodId!, docId);
+            } catch {
+              // Dọn document lỗi là best-effort; vẫn bắt người dùng nhập/upload lại.
+            }
+            setProcessing(false);
+            setSelectedFile(null);
+            setCurrentStep(1);
+            setUploadError({
+              title: 'Chứng từ không hợp lệ',
+              message: `${aiErrorMessage} Vui lòng nhập lại và upload chứng từ khác.`,
+            });
+            toast.error(
+              `${aiErrorMessage} Vui lòng nhập lại và upload chứng từ khác.`,
+              'Chứng từ không hợp lệ'
+            );
+            return;
+          }
+
           if (docDetail.status === 'EXTRACTED') {
             extractedDoc = docDetail;
             break;
           }
           if (docDetail.status === 'FAILED') {
-            // Hệ thống bóc tách thất bại
+            try {
+              await expenseApi.deleteDocument(activePeriodId!, docId);
+            } catch {
+              // Dọn document lỗi là best-effort; vẫn bắt người dùng upload lại.
+            }
             setProcessing(false);
-            setCurrentStep(2);
+            setSelectedFile(null);
+            setCurrentStep(1);
+            const message = isYearMismatch
+              ? `${aiErrorMessage} Vui lòng nhập lại và upload chứng từ khác.`
+              : `${aiErrorMessage} Vui lòng nhập lại và upload chứng từ khác.`;
+            setUploadError({
+              title: isYearMismatch ? 'Sai năm tính thuế' : 'AI từ chối chứng từ',
+              message,
+            });
             toast.error(
-              'Không thể nhận diện nội dung trên chứng từ. Vui lòng kiểm tra ảnh chụp rõ nét hơn hoặc thử lại với tệp khác.',
-              'Nhận diện không thành công'
+              message,
+              isYearMismatch ? 'Sai năm tính thuế' : 'AI từ chối chứng từ'
             );
-            // Tuyệt đối không cho vào danh sách chờ xét duyệt
             return;
           }
         } catch (_) {}
@@ -345,6 +405,7 @@ export const ExpenseUploadScreen: React.FC = () => {
 
       if (extractedDoc && extractedDoc.status === 'EXTRACTED') {
         const ocrResult = mapDocumentReviewToOcrResult(extractedDoc, targetYear, documentTypes);
+        ocrResult.originalFileUri = selectedFile?.uri;
         if (selectedCategory !== 'AUTO') {
           ocrResult.docTypeCode = selectedCategory;
           const matchedDocType = documentTypes.find((t) => t.code === selectedCategory);
@@ -374,6 +435,7 @@ export const ExpenseUploadScreen: React.FC = () => {
       setProcessing(false);
       setCurrentStep(selectedFile ? 2 : 1);
       const parsed = parseBackendError(err);
+      setUploadError({ title: parsed.title, message: parsed.message });
       toast.error(parsed.message, parsed.title);
       // Tuyệt đối không thêm vào danh sách chờ xét duyệt
     }
@@ -442,6 +504,23 @@ export const ExpenseUploadScreen: React.FC = () => {
             <Text style={styles.yearBannerText}>
               Hóa đơn cho kỳ quyết toán thuế năm {targetYear}
             </Text>
+          </View>
+        )}
+
+        {uploadError && !processing && (
+          <View style={styles.uploadErrorBanner}>
+            <Ionicons name="alert-circle" size={21} color="#B91C1C" />
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <Text style={styles.uploadErrorTitle}>{uploadError.title}</Text>
+              <Text style={styles.uploadErrorMessage}>{uploadError.message}</Text>
+              <Text style={styles.uploadErrorHint}>Vui lòng chọn lại hóa đơn và upload lại.</Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => setUploadError(null)}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons name="close" size={18} color="#B91C1C" />
+            </TouchableOpacity>
           </View>
         )}
 
@@ -755,6 +834,34 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: '#8B1E1E',
+  },
+  uploadErrorBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#FFF1F2',
+    borderWidth: 1,
+    borderColor: '#FDA4AF',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 14,
+  },
+  uploadErrorTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#9F1239',
+    marginBottom: 3,
+  },
+  uploadErrorMessage: {
+    fontSize: 12,
+    color: '#881337',
+    lineHeight: 17,
+  },
+  uploadErrorHint: {
+    fontSize: 11,
+    color: '#BE123C',
+    fontWeight: '600',
+    marginTop: 5,
   },
   // Locked banner
   lockedBanner: {

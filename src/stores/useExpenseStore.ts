@@ -22,7 +22,7 @@ interface ExpenseState {
   setSelectedYear: (year: number | null) => void;
   addYear: (year: number) => void;
   removeYear: (year: number) => void;
-  initPeriodForYear: (year: number, userId?: string) => Promise<TaxPeriodItem>;
+  initPeriodForYear: (year: number, userId?: string) => Promise<TaxPeriodItem | null>;
   fetchDocumentTypes: (isTaxEligible?: boolean) => Promise<TaxDocumentTypeItem[]>;
   addOrUpdateDocument: (year: number, document: ExpenseOcrResult) => Promise<void>;
   confirmDocument: (
@@ -195,20 +195,12 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
 
       get().saveToStorage();
       return period;
-    } catch (err: any) {
-      console.warn(`Lỗi khi khởi tạo TaxPeriod cho năm ${year}:`, err);
-      const localPeriod: TaxPeriodItem = {
-        periodId: `period-${year}-${Date.now()}`,
-        taxYear: year,
-        status: 'DRAFT',
-        createdAt: new Date().toISOString(),
-      };
-      set((state) => ({
-        periods: { ...state.periods, [year]: localPeriod },
-        documents: { ...state.documents, [year]: state.documents[year] || [] },
+    } catch {
+      set({
         isLoading: false,
-      }));
-      return localPeriod;
+        error: `Chưa tạo được hồ sơ quyết toán năm ${year}. Kiểm tra kết nối mạng rồi thử lại.`,
+      });
+      return null;
     }
   },
 
@@ -223,8 +215,7 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
       }
       set({ isDocumentTypesLoading: false });
       return get().documentTypes;
-    } catch (err) {
-      console.warn('Lỗi khi tải danh sách loại chứng từ thuế từ API:', err);
+    } catch {
       set({ isDocumentTypesLoading: false });
       return get().documentTypes;
     }

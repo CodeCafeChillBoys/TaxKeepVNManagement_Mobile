@@ -77,6 +77,35 @@ export function groupCodeToTitle(currentGroup?: string): string {
   }
 }
 
+const GROUP_CODES_FOR_DISPLAY = [
+  'CHILD_OVER_18_STUDYING',
+  'CHILD_OVER_18_STUDENT',
+  'CHILD_OVER_18_DISABLED',
+  'CHILD_UNDER_18',
+  'CHILD_STUDYING',
+  'CHILD_DISABLED',
+  'DISABLED_DEPENDENT',
+  'SPOUSE_OR_PARENTS',
+  'SPOUSE_DISABLED',
+  'SPOUSE_RETIRED',
+  'PARENT_IN_LAW',
+  'PARENT_DISABLED',
+  'PARENT_RETIRED',
+  'OTHER_DEPENDENT',
+  'OTHER_HELPLESS',
+  'PARENT',
+  'SPOUSE',
+].sort((a, b) => b.length - a.length);
+
+/** Đổi mã nhóm trong câu API thành nhãn người dùng đọc được. */
+export function humanizeGroupCodes(text?: string | null): string {
+  if (!text) return '';
+  return GROUP_CODES_FOR_DISPLAY.reduce(
+    (out, code) => out.split(code).join(groupCodeToTitle(code)),
+    text
+  );
+}
+
 export function filterChangeGroupOptions(
   relationship: DependentRelationshipCode,
   currentGroup: string,

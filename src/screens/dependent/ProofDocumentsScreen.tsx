@@ -17,6 +17,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { theme } from '../../constants/theme';
+import { formatPersonName } from '../../utils/formatPersonName';
 import {
   dependentDocumentApi,
   DependentItem,
@@ -709,7 +710,7 @@ export const ProofDocumentsScreen: React.FC = () => {
           <View style={styles.applicantBadge} testID="dependentInfoBanner">
             <Ionicons name="person-circle" size={22} color={theme.colors.primary} />
             <Text style={styles.applicantText} numberOfLines={1}>
-              Hồ sơ: <Text style={{ fontWeight: '700' }}>{route.params.dependentData.fullName}</Text>{' '}
+              Hồ sơ: <Text style={{ fontWeight: '700' }}>{formatPersonName(route.params.dependentData.fullName)}</Text>{' '}
               {route.params.dependentData.citizenId
                 ? `(CCCD: ${route.params.dependentData.citizenId})`
                 : route.params.dependentData.birthCertNumber

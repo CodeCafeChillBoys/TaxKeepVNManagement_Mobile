@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { storageHelper } from '../api/apiClient';
 import { ExpenseOcrResult, TaxPeriodItem, TaxDocumentTypeItem } from '../types/expense';
-import { expenseApi } from '../api/expenseApi';
+import { expenseApi, mapDocumentReviewToOcrResult } from '../api/expenseApi';
 
 // Tạo khóa lưu trữ riêng biệt cho từng tài khoản người dùng, tránh lộ hóa đơn giữa các user
 export const getExpenseStorageKey = (userId?: string | null): string => {
@@ -148,84 +148,19 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
           
           // Luôn ánh xạ khi API trả về mảng (kể cả mảng rỗng [] khi đã xóa hết trong DB)
           if (Array.isArray(docList)) {
-            const failedDocs = docList.filter((doc: any) => doc.status === 'FAILED');
-            await Promise.all(
-              failedDocs.map((doc: any) =>
-                expenseApi.deleteDocument(period.periodId, doc.id).catch(() => undefined)
-              )
-            );
-            serverDocs = docList
-              .filter((doc: any) => doc.status !== 'FAILED')
-              .map((doc: any) => {
+            serverDocs = docList.map((doc: any) => {
               const cachedDoc = get().documents[year]?.find(
                 (existingDoc) => existingDoc.documentId === doc.id
               );
-              return ({
-              id: doc.id,
-              documentId: doc.id,
-              periodId: doc.periodId,
-              docTypeCode: doc.docTypeCode,
-              docTypeName:
-                doc.docTypeName ||
-                get().documentTypes.find((t) => t.code === doc.docTypeCode)?.name ||
-                (doc.docTypeCode ? doc.docTypeCode : 'Chứng từ chi phí'),
-              fileUrl: doc.fileUrl,
-              originalFileUri: cachedDoc?.originalFileUri,
-              originalFilename: doc.originalFilename || 'invoice.jpg',
-              sellerName: doc.sellerName,
-              sellerTaxCode: doc.sellerTaxCode,
-              sellerAddress: doc.sellerAddress,
-              sellerPhone: doc.sellerPhone,
-              invoiceSeries: doc.invoiceSeries,
-              invoiceNumber: doc.invoiceNumber,
-              invoiceDate: doc.invoiceDate,
-              extractedYear: doc.extractedYear || year,
-              lookupUrl: doc.lookupUrl,
-              lookupCode: doc.lookupCode,
-              buyerName: doc.buyerName,
-              buyerTaxCode: doc.buyerTaxCode,
-              buyerIdCard: doc.buyerIdCard,
-              buyerAddress: doc.buyerAddress,
-              paymentMethod: doc.paymentMethod || 'Chuyển khoản',
-              totalAmount: doc.totalAmount ?? 0,
-              totalAmountInWords: doc.totalAmountInWords,
-              items: (doc.items || []).map((it: any, idx: number) => ({
-                itemOrder: it.itemOrder || idx + 1,
-                itemName: it.itemName,
-                unit: it.unit,
-                quantity: it.quantity,
-                unitPrice: it.unitPrice,
-                totalPrice: it.totalPrice,
-              })),
-              overallConfidence: 0.95,
-              appliedThreshold: 0.8,
-              isPassedThreshold: true,
-              hasCrucialLowConfidence: false,
-              fields: [],
-              qualityEvaluation: {
-                qualityScore: 0.95,
-                requiredThreshold: 0.75,
-                qualityIssues: [],
-                isPassedQuality: true,
-              },
-              validationStatus: {
-                isYearValid: doc.isYearValid ?? true,
-                isDocTypeValid: doc.isTaxEligible ?? true,
-                isIdentityValid: doc.isIdentityValid ?? true,
-                isPassedThreshold: true,
-              },
-              validationErrors: [],
-              isNotReimbursed: doc.isNotReimbursed ?? false,
-              status:
-                doc.status === 'CONFIRMED'
-                  ? 'CONFIRMED'
-                  : doc.status === 'FAILED' &&
-                    (doc.sellerName || (doc.totalAmount !== undefined && doc.totalAmount !== null && Number(doc.totalAmount) > 0))
-                  ? 'EXTRACTED'
-                  : doc.status || 'EXTRACTED',
-              createdAt: doc.createdAt,
-                });
-                });
+              const mapped = mapDocumentReviewToOcrResult(doc, year, get().documentTypes);
+              if (cachedDoc?.originalFileUri) {
+                mapped.originalFileUri = cachedDoc.originalFileUri;
+              }
+              if (doc.status) {
+                mapped.status = doc.status;
+              }
+              return mapped;
+            });
           }
         }
       } catch (fetchErr: any) {

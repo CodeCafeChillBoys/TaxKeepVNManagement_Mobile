@@ -187,6 +187,75 @@ export function getDocumentTypeIcon(code?: string | null, name?: string | null):
   }
 
   if (
+    combined.includes('SHOPPING') ||
+    combined.includes('MUA_SAM')
+  ) {
+    return 'bag-handle-outline';
+  }
+
+  if (
+    combined.includes('GROCERY') ||
+    combined.includes('TIEU_DUNG')
+  ) {
+    return 'basket-outline';
+  }
+
+  if (
+    combined.includes('FOOD') ||
+    combined.includes('AN_UONG') ||
+    combined.includes('THUC_PHAM')
+  ) {
+    return 'restaurant-outline';
+  }
+
+  if (
+    combined.includes('ACCOMMODATION') ||
+    combined.includes('LUU_TRU') ||
+    combined.includes('KHACH_SAN')
+  ) {
+    return 'bed-outline';
+  }
+
+  if (
+    combined.includes('ENTERTAINMENT') ||
+    combined.includes('GIAI_TRI')
+  ) {
+    return 'film-outline';
+  }
+
+  if (
+    combined.includes('PERSONAL_SERVICE') ||
+    combined.includes('DICH_VU_CA_NHAN') ||
+    combined.includes('SPA') ||
+    combined.includes('LAM_DEP')
+  ) {
+    return 'cut-outline';
+  }
+
+  if (
+    combined.includes('TRANSPORTATION') ||
+    combined.includes('DI_LAI') ||
+    combined.includes('TAXI')
+  ) {
+    return 'car-outline';
+  }
+
+  if (
+    combined.includes('TRAVEL') ||
+    combined.includes('DU_LICH')
+  ) {
+    return 'airplane-outline';
+  }
+
+  if (
+    combined.includes('UTILITY') ||
+    combined.includes('DIEN_NUOC') ||
+    combined.includes('VIEN_THONG')
+  ) {
+    return 'flash-outline';
+  }
+
+  if (
     combined.includes('VAT') ||
     combined.includes('SALES') ||
     combined.includes('BAN_HANG') ||

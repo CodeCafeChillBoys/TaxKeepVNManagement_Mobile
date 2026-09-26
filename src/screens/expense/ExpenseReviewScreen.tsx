@@ -245,6 +245,31 @@ export const ExpenseReviewScreen: React.FC = () => {
       return;
     }
 
+    // Kiểm tra loại chứng từ có thuộc diện được giảm trừ thuế TNCN không
+    if (currentDocTypeItem && !currentDocTypeItem.isTaxEligible) {
+      toast.error(
+        `Loại chứng từ '${currentDocTypeItem.name}' không thuộc diện được giảm trừ thuế TNCN theo quy định. Vui lòng chọn danh mục hợp lệ.`,
+        'Danh mục không được giảm trừ'
+      );
+      return;
+    }
+
+    // Bắt buộc điền đầy đủ các trường của người thanh toán
+    const missingBuyerFields: string[] = [];
+    if (!buyerName.trim()) missingBuyerFields.push('Họ và tên');
+    if (!buyerIdCard.trim()) missingBuyerFields.push('Số CCCD');
+    if (!buyerAddress.trim()) missingBuyerFields.push('Địa chỉ');
+    if (!paymentMethod.trim()) missingBuyerFields.push('Hình thức thanh toán');
+
+    if (missingBuyerFields.length > 0) {
+      setActiveTab('THONG_TIN');
+      toast.error(
+        `Vui lòng điền đầy đủ thông tin người thanh toán: ${missingBuyerFields.join(', ')}.`,
+        'Thiếu thông tin người thanh toán'
+      );
+      return;
+    }
+
     setSaving(true);
     try {
       const cleanDate = invoiceDate.trim();
@@ -335,6 +360,22 @@ export const ExpenseReviewScreen: React.FC = () => {
       Alert.alert('Thông báo', 'Chứng từ này đã được duyệt, không thể chỉnh sửa.');
       return;
     }
+
+    const missingBuyerFields: string[] = [];
+    if (!buyerName.trim()) missingBuyerFields.push('Họ và tên');
+    if (!buyerIdCard.trim()) missingBuyerFields.push('Số CCCD');
+    if (!buyerAddress.trim()) missingBuyerFields.push('Địa chỉ');
+    if (!paymentMethod.trim()) missingBuyerFields.push('Hình thức thanh toán');
+
+    if (missingBuyerFields.length > 0) {
+      setActiveTab('THONG_TIN');
+      toast.error(
+        `Vui lòng điền đầy đủ thông tin người thanh toán: ${missingBuyerFields.join(', ')}.`,
+        'Thiếu thông tin người thanh toán'
+      );
+      return;
+    }
+
     if (crucialCheck.hasCrucialLowConfidence) {
       Alert.alert(
         'Kiểm tra lại thông tin',
@@ -350,16 +391,22 @@ export const ExpenseReviewScreen: React.FC = () => {
   };
 
   const FieldInput = ({
-    label, value, onChange, placeholder, keyboardType = 'default', readOnly = false,
+    label, value, onChange, placeholder, keyboardType = 'default', readOnly = false, required = false,
   }: {
     label: string; value: string; onChange?: (v: string) => void;
-    placeholder?: string; keyboardType?: any; readOnly?: boolean;
+    placeholder?: string; keyboardType?: any; readOnly?: boolean; required?: boolean;
   }) => (
     <View style={styles.fieldGroup}>
-      <Text style={styles.fieldLabel}>{label}</Text>
+      <Text style={styles.fieldLabel}>
+        {label} {required && <Text style={{ color: '#DC2626' }}>*</Text>}
+      </Text>
       <TextInput
         editable={!isReadOnly && !readOnly}
-        style={[styles.textInput, (isReadOnly || readOnly) && styles.readOnlyInput]}
+        style={[
+          styles.textInput,
+          (isReadOnly || readOnly) && styles.readOnlyInput,
+          required && !value.trim() && !isReadOnly && { borderColor: '#FCA5A5' },
+        ]}
         value={value}
         onChangeText={onChange}
         placeholder={placeholder}
@@ -596,9 +643,9 @@ export const ExpenseReviewScreen: React.FC = () => {
             {/* Loại chứng từ */}
             <Card style={styles.card}>
               <View style={styles.cardHeaderRow}>
-                <View style={styles.cardHeader}>
+                <View style={styles.cardHeaderLeft}>
                   <Ionicons name="albums-outline" size={15} color="#475569" />
-                  <Text style={styles.cardHeaderTitle}>Loại hóa đơn chi phí</Text>
+                  <Text style={styles.cardHeaderTitle} numberOfLines={1}>Loại hóa đơn chi phí</Text>
                 </View>
                 {!isReadOnly && (
                   <TouchableOpacity onPress={() => setShowDocTypeModal(true)} style={styles.changeCategoryBtn}>
@@ -661,18 +708,20 @@ export const ExpenseReviewScreen: React.FC = () => {
                 <Ionicons name="person-outline" size={15} color="#475569" />
                 <Text style={styles.cardHeaderTitle}>Người thanh toán</Text>
               </View>
-              <FieldInput label="Họ và tên" value={buyerName} onChange={setBuyerName} placeholder="NGUYỄN VĂN AN" />
-              <FieldInput label="Số CCCD" value={buyerIdCard} onChange={setBuyerIdCard} placeholder="12 chữ số" keyboardType="numeric" />
-              <FieldInput label="Địa chỉ" value={buyerAddress} onChange={setBuyerAddress} placeholder="Địa chỉ thường trú" />
-              <FieldInput label="Hình thức thanh toán" value={paymentMethod} onChange={setPaymentMethod} placeholder="Chuyển khoản / Tiền mặt" />
+              <FieldInput label="Họ và tên" value={buyerName} onChange={setBuyerName} placeholder="NGUYỄN VĂN AN" required />
+              <FieldInput label="Số CCCD" value={buyerIdCard} onChange={setBuyerIdCard} placeholder="12 chữ số" keyboardType="numeric" required />
+              <FieldInput label="Địa chỉ" value={buyerAddress} onChange={setBuyerAddress} placeholder="Địa chỉ thường trú" required />
+              <FieldInput label="Hình thức thanh toán" value={paymentMethod} onChange={setPaymentMethod} placeholder="Chuyển khoản / Tiền mặt" required />
             </Card>
 
             {/* Bảng kê chi tiết */}
             <Card style={styles.card}>
               <View style={styles.cardHeaderRow}>
-                <View style={styles.cardHeader}>
+                <View style={styles.cardHeaderLeft}>
                   <Ionicons name="list-outline" size={15} color="#475569" />
-                  <Text style={styles.cardHeaderTitle}>Danh sách dịch vụ & Chi phí ({items.length})</Text>
+                  <Text style={styles.cardHeaderTitle} numberOfLines={1}>
+                    Danh sách dịch vụ & Chi phí ({items.length})
+                  </Text>
                 </View>
                 {!isReadOnly && (
                   <TouchableOpacity onPress={() => handleOpenItemModal()} style={styles.addItemBtn}>
@@ -824,7 +873,17 @@ export const ExpenseReviewScreen: React.FC = () => {
                       <Ionicons name={getDocumentTypeIcon(t.code, t.name) as any} size={16} color={isSelected ? '#fff' : '#475569'} />
                     </View>
                     <View style={{ flex: 1, marginLeft: 10 }}>
-                      <Text style={[styles.docTypeOptionName, isSelected && { color: '#8B1E1E', fontWeight: '700' }]}>{t.name}</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                        <Text style={[styles.docTypeOptionName, isSelected && { color: '#8B1E1E', fontWeight: '700' }]}>{t.name}</Text>
+                        <Badge variant={t.isTaxEligible ? 'teal' : 'secondary'} style={{ marginTop: 1 }}>
+                          {t.isTaxEligible ? 'Được giảm trừ' : 'Không giảm trừ'}
+                        </Badge>
+                      </View>
+                      {t.description ? (
+                        <Text style={{ fontSize: 11, color: '#64748B', marginTop: 2, lineHeight: 15 }} numberOfLines={2}>
+                          {t.description}
+                        </Text>
+                      ) : null}
                       <Text style={styles.docTypeOptionCode}>{t.code}</Text>
                     </View>
                     {isSelected && <Ionicons name="checkmark-circle" size={18} color="#8B1E1E" />}
@@ -894,7 +953,8 @@ const styles = StyleSheet.create({
   cardSuccess: { borderColor: '#BBF7D0', backgroundColor: '#F0FDF4' },
   cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
   cardHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
-  cardHeaderTitle: { fontSize: 13, fontWeight: '700', color: '#0F172A', flex: 1 },
+  cardHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, marginRight: 8 },
+  cardHeaderTitle: { fontSize: 13, fontWeight: '700', color: '#0F172A', flexShrink: 1 },
   // Invoice image
   invoiceImage: { width: '100%', height: 220, borderRadius: 8, backgroundColor: '#0F172A' },
   imageErrorBox: {
@@ -976,7 +1036,7 @@ const styles = StyleSheet.create({
   docTypeIcon: { width: 40, height: 40, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   docTypeName: { fontSize: 14, fontWeight: '700', color: '#0F172A' },
   docTypeCode: { fontSize: 10, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', color: '#64748B' },
-  changeCategoryBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, padding: 6, borderRadius: 6, backgroundColor: '#FFF8F8', borderWidth: 1, borderColor: '#FECACA' },
+  changeCategoryBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, padding: 6, borderRadius: 6, backgroundColor: '#FFF8F8', borderWidth: 1, borderColor: '#FECACA', flexShrink: 0 },
   changeCategoryText: { fontSize: 11, fontWeight: '700', color: '#8B1E1E' },
   // Fields
   fieldGroup: { marginBottom: 10 },
@@ -1002,6 +1062,7 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     borderRadius: 7,
     backgroundColor: '#8B1E1E',
+    flexShrink: 0,
   },
   addItemBtnText: { fontSize: 11, fontWeight: '700', color: '#fff' },
   emptyItems: { fontSize: 12, color: '#94A3B8', textAlign: 'center', paddingVertical: 16 },

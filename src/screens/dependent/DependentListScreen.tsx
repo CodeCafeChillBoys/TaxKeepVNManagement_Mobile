@@ -16,6 +16,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
+import { fonts } from '../../constants/fonts';
+import { DrumHeader } from '../../components/brand/DrumHeader';
+import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
 import { formatPersonName } from '../../utils/formatPersonName';
 import { RootNavigationProp } from '../../navigation/types';
 import {
@@ -32,6 +35,7 @@ import {
 } from '../../components/common/DocumentViewerModal';
 import { ChangeGroupSheet } from '../../components/common/ChangeGroupSheet';
 import { Dialog } from '../../components/common/Dialog';
+import { MainTabBar } from '../../components/navigation/MainTabBar';
 import { groupCodeToIndex } from './dependentGroupUtils';
 import { ageAtEffectiveFrom } from './dependentEligibility';
 import {
@@ -281,33 +285,29 @@ export const DependentListScreen: React.FC = () => {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      {/* Top Header chuẩn màu sắc thương hiệu */}
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backBtn}
-          onPress={() => navigation.goBack()}
-          accessibilityRole="button"
-          accessibilityLabel="Quay lại"
-          testID="dependentListBackBtn"
-        >
-          <Ionicons name="arrow-back" size={24} color="#1A1A1A" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle} numberOfLines={1}>
-          Danh sách người phụ thuộc
-        </Text>
-        <TouchableOpacity
-          style={styles.addHeaderBtn}
-          onPress={() => navigation.navigate('TaxRegistration')}
-          accessibilityRole="button"
-          accessibilityLabel="Thêm người phụ thuộc"
-          testID="btnAddDependentHeader"
-        >
-          <Ionicons name="person-add" size={20} color={theme.colors.primary} />
-        </TouchableOpacity>
-      </View>
+    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+      <DrumHeader
+        title="Người phụ thuộc"
+        onBack={() => {
+          if (navigation.canGoBack()) navigation.goBack();
+          else navigation.navigate('Home');
+        }}
+        backTestID="dependentListBackBtn"
+        right={
+          <TouchableOpacity
+            style={styles.addHeaderBtn}
+            onPress={() => navigation.navigate('TaxRegistration')}
+            accessibilityRole="button"
+            accessibilityLabel="Thêm người phụ thuộc"
+            testID="btnAddDependentHeader"
+          >
+            <Ionicons name="person-add" size={22} color={theme.colors.primary} />
+          </TouchableOpacity>
+        }
+      />
 
       <ScrollView
+        style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
         refreshControl={
@@ -318,28 +318,16 @@ export const DependentListScreen: React.FC = () => {
           />
         }
       >
-        {/* Banner Tổng quan Giảm trừ gia cảnh theo Nghị quyết 110/2025/UBTVQH15 */}
-        <View style={styles.summaryBanner}>
-          <View style={styles.summaryTextCol}>
-            <Text style={styles.summaryLabel}>GIẢM TRỪ GIA CẢNH NPT</Text>
-            <Text style={styles.summaryCount}>
-              {dependents.length}{' '}
-              <Text style={styles.summaryCountUnit}>người phụ thuộc</Text>
-            </Text>
-            <Text style={styles.summaryDeductionAmount}>
-              Ước tính:{' '}
-              <Text style={styles.summaryHighlight}>
-                {(dependents.length * DEDUCTION_PER_DEPENDENT).toLocaleString('vi-VN')} đ/tháng
-              </Text>
-            </Text>
-            <Text style={styles.summaryLawSubtext}>
-              (6,2 tr đ/tháng/người - NQ 110/2025/UBTVQH15)
-            </Text>
-          </View>
-          <View style={styles.summaryIconBox}>
-            <Ionicons name="people" size={32} color={theme.colors.gold} />
-          </View>
+        <View style={styles.hero}>
+          <Text style={styles.heroLabel}>Giảm trừ mỗi tháng</Text>
+          <Text style={styles.heroAmount}>
+            {(dependents.length * DEDUCTION_PER_DEPENDENT).toLocaleString('vi-VN')} đ
+          </Text>
+          <Text style={styles.heroMeta}>
+            {dependents.length} người · 6,2 triệu đồng/người · NQ 110/2025/UBTVQH15
+          </Text>
         </View>
+        <GoldDoubleRule style={styles.heroRule} />
 
         {/* Tiêu đề danh sách & nút Đăng ký */}
         <View style={styles.sectionHeader}>
@@ -349,7 +337,6 @@ export const DependentListScreen: React.FC = () => {
             onPress={() => navigation.navigate('TaxRegistration')}
             testID="btnAddNewDependentInline"
           >
-            <Ionicons name="add-circle" size={16} color={theme.colors.primary} />
             <Text style={styles.addNewInlineBtnText}>Khai báo mới</Text>
           </TouchableOpacity>
         </View>
@@ -361,9 +348,6 @@ export const DependentListScreen: React.FC = () => {
           </View>
         ) : dependents.length === 0 ? (
           <View style={styles.emptyContainer}>
-            <View style={styles.emptyIconCircle}>
-              <Ionicons name="people-outline" size={48} color={theme.colors.textPlaceholder} />
-            </View>
             <Text style={styles.emptyTitle}>Chưa có người phụ thuộc</Text>
             <Text style={styles.emptySubtitle}>
               Bạn chưa đăng ký người phụ thuộc nào để được hưởng mức giảm trừ gia cảnh 6.200.000 VNĐ/tháng (theo Nghị quyết 110/2025/UBTVQH15 áp dụng từ năm 2026).
@@ -378,54 +362,36 @@ export const DependentListScreen: React.FC = () => {
             </TouchableOpacity>
           </View>
         ) : (
-          dependents.map((dep) => {
+          dependents.map((dep, index) => {
             const age = calculateAge(dep.birthDate);
             const isAdult = age >= 14;
             const hasCitizenId = Boolean(dep.citizenId);
+            const displayName = formatPersonName(dep.fullName);
+            const idLabel = isAdult || hasCitizenId ? 'Căn cước' : 'Giấy khai sinh';
+            const idValue = dep.citizenId || dep.birthCertNumber || 'Chưa cập nhật';
 
             return (
               <TouchableOpacity
                 key={dep.id}
-                style={styles.cardItem}
+                style={styles.ledgerRow}
                 activeOpacity={0.88}
                 onPress={() => handleViewDetail(dep.id)}
                 testID={`dependentCard_${dep.id}`}
               >
-                {/* Header thẻ */}
-                <View style={styles.cardTopRow}>
-                  <View style={styles.avatarBox}>
-                    <Ionicons
-                      name={dep.relationship === 'CHILD' ? 'happy' : 'person'}
-                      size={22}
-                      color="#FFFFFF"
-                    />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.cardName}>{formatPersonName(dep.fullName)}</Text>
-                    <View style={styles.badgesRow}>
-                      <View style={styles.relationBadge}>
-                        <Text style={styles.relationBadgeText}>
-                          {getRelationshipLabel(dep.relationship)}
-                        </Text>
-                      </View>
-                      <View
-                        style={[
-                          styles.statusBadge,
-                          dep.isProfileComplete ? styles.statusComplete : styles.statusPending,
-                        ]}
+                <View style={styles.ledgerTop}>
+                  <Text style={styles.ledgerIndex}>{String(index + 1).padStart(2, '0')}</Text>
+                  <View style={styles.ledgerMain}>
+                    <Text style={styles.cardName}>{displayName}</Text>
+                    <Text style={styles.ledgerMeta}>
+                      {getRelationshipLabel(dep.relationship)} · {age} tuổi ·{' '}
+                      <Text
+                        style={
+                          dep.isProfileComplete ? styles.statusCompleteText : styles.statusPendingText
+                        }
                       >
-                        <Text
-                          style={[
-                            styles.statusBadgeText,
-                            dep.isProfileComplete
-                              ? styles.statusCompleteText
-                              : styles.statusPendingText,
-                          ]}
-                        >
-                          {dep.isProfileComplete ? '✓ Đủ hồ sơ' : 'Chờ bổ sung minh chứng'}
-                        </Text>
-                      </View>
-                    </View>
+                        {dep.isProfileComplete ? 'Đủ hồ sơ' : 'Chờ minh chứng'}
+                      </Text>
+                    </Text>
                   </View>
                   <TouchableOpacity
                     style={styles.rowMenuBtn}
@@ -435,72 +401,29 @@ export const DependentListScreen: React.FC = () => {
                     accessibilityRole="button"
                     accessibilityLabel="Tuỳ chọn người phụ thuộc"
                   >
-                    <Ionicons name="ellipsis-vertical" size={20} color="#666666" />
+                    <Ionicons name="ellipsis-vertical" size={18} color="#666666" />
                   </TouchableOpacity>
                 </View>
 
-                {/* Phân cách nhẹ */}
-                <View style={styles.cardDivider} />
+                <Text style={styles.ledgerLine}>
+                  {idLabel} {idValue}
+                </Text>
+                <Text style={styles.ledgerLine} numberOfLines={2}>
+                  {dep.groupTitle}
+                  {dep.effectiveFromMonth || dep.effectiveToMonth
+                    ? ` · ${dep.effectiveFromMonth || '01/2026'} → ${dep.effectiveToMonth || '12/2026'}`
+                    : ''}
+                </Text>
 
-                {/* Chi tiết người phụ thuộc */}
-                <View style={styles.cardDetails}>
-                  {/* Ngày sinh & Độ tuổi */}
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Ngày sinh & Độ tuổi:</Text>
-                    <Text style={styles.detailValue}>
-                      {dep.birthDate} ({age} tuổi)
-                    </Text>
-                  </View>
-
-                  {/* Định danh: CCCD (nếu >= 14 tuổi) hoặc Giấy khai sinh (nếu < 14 tuổi) */}
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>
-                      {isAdult || hasCitizenId ? 'Số Căn cước công dân:' : 'Số Giấy khai sinh:'}
-                    </Text>
-                    <Text style={[styles.detailValue, styles.monospace]}>
-                      {dep.citizenId || dep.birthCertNumber || 'Chưa cập nhật'}
-                    </Text>
-                  </View>
-
-                  {/* Nhóm điều kiện */}
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailLabel}>Nhóm điều kiện:</Text>
-                    <Text style={[styles.detailValue, { flex: 1, textAlign: 'right' }]} numberOfLines={2}>
-                      {dep.groupTitle}
-                    </Text>
-                  </View>
-
-                  {/* Thời gian hiệu lực */}
-                  {(dep.effectiveFromMonth || dep.effectiveToMonth) && (
-                    <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Thời gian hiệu lực:</Text>
-                      <Text style={styles.detailValue}>
-                        {dep.effectiveFromMonth || '01/2026'} → {dep.effectiveToMonth || '12/2026'}
-                      </Text>
-                    </View>
-                  )}
-                </View>
-
-                {/* Nút hành động */}
-                <View style={styles.cardActionRow}>
-                  <TouchableOpacity
-                    style={styles.uploadProofBtn}
-                    onPress={() => handleGoToProofDocuments(dep)}
-                    activeOpacity={0.8}
-                    testID={`btnProofDoc_${dep.id}`}
-                  >
-                    <Ionicons
-                      name="cloud-upload-outline"
-                      size={16}
-                      color={theme.colors.primary}
-                      style={{ marginRight: 6 }}
-                    />
-                    <Text style={styles.uploadProofBtnText}>
-                      {dep.isProfileComplete ? 'Xem / Cập nhật minh chứng' : 'Bổ sung ảnh minh chứng'}
-                    </Text>
-                    <Ionicons name="chevron-forward" size={14} color={theme.colors.primary} />
-                  </TouchableOpacity>
-                </View>
+                <TouchableOpacity
+                  onPress={() => handleGoToProofDocuments(dep)}
+                  activeOpacity={0.8}
+                  testID={`btnProofDoc_${dep.id}`}
+                >
+                  <Text style={styles.proofLink}>
+                    {dep.isProfileComplete ? 'Xem minh chứng' : 'Bổ sung minh chứng'}
+                  </Text>
+                </TouchableOpacity>
               </TouchableOpacity>
             );
           })
@@ -814,6 +737,7 @@ export const DependentListScreen: React.FC = () => {
         onPrimary={() => setInfoDialog(null)}
         onRequestClose={() => setInfoDialog(null)}
       />
+      <MainTabBar active="DependentList" />
     </SafeAreaView>
   );
 };
@@ -833,6 +757,10 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#EBE2D3',
   },
+  headerSide: {
+    width: 32,
+    height: 32,
+  },
   backBtn: {
     padding: 6,
     borderRadius: 8,
@@ -845,13 +773,90 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   addHeaderBtn: {
-    padding: 6,
-    borderRadius: 8,
-    backgroundColor: theme.colors.surfaceSecondary,
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scroll: {
+    flex: 1,
   },
   scrollContent: {
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.md,
+    paddingHorizontal: 22,
+    paddingTop: 6,
+    paddingBottom: 28,
+  },
+  hero: {
+    alignItems: 'center',
+    paddingTop: 6,
+    paddingBottom: 16,
+  },
+  heroLabel: {
+    fontFamily: fonts.bodyMedium,
+    fontSize: 12,
+    lineHeight: 16,
+    color: '#5A4A22',
+  },
+  heroAmount: {
+    fontFamily: fonts.serifBold,
+    fontSize: 32,
+    lineHeight: 38,
+    color: theme.colors.primaryDark,
+    marginTop: 4,
+  },
+  heroMeta: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    lineHeight: 18,
+    color: theme.colors.textSecondary,
+    textAlign: 'center',
+    marginTop: 4,
+  },
+  heroRule: {
+    marginBottom: 16,
+  },
+  ledgerRow: {
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+    gap: 4,
+  },
+  ledgerTop: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  ledgerIndex: {
+    width: 28,
+    fontFamily: fonts.serifBold,
+    fontSize: 15,
+    lineHeight: 22,
+    color: theme.colors.gold,
+  },
+  ledgerMain: {
+    flex: 1,
+  },
+  ledgerMeta: {
+    fontFamily: fonts.body,
+    fontSize: 13,
+    lineHeight: 18,
+    color: theme.colors.textSecondary,
+    marginTop: 2,
+  },
+  ledgerLine: {
+    marginLeft: 38,
+    fontFamily: fonts.body,
+    fontSize: 13,
+    lineHeight: 19,
+    color: '#444444',
+  },
+  proofLink: {
+    marginLeft: 38,
+    marginTop: 6,
+    fontFamily: fonts.bodySemi,
+    fontSize: 13,
+    lineHeight: 18,
+    color: theme.colors.primary,
   },
   summaryBanner: {
     backgroundColor: theme.colors.primaryDark,
@@ -1165,8 +1170,9 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   sectionTitle: {
-    fontSize: 16,
-    fontWeight: '700',
+    fontFamily: fonts.serifBold,
+    fontSize: 18,
+    lineHeight: 24,
     color: theme.colors.textPrimary,
   },
   addNewInlineBtn: {
@@ -1261,10 +1267,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   cardName: {
+    fontFamily: fonts.bodySemi,
     fontSize: 16,
-    fontWeight: '700',
+    lineHeight: 22,
     color: theme.colors.textPrimary,
-    marginBottom: 4,
   },
   badgesRow: {
     flexDirection: 'row',
@@ -1299,10 +1305,10 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   statusCompleteText: {
-    color: '#2E7D32',
+    color: '#3D5C3A',
   },
   statusPendingText: {
-    color: '#E65100',
+    color: theme.colors.primary,
   },
   cardDivider: {
     height: 1,

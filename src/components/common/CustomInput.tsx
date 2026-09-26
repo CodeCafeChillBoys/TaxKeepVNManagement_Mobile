@@ -92,8 +92,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   label: {
-    ...theme.typography.bodyMedium,
-    fontWeight: '600',
+    ...theme.typography.fieldLabel,
     color: theme.colors.textPrimary,
   },
   requiredMark: {
@@ -103,16 +102,17 @@ const styles = StyleSheet.create({
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: theme.colors.inputBackground,
+    backgroundColor: '#FFFFFF',
     borderRadius: theme.borderRadius.md,
-    borderWidth: 1.2,
+    borderWidth: 1,
     borderColor: theme.colors.border,
     paddingHorizontal: 14,
-    minHeight: 50,
+    minHeight: 48,
   },
   inputWrapperFocused: {
     borderColor: theme.colors.borderFocus,
-    backgroundColor: '#FAF7F0',
+    borderWidth: 1.5,
+    backgroundColor: '#FFFFFF',
   },
   inputWrapperError: {
     borderColor: theme.colors.error,
@@ -120,9 +120,9 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    ...theme.typography.bodyLarge,
+    ...theme.typography.inputText,
     color: theme.colors.textPrimary,
-    paddingVertical: 10,
+    paddingVertical: 0,
   },
   eyeIcon: {
     padding: 6,

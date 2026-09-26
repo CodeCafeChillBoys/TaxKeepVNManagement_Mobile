@@ -13,16 +13,36 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
+import { fonts } from '../../constants/fonts';
 import { profileApi, UserProfileResponse } from '../../api/profileApi';
 import { RootNavigationProp } from '../../navigation/types';
 import { useAuthStore } from '../../stores/useAuthStore';
+import { MainTabBar } from '../../components/navigation/MainTabBar';
+import { DrumHeader } from '../../components/brand/DrumHeader';
+import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
+import { formatPersonName } from '../../utils/formatPersonName';
 
 export const ProfileScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
+  const logout = useAuthStore((s) => s.logout);
   const [profile, setProfile] = useState<UserProfileResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+
+  const handleLogout = () => {
+    Alert.alert('Đăng xuất', 'Bạn có chắc chắn muốn đăng xuất khỏi ứng dụng?', [
+      { text: 'Hủy', style: 'cancel' },
+      {
+        text: 'Đăng xuất',
+        style: 'destructive',
+        onPress: async () => {
+          await logout();
+          navigation.replace('Login');
+        },
+      },
+    ]);
+  };
 
   const fetchProfile = async (isPullRefresh = false) => {
     try {
@@ -68,223 +88,105 @@ export const ProfileScreen: React.FC = () => {
     navigation.navigate('EditProfile', { autoFocusTaxId });
   };
 
+  const goBack = () => {
+    if (navigation.canGoBack()) navigation.goBack();
+    else navigation.navigate('Home');
+  };
+
+  const displayName = formatPersonName(profile?.fullName) || 'Người nộp thuế';
+
   if (loading && !refreshing) {
     return (
-      <SafeAreaView style={styles.safeArea}>
-        <View style={styles.header}>
-          <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
-            <Ionicons name="arrow-back" size={24} color={theme.colors.textPrimary} />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>HỒ SƠ CÁ NHÂN</Text>
-          <View style={{ width: 40 }} />
-        </View>
+      <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+        <DrumHeader title="Tài khoản" onBack={goBack} />
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={theme.colors.primary} />
-          <Text style={styles.loadingText}>Đang tải hồ sơ cá nhân...</Text>
+          <Text style={styles.loadingText}>Đang tải hồ sơ...</Text>
         </View>
+        <MainTabBar active="Profile" />
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={() => navigation.goBack()}
-          accessibilityRole="button"
-          accessibilityLabel="Quay lại"
-        >
-          <Ionicons name="arrow-back" size={24} color={theme.colors.textPrimary} />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>HỒ SƠ CÁ NHÂN</Text>
-        <TouchableOpacity style={styles.editHeaderBtn} onPress={() => handleEdit(false)}>
-          <Ionicons name="create-outline" size={22} color={theme.colors.primary} />
-        </TouchableOpacity>
-      </View>
+    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+      <DrumHeader
+        title="Tài khoản"
+        onBack={goBack}
+        right={
+          <TouchableOpacity
+            style={styles.editHeaderBtn}
+            onPress={() => handleEdit(false)}
+            accessibilityRole="button"
+            accessibilityLabel="Chỉnh sửa hồ sơ"
+          >
+            <Text style={styles.editHeaderText}>Sửa</Text>
+          </TouchableOpacity>
+        }
+      />
 
       <ScrollView
+        style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={() => fetchProfile(true)} colors={[theme.colors.primary]} />
         }
       >
-        {/* Thẻ Avatar & Trạng thái xác thực */}
-        <View style={styles.userCard}>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>
-              {profile?.fullName ? profile.fullName.charAt(0).toUpperCase() : 'U'}
-            </Text>
-          </View>
-          <Text style={styles.userName}>{profile?.fullName || 'Người nộp thuế'}</Text>
-          <View
-            style={[
-              styles.badge,
-              profile?.isVerified ? styles.badgeVerified : styles.badgeUnverified,
-            ]}
-          >
-            <Ionicons
-              name={profile?.isVerified ? 'checkmark-circle' : 'alert-circle'}
-              size={15}
-              color={profile?.isVerified ? theme.colors.success : theme.colors.warning}
-            />
-            <Text
-              style={[
-                styles.badgeText,
-                { color: profile?.isVerified ? theme.colors.success : theme.colors.warning },
-              ]}
+        <Text style={styles.heroName}>{displayName}</Text>
+        <Text style={styles.heroStatus}>
+          {profile?.isVerified ? 'Đã xác thực' : 'Chưa xác thực'}
+        </Text>
+        {error ? <Text style={styles.warningSubtitle}>{error}</Text> : null}
+        {!profile?.isVerified ? (
+          <Text style={styles.warningSubtitle}>
+            Một số việc sẽ bị hạn chế đến khi tài khoản được xác thực.
+          </Text>
+        ) : null}
+        <GoldDoubleRule style={styles.rule} />
+
+        <Text style={styles.sectionTitle}>Cá nhân</Text>
+        <Field label="Họ và tên" value={displayName} />
+        <Field label="Số căn cước" value={profile?.citizenId} />
+        <Field label="Ngày sinh" value={profile?.dateOfBirth} />
+        <Field label="Địa chỉ" value={profile?.address} />
+
+        <Text style={styles.sectionTitle}>Tài khoản</Text>
+        <Field label="Email" value={profile?.email} />
+        <Field label="Số điện thoại" value={profile?.phoneNumber} />
+        <View style={styles.fieldRow}>
+          <Text style={styles.fieldLabel}>Mã số thuế</Text>
+          {profile?.taxIdNumber ? (
+            <Text style={styles.fieldValue}>{profile.taxIdNumber}</Text>
+          ) : (
+            <TouchableOpacity
+              onPress={() => handleEdit(true)}
+              accessibilityRole="button"
+              accessibilityLabel="Bổ sung mã số thuế"
             >
-              {profile?.isVerified ? 'Đã xác thực' : 'Chưa xác thực'}
-            </Text>
-          </View>
+              <Text style={styles.link}>Bổ sung</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
-        {/* Cảnh báo khi chưa xác thực */}
-        {!profile?.isVerified && (
-          <View style={styles.warningBanner}>
-            <Ionicons name="warning-outline" size={20} color={theme.colors.warning} style={{ marginTop: 2 }} />
-            <View style={{ flex: 1, marginLeft: 10 }}>
-              <Text style={styles.warningTitle}>Tài khoản chưa được xác thực</Text>
-              <Text style={styles.warningSubtitle}>
-                Một số tính năng nâng cao có thể bị hạn chế cho đến khi tài khoản được xác thực.
-              </Text>
-            </View>
-          </View>
-        )}
+        <Text style={styles.sectionTitle}>Liên kết</Text>
+        <LinkRow
+          label="Đổi mật khẩu"
+          onPress={() => navigation.navigate('ChangePassword')}
+          testID="quickLinkChangePassword"
+        />
+        <LinkRow
+          label="Người phụ thuộc"
+          onPress={() => navigation.navigate('DependentList')}
+          testID="quickLinkDependentList"
+        />
+        <LinkRow
+          label="Nơi chi trả"
+          onPress={() => navigation.navigate('IncomeSourceList')}
+          testID="quickLinkIncomeSource"
+          last
+        />
 
-        {/* Nhóm 1: Thông tin cá nhân */}
-        <View style={styles.card}>
-          <View style={styles.cardHeaderRow}>
-            <Ionicons name="person-outline" size={20} color={theme.colors.primary} />
-            <Text style={styles.cardTitle}>THÔNG TIN CÁ NHÂN</Text>
-          </View>
-
-          <View style={styles.fieldRow}>
-            <Text style={styles.fieldLabel}>Họ và tên</Text>
-            <Text style={styles.fieldValue}>{profile?.fullName || 'Chưa cập nhật'}</Text>
-          </View>
-
-          <View style={styles.divider} />
-
-          <View style={styles.fieldRow}>
-            <View style={styles.labelWithIcon}>
-              <Text style={styles.fieldLabel}>Số căn cước</Text>
-              <Ionicons name="lock-closed" size={14} color={theme.colors.textSecondary} style={{ marginLeft: 4 }} />
-            </View>
-            <Text style={[styles.fieldValue, styles.monospace]}>{profile?.citizenId || 'Chưa cập nhật'}</Text>
-          </View>
-
-          <View style={styles.divider} />
-
-          <View style={styles.fieldRow}>
-            <Text style={styles.fieldLabel}>Ngày sinh</Text>
-            <Text style={styles.fieldValue}>{profile?.dateOfBirth || 'Chưa cập nhật'}</Text>
-          </View>
-
-          <View style={styles.divider} />
-
-          <View style={styles.fieldRow}>
-            <Text style={styles.fieldLabel}>Địa chỉ</Text>
-            <Text style={[styles.fieldValue, { flex: 1, textAlign: 'right' }]} numberOfLines={2}>
-              {profile?.address || 'Chưa cập nhật'}
-            </Text>
-          </View>
-        </View>
-
-        {/* Nhóm 2: Thông tin tài khoản & Mã số thuế */}
-        <View style={styles.card}>
-          <View style={styles.cardHeaderRow}>
-            <Ionicons name="card-outline" size={20} color={theme.colors.primary} />
-            <Text style={styles.cardTitle}>THÔNG TIN TÀI KHOẢN</Text>
-          </View>
-
-          <View style={styles.fieldRow}>
-            <Text style={styles.fieldLabel}>Email</Text>
-            <Text style={styles.fieldValue}>{profile?.email || 'Chưa cập nhật'}</Text>
-          </View>
-
-          <View style={styles.divider} />
-
-          <View style={styles.fieldRow}>
-            <Text style={styles.fieldLabel}>Số điện thoại</Text>
-            <Text style={styles.fieldValue}>{profile?.phoneNumber || 'Chưa cập nhật'}</Text>
-          </View>
-
-          <View style={styles.divider} />
-
-          {/* Ô Mã số thuế - Điểm nhấn nghiệp vụ */}
-          <View style={styles.fieldRow}>
-            <Text style={styles.fieldLabel}>Mã số thuế</Text>
-            {profile?.taxIdNumber ? (
-              <View style={styles.taxIdBadge}>
-                <Ionicons name="shield-checkmark" size={14} color={theme.colors.primary} />
-                <Text style={styles.taxIdText}>{profile.taxIdNumber}</Text>
-              </View>
-            ) : (
-              <View style={styles.taxIdEmptyRow}>
-                <Text style={styles.emptyText}>Chưa có</Text>
-                <TouchableOpacity
-                  style={styles.addTaxBtn}
-                  onPress={() => handleEdit(true)}
-                  accessibilityRole="button"
-                  accessibilityLabel="Bổ sung mã số thuế"
-                >
-                  <Ionicons name="add" size={14} color="#FFFFFF" />
-                  <Text style={styles.addTaxBtnText}>Bổ sung</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-          </View>
-        </View>
-
-        {/* Nhóm 3: Liên kết nhanh theo đặc tả mục 6.3 */}
-        <View style={styles.card}>
-          <Text style={styles.quickLinksHeader}>LIÊN KẾT NHANH</Text>
-
-          <TouchableOpacity
-            style={styles.quickLinkRow}
-            onPress={() => navigation.navigate('ChangePassword')}
-            testID="quickLinkChangePassword"
-          >
-            <View style={styles.quickLinkLeft}>
-              <Ionicons name="key-outline" size={18} color={theme.colors.textPrimary} />
-              <Text style={styles.quickLinkText}>Đổi mật khẩu</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color={theme.colors.textSecondary} />
-          </TouchableOpacity>
-
-          <View style={styles.divider} />
-
-          <TouchableOpacity
-            style={styles.quickLinkRow}
-            onPress={() => navigation.navigate('DependentList')}
-            testID="quickLinkDependentList"
-          >
-            <View style={styles.quickLinkLeft}>
-              <Ionicons name="people-outline" size={18} color={theme.colors.textPrimary} />
-              <Text style={styles.quickLinkText}>Người phụ thuộc & Giấy tờ minh chứng</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color={theme.colors.textSecondary} />
-          </TouchableOpacity>
-
-          <View style={styles.divider} />
-
-          <TouchableOpacity
-            style={styles.quickLinkRow}
-            onPress={() => navigation.navigate('IncomeSourceList')}
-            testID="quickLinkIncomeSource"
-          >
-            <View style={styles.quickLinkLeft}>
-              <Ionicons name="business-outline" size={18} color={theme.colors.textPrimary} />
-              <Text style={styles.quickLinkText}>Nơi chi trả thu nhập</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color={theme.colors.textSecondary} />
-          </TouchableOpacity>
-        </View>
-
-        {/* Nút hành động Chỉnh sửa */}
         <TouchableOpacity
           style={styles.primaryEditBtn}
           activeOpacity={0.85}
@@ -292,15 +194,57 @@ export const ProfileScreen: React.FC = () => {
           accessibilityRole="button"
           accessibilityLabel="Chỉnh sửa hồ sơ"
         >
-          <Ionicons name="create" size={20} color="#FFFFFF" style={{ marginRight: 8 }} />
           <Text style={styles.primaryEditBtnText}>Chỉnh sửa hồ sơ</Text>
         </TouchableOpacity>
 
-        <View style={{ height: 30 }} />
+        <TouchableOpacity
+          style={styles.logoutBtn}
+          activeOpacity={0.85}
+          onPress={handleLogout}
+          accessibilityRole="button"
+          accessibilityLabel="Đăng xuất"
+          testID="profileLogoutBtn"
+        >
+          <Text style={styles.logoutBtnText}>Đăng xuất</Text>
+        </TouchableOpacity>
       </ScrollView>
+      <MainTabBar active="Profile" />
     </SafeAreaView>
   );
 };
+
+function Field({ label, value }: { label: string; value?: string | null }) {
+  return (
+    <View style={styles.fieldRow}>
+      <Text style={styles.fieldLabel}>{label}</Text>
+      <Text style={styles.fieldValue}>{value || 'Chưa cập nhật'}</Text>
+    </View>
+  );
+}
+
+function LinkRow({
+  label,
+  onPress,
+  testID,
+  last,
+}: {
+  label: string;
+  onPress: () => void;
+  testID: string;
+  last?: boolean;
+}) {
+  return (
+    <TouchableOpacity
+      style={[styles.linkRow, last && styles.linkRowLast]}
+      onPress={onPress}
+      testID={testID}
+      accessibilityRole="button"
+    >
+      <Text style={styles.linkLabel}>{label}</Text>
+      <Ionicons name="chevron-forward" size={16} color="#999999" />
+    </TouchableOpacity>
+  );
+}
 
 const styles = StyleSheet.create({
   safeArea: {
@@ -317,6 +261,10 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
   },
+  headerSide: {
+    width: 40,
+    height: 40,
+  },
   backButton: {
     width: 40,
     height: 40,
@@ -331,10 +279,11 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   editHeaderBtn: {
-    width: 40,
-    height: 40,
-    alignItems: 'center',
+    minWidth: 44,
+    height: 44,
+    alignItems: 'flex-end',
     justifyContent: 'center',
+    paddingRight: 4,
   },
   loadingContainer: {
     flex: 1,
@@ -346,9 +295,69 @@ const styles = StyleSheet.create({
     color: theme.colors.textSecondary,
     marginTop: 12,
   },
+  scroll: {
+    flex: 1,
+  },
   scrollContent: {
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.md,
+    paddingHorizontal: 22,
+    paddingTop: 8,
+    paddingBottom: 28,
+  },
+  editHeaderText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 14,
+    lineHeight: 20,
+    color: theme.colors.primary,
+  },
+  heroName: {
+    fontFamily: fonts.serifBold,
+    fontSize: 26,
+    lineHeight: 32,
+    color: theme.colors.primaryDark,
+    textAlign: 'center',
+  },
+  heroStatus: {
+    fontFamily: fonts.body,
+    fontSize: 13,
+    lineHeight: 18,
+    color: '#5A4A22',
+    textAlign: 'center',
+    marginTop: 4,
+  },
+  rule: {
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  sectionTitle: {
+    fontFamily: fonts.serifBold,
+    fontSize: 18,
+    lineHeight: 24,
+    color: theme.colors.textPrimary,
+    marginTop: 18,
+    marginBottom: 4,
+  },
+  link: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 14,
+    lineHeight: 20,
+    color: theme.colors.primary,
+  },
+  linkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+  },
+  linkRowLast: {
+    borderBottomWidth: 0,
+  },
+  linkLabel: {
+    fontFamily: fonts.body,
+    fontSize: 15,
+    lineHeight: 22,
+    color: theme.colors.textPrimary,
   },
   userCard: {
     alignItems: 'center',
@@ -417,9 +426,12 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   warningSubtitle: {
-    ...theme.typography.bodySmall,
-    color: '#F57C00',
-    lineHeight: 18,
+    fontFamily: fonts.body,
+    fontSize: 13,
+    lineHeight: 19,
+    color: theme.colors.primary,
+    textAlign: 'center',
+    marginTop: 8,
   },
   card: {
     backgroundColor: theme.colors.surface,
@@ -445,22 +457,31 @@ const styles = StyleSheet.create({
   },
   fieldRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
-    paddingVertical: 8,
+    gap: 16,
+    paddingVertical: 11,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
   },
   labelWithIcon: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   fieldLabel: {
-    ...theme.typography.bodyMedium,
+    width: 108,
+    fontFamily: fonts.body,
+    fontSize: 14,
+    lineHeight: 20,
     color: theme.colors.textSecondary,
   },
   fieldValue: {
-    ...theme.typography.bodyMedium,
-    fontWeight: '600',
+    flex: 1,
+    fontFamily: fonts.bodySemi,
+    fontSize: 14,
+    lineHeight: 20,
     color: theme.colors.textPrimary,
+    textAlign: 'right',
   },
   monospace: {
     letterSpacing: 0.5,
@@ -537,18 +558,27 @@ const styles = StyleSheet.create({
     color: theme.colors.textPrimary,
   },
   primaryEditBtn: {
-    flexDirection: 'row',
+    height: 52,
+    borderRadius: 10,
+    backgroundColor: theme.colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: theme.colors.primary,
-    borderRadius: theme.borderRadius.md,
-    paddingVertical: 14,
-    marginTop: 4,
-    ...theme.shadows.button,
+    marginTop: 28,
   },
   primaryEditBtnText: {
-    ...theme.typography.bodyLarge,
-    fontWeight: '700',
+    fontFamily: fonts.bodyBold,
+    fontSize: 16,
+    lineHeight: 20,
     color: '#FFFFFF',
+  },
+  logoutBtn: {
+    alignItems: 'center',
+    paddingVertical: 16,
+  },
+  logoutBtnText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 15,
+    lineHeight: 20,
+    color: theme.colors.error,
   },
 });

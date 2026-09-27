@@ -42,7 +42,7 @@ import {
   useToast,
 } from '../../components/ui';
 
-type StatusFilter = 'ALL' | 'CONFIRMED' | 'EXTRACTED' | 'UPLOADED' | 'FAILED';
+type StatusFilter = 'ALL' | 'CONFIRMED' | 'EXTRACTED';
 
 export const ExpenseListScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
@@ -142,44 +142,27 @@ export const ExpenseListScreen: React.FC = () => {
 
   const metrics = calculateExpenseMetrics(allCurrentExpenses);
 
-  // Danh mục được lấy động từ cấu hình Admin (DB) qua documentTypes
+  // Danh mục chi phí được phép giảm trừ thuế TNCN
   const categoryOptions = useMemo(() => {
-    // Đếm số lượng hóa đơn theo docTypeCode trong năm hiện tại
     const counts: Record<string, number> = {};
     allCurrentExpenses.forEach((doc) => {
-      const code = (doc.docTypeCode || 'OTHER').toUpperCase();
-      counts[code] = (counts[code] || 0) + 1;
+      const code = (doc.docTypeCode || '').toUpperCase();
+      if (code) {
+        counts[code] = (counts[code] || 0) + 1;
+      }
     });
 
-    const options = (documentTypes || []).map((t) => ({
-      code: t.code,
-      name: t.name,
-      description: t.description || '',
-      icon: getDocumentTypeIcon(t.code, t.name),
-      isTaxEligible: t.isTaxEligible,
-      categoryGroup: t.categoryGroup,
-      count: counts[t.code.toUpperCase()] || 0,
-    }));
-
-    // Kiểm tra xem có chứng từ nào chưa nằm trong danh mục admin đã cấu hình
-    const registeredCodes = new Set(options.map((o) => o.code.toUpperCase()));
-    const unclassifiedCount = allCurrentExpenses.filter(
-      (d) => !d.docTypeCode || !registeredCodes.has(d.docTypeCode.toUpperCase())
-    ).length;
-
-    if (unclassifiedCount > 0) {
-      options.push({
-        code: 'OTHER',
-        name: 'Khác / Chưa phân loại',
-        description: 'Hóa đơn chưa khớp danh mục chuẩn',
-        icon: 'folder-outline',
-        isTaxEligible: false,
-        categoryGroup: undefined,
-        count: unclassifiedCount,
-      });
-    }
-
-    return options;
+    return (documentTypes || [])
+      .filter((t) => t.isTaxEligible)
+      .map((t) => ({
+        code: t.code,
+        name: t.name,
+        description: t.description || '',
+        icon: getDocumentTypeIcon(t.code, t.name),
+        isTaxEligible: true,
+        categoryGroup: t.categoryGroup,
+        count: counts[t.code.toUpperCase()] || 0,
+      }));
   }, [documentTypes, allCurrentExpenses]);
 
   // Lọc danh mục trong modal chọn theo tìm kiếm
@@ -573,14 +556,6 @@ export const ExpenseListScreen: React.FC = () => {
                   <Text style={[styles.kpiSmallVal, { color: '#D97706' }]}>{metrics.pendingDocs}</Text>
                   <Text style={styles.kpiSmallLabel}>Chờ soát</Text>
                 </View>
-                <View style={[styles.kpiSmall, { backgroundColor: '#F0F9FF' }]}>
-                  <Text style={[styles.kpiSmallVal, { color: '#0284C7' }]}>{metrics.processingDocs}</Text>
-                  <Text style={styles.kpiSmallLabel}>Đang xử lý</Text>
-                </View>
-                <View style={[styles.kpiSmall, { backgroundColor: '#FEF2F2' }]}>
-                  <Text style={[styles.kpiSmallVal, { color: '#DC2626' }]}>{metrics.failedDocs}</Text>
-                  <Text style={styles.kpiSmallLabel}>Cần xem lại</Text>
-                </View>
               </View>
             </View>
 
@@ -679,7 +654,7 @@ export const ExpenseListScreen: React.FC = () => {
                         />
                       </View>
                       <View style={styles.dropdownTextWrap}>
-                        <Text style={styles.dropdownLabel}>Danh mục (DB)</Text>
+                        <Text style={styles.dropdownLabel}>Danh mục</Text>
                         <Text
                           style={[styles.dropdownValue, selectedCategory !== 'ALL' && styles.dropdownValueActive]}
                           numberOfLines={1}
@@ -703,8 +678,6 @@ export const ExpenseListScreen: React.FC = () => {
                       { key: 'ALL', label: 'Tất cả', count: allCurrentExpenses.length },
                       { key: 'EXTRACTED', label: 'Chờ soát xét', count: metrics.pendingDocs },
                       { key: 'CONFIRMED', label: 'Đã duyệt', count: metrics.confirmedDocs },
-                      { key: 'UPLOADED', label: 'Đang xử lý', count: metrics.processingDocs },
-                      { key: 'FAILED', label: 'Cần xem lại', count: metrics.failedDocs },
                     ] as { key: StatusFilter; label: string; count: number }[]).map((pill) => (
                       <TouchableOpacity
                         key={pill.key}
@@ -1027,7 +1000,6 @@ export const ExpenseListScreen: React.FC = () => {
             <View style={styles.pickerHeader}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.pickerTitle}>Lọc theo danh mục</Text>
-                <Text style={styles.pickerSubtitle}>Cấu hình danh mục chứng từ từ hệ thống quản trị (DB)</Text>
               </View>
               <TouchableOpacity
                 onPress={() => setShowCategoryDropdown(false)}
@@ -1110,16 +1082,11 @@ export const ExpenseListScreen: React.FC = () => {
                         <Text style={[styles.pickerCategoryName, isSelected && styles.pickerCategoryNameActive]} numberOfLines={1}>
                           {cat.name}
                         </Text>
-                        <View style={styles.categorySubRow}>
+                        {cat.description ? (
                           <Text style={styles.pickerCategorySub} numberOfLines={1}>
-                            {cat.code}
+                            {cat.description}
                           </Text>
-                          {cat.isTaxEligible && (
-                            <View style={styles.taxEligiblePill}>
-                              <Text style={styles.taxEligiblePillText}>Giảm trừ thuế</Text>
-                            </View>
-                          )}
-                        </View>
+                        ) : null}
                       </View>
                     </View>
                     <View style={[styles.pickerCountBadge, isSelected && styles.pickerCountBadgeActive]}>
@@ -1135,9 +1102,7 @@ export const ExpenseListScreen: React.FC = () => {
             <View style={styles.pickerFooter}>
               <Ionicons name="information-circle-outline" size={13} color="#94A3B8" />
               <Text style={styles.pickerFooterText}>
-                {isDocumentTypesLoading
-                  ? 'Đang đồng bộ danh mục từ cấu hình admin...'
-                  : `${categoryOptions.length} danh mục khả dụng từ hệ thống`}
+                {`${filteredCategoryOptions.length} danh mục giảm trừ thuế khả dụng`}
               </Text>
             </View>
           </TouchableOpacity>

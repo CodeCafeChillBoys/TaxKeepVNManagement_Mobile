@@ -43,38 +43,12 @@ export const ExpenseUploadScreen: React.FC = () => {
     fetchDocumentTypes();
   }, []);
 
-  const categoryOptions = useMemo(() => {
-    const autoOption = {
-      code: 'AUTO',
-      name: 'Tự động phân loại (AI)',
-      description: 'Hệ thống tự động đọc và phân loại theo nội dung chứng từ',
-      icon: 'sparkles',
-      badge: 'Khuyên dùng',
-      badgeVariant: 'teal' as const,
-      isTaxEligible: true,
-    };
-
-    const dynamicOptions = (documentTypes || [])
-      .filter((t) => t.isTaxEligible)
-      .map((t) => ({
-        code: t.code,
-        name: t.name,
-        description: t.description || '',
-        icon: getDocumentTypeIcon(t.code, t.name),
-        badge: 'Được giảm trừ thuế',
-        badgeVariant: 'teal' as const,
-        isTaxEligible: true,
-      }));
-
-    return [autoOption, ...dynamicOptions];
-  }, [documentTypes]);
-
   const ineligibleCategories = useMemo(() => {
     return (documentTypes || []).filter((t) => !t.isTaxEligible);
   }, [documentTypes]);
 
   const [currentStep, setCurrentStep] = useState<UploadStep>(1);
-  const [selectedCategory, setSelectedCategory] = useState<string>('AUTO');
+  const selectedCategory = 'AUTO';
   const [showIneligibleModal, setShowIneligibleModal] = useState<boolean>(false);
   const [selectedFile, setSelectedFile] = useState<{
     uri: string;
@@ -287,7 +261,7 @@ export const ExpenseUploadScreen: React.FC = () => {
     setProcessing(true);
     setCurrentStep(3);
     setProcessingProgress(10);
-    setProcessingStage('Đang chuẩn bị kết nối hồ sơ quyết toán...');
+    setProcessingStage('Đang kết nối hồ sơ quyết toán...');
 
     try {
       let activePeriodId = periodId;
@@ -307,26 +281,25 @@ export const ExpenseUploadScreen: React.FC = () => {
         activePeriodId = period.periodId;
       }
 
-      setProcessingStage('Đang tải tệp lên hệ thống lưu trữ...');
+      setProcessingStage('Đang tải tệp chứng từ...');
       setProcessingProgress(30);
 
       const uploadResult = await expenseApi.uploadDocument(
         activePeriodId!,
-        selectedFile,
-        selectedCategory !== 'AUTO' ? selectedCategory : undefined
+        selectedFile
       );
 
       if (!uploadResult?.documents || uploadResult.documents.length === 0) {
-        throw new Error('Máy chủ không phản hồi thông tin chứng từ tải lên.');
+        throw new Error('Hệ thống không nhận được phản hồi về chứng từ tải lên.');
       }
 
       const uploadedDoc = uploadResult.documents[0];
       const docId = uploadedDoc.id;
 
-      setProcessingStage('Hệ thống đang phân loại danh mục giảm trừ...');
+      setProcessingStage('Đang phân loại chi phí giảm trừ...');
       setProcessingProgress(60);
 
-      // Polling đợi hệ thống đọc thông tin (tăng lên 42 lần ~ 63s để đảm bảo nhận diện trực tiếp, hạn chế xử lý ngầm)
+      // Polling đợi hệ thống đọc thông tin
       let extractedDoc: any = null;
       const maxAttempts = 42;
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -353,14 +326,14 @@ export const ExpenseUploadScreen: React.FC = () => {
           const aiErrorMessage = isYearMismatch
             ? `Hóa đơn phát hành năm ${invoiceYear || 'không xác định'}, không khớp với kỳ tính thuế năm ${targetYear}.`
             : isDocTypeNonEligible
-              ? (firstValidationMsg || `Loại chứng từ '${matchedDocType?.name || docDetail.docTypeCode}' không thuộc diện được giảm trừ thuế TNCN theo quy định.`)
+              ? (firstValidationMsg || 'Hóa đơn này không thuộc diện được giảm trừ thuế TNCN theo quy định.')
               : docDetail.docTypeCode === 'UNSUPPORTED'
-                ? 'Hóa đơn tiêu dùng/bán lẻ không thuộc danh mục được giảm trừ thuế TNCN theo quy định.'
+                ? 'Hóa đơn tiêu dùng, bán lẻ không thuộc danh mục được giảm trừ thuế TNCN.'
               : docDetail.isIdentityValid === false
-                ? 'Thông tin người mua trên hóa đơn không khớp với Người nộp thuế hoặc Người phụ thuộc trong hồ sơ.'
+                ? 'Thông tin người mua không khớp với người nộp thuế hoặc người phụ thuộc trong hồ sơ.'
               : docDetail.status === 'FAILED' && !docDetail.docTypeCode
-                ? 'AI nhận diện loại chứng từ chưa được Admin cho phép kê khai giảm trừ thuế.'
-              : firstValidationMsg || 'AI không thể xác nhận tính hợp lệ của chứng từ.';
+                ? 'Hóa đơn chưa đủ điều kiện kê khai giảm trừ thuế theo quy định.'
+              : firstValidationMsg || 'Không thể xác thực tính hợp lệ của chứng từ.';
           const hasAiValidationError =
             isYearMismatch ||
             docDetail.isIdentityValid === false ||
@@ -372,18 +345,18 @@ export const ExpenseUploadScreen: React.FC = () => {
             try {
               await expenseApi.deleteDocument(activePeriodId!, docId);
             } catch {
-              // Dọn document lỗi là best-effort; vẫn bắt người dùng nhập/upload lại.
+              // Dọn document lỗi là best-effort
             }
             setProcessing(false);
             setSelectedFile(null);
             setCurrentStep(1);
             setUploadError({
-              title: isYearMismatch ? 'Sai năm tính thuế' : 'Chứng từ không hợp lệ',
-              message: `${aiErrorMessage} Vui lòng nhập lại và upload chứng từ khác.`,
+              title: isYearMismatch ? 'Sai kỳ tính thuế' : 'Chứng từ không hợp lệ',
+              message: aiErrorMessage,
             });
             toast.error(
-              `${aiErrorMessage} Vui lòng nhập lại và upload chứng từ khác.`,
-              isYearMismatch ? 'Sai năm tính thuế' : 'Chứng từ không hợp lệ'
+              aiErrorMessage,
+              isYearMismatch ? 'Sai kỳ tính thuế' : 'Chứng từ không hợp lệ'
             );
             return;
           }
@@ -396,26 +369,25 @@ export const ExpenseUploadScreen: React.FC = () => {
             try {
               await expenseApi.deleteDocument(activePeriodId!, docId);
             } catch {
-              // Dọn document lỗi là best-effort; vẫn bắt người dùng upload lại.
+              // Dọn document lỗi là best-effort
             }
             setProcessing(false);
             setSelectedFile(null);
             setCurrentStep(1);
-            const message = `${aiErrorMessage} Vui lòng nhập lại và upload chứng từ khác.`;
             setUploadError({
-              title: isYearMismatch ? 'Sai năm tính thuế' : 'AI từ chối chứng từ',
-              message,
+              title: isYearMismatch ? 'Sai kỳ tính thuế' : 'Chứng từ không hợp lệ',
+              message: aiErrorMessage,
             });
             toast.error(
-              message,
-              isYearMismatch ? 'Sai năm tính thuế' : 'AI từ chối chứng từ'
+              aiErrorMessage,
+              isYearMismatch ? 'Sai kỳ tính thuế' : 'Chứng từ không hợp lệ'
             );
             return;
           }
         } catch (_) {}
         const pct = 60 + Math.round((attempt / maxAttempts) * 35);
         setProcessingProgress(pct);
-        setProcessingStage(`Đang nhận diện nội dung chứng từ... (lần ${attempt}/${maxAttempts})`);
+        setProcessingStage('Đang kiểm tra và trích xuất dữ liệu hóa đơn...');
       }
 
       setProcessingProgress(100);
@@ -424,11 +396,7 @@ export const ExpenseUploadScreen: React.FC = () => {
       if (extractedDoc && extractedDoc.status === 'EXTRACTED') {
         const ocrResult = mapDocumentReviewToOcrResult(extractedDoc, targetYear, documentTypes);
         ocrResult.originalFileUri = selectedFile?.uri;
-        if (selectedCategory !== 'AUTO') {
-          ocrResult.docTypeCode = selectedCategory;
-          const matchedDocType = documentTypes.find((t) => t.code === selectedCategory);
-          if (matchedDocType) ocrResult.docTypeName = matchedDocType.name;
-        } else if (!ocrResult.docTypeCode || ocrResult.docTypeCode === 'UNSUPPORTED') {
+        if (!ocrResult.docTypeCode || ocrResult.docTypeCode === 'UNSUPPORTED') {
           const defaultType = documentTypes?.find((t) => t.isTaxEligible) || documentTypes?.[0];
           if (defaultType) {
             ocrResult.docTypeCode = defaultType.code;
@@ -436,21 +404,21 @@ export const ExpenseUploadScreen: React.FC = () => {
           }
         }
 
-        // Chỉ thêm vào danh sách xét duyệt khi nhận diện thành công
+        // Thêm vào danh sách xét duyệt khi hoàn tất
         addOrUpdateDocument(targetYear, ocrResult);
-        toast.success('Hóa đơn đã được đọc thông tin thành công.', 'Nhận diện hoàn tất');
+        toast.success('Hóa đơn đã được đối soát thành công.', 'Hoàn tất');
         navigation.navigate('ExpenseReview', { ocrResult, periodId: activePeriodId });
       } else {
-        // Hết thời gian chờ mà AI vẫn chưa kịp trả kết quả
+        // Hết thời gian chờ
         setCurrentStep(1);
         setSelectedFile(null);
         setUploadError({
-          title: 'Quá thời gian nhận diện',
-          message: 'Thời gian AI xử lý tài liệu vượt quá 60 giây. Vui lòng kiểm tra lại chất lượng ảnh và thử tải lại.',
+          title: 'Chưa hoàn tất nhận diện',
+          message: 'Thời gian xử lý kéo dài hơn dự kiến. Quý khách vui lòng kiểm tra lại chất lượng ảnh và thử lại.',
         });
         toast.error(
-          'Thời gian AI xử lý tài liệu vượt quá 60 giây. Vui lòng thử tải lại hoặc chụp rõ nét hơn.',
-          'Quá thời gian nhận diện'
+          'Thời gian xử lý kéo dài hơn dự kiến. Quý khách vui lòng thử tải lại hoặc chụp rõ nét hơn.',
+          'Chưa hoàn tất nhận diện'
         );
       }
     } catch (err: any) {
@@ -459,14 +427,13 @@ export const ExpenseUploadScreen: React.FC = () => {
       const parsed = parseBackendError(err);
       setUploadError({ title: parsed.title, message: parsed.message });
       toast.error(parsed.message, parsed.title);
-      // Tuyệt đối không thêm vào danh sách chờ xét duyệt
     }
   };
 
   const STEPS = [
     { num: 1, label: 'Chọn chứng từ' },
-    { num: 2, label: 'Phân loại' },
-    { num: 3, label: 'Đang xử lý' },
+    { num: 2, label: 'Xác nhận' },
+    { num: 3, label: 'Xử lý' },
   ];
 
   return (
@@ -535,7 +502,7 @@ export const ExpenseUploadScreen: React.FC = () => {
             <View style={{ flex: 1, marginLeft: 10 }}>
               <Text style={styles.uploadErrorTitle}>{uploadError.title}</Text>
               <Text style={styles.uploadErrorMessage}>{uploadError.message}</Text>
-              <Text style={styles.uploadErrorHint}>Vui lòng chọn lại hóa đơn và upload lại.</Text>
+              <Text style={styles.uploadErrorHint}>Quý khách vui lòng kiểm tra và tải lại chứng từ.</Text>
             </View>
             <TouchableOpacity
               onPress={() => setUploadError(null)}
@@ -647,87 +614,27 @@ export const ExpenseUploadScreen: React.FC = () => {
               )}
             </View>
 
-            {/* BƯỚC 2: PHÂN LOẠI CHỨNG TỪ (hiện khi đã chọn file) */}
+            {/* BƯỚC 2: PHÂN LOẠI & XÁC NHẬN CHỨNG TỪ (hiện khi đã chọn file) */}
             {selectedFile && !isPeriodSubmitted && (
-              <View style={styles.categoryCard}>
-                <View style={styles.categoryHeader}>
-                  <View style={styles.categoryHeaderLeft}>
-                    <Ionicons name="albums-outline" size={16} color="#8B1E1E" />
-                    <Text style={styles.categoryTitle}>Danh mục chi phí giảm trừ</Text>
+              <>
+                {/* PHƯƠNG THỨC PHÂN LOẠI - Thẻ đơn phẳng, không lồng thẻ */}
+                <View style={styles.methodCard}>
+                  <View style={styles.methodHeader}>
+                    <View style={styles.methodTitleRow}>
+                      <View style={styles.methodIconWrap}>
+                        <Ionicons name="sparkles" size={15} color="#8B1E1E" />
+                      </View>
+                      <Text style={styles.methodTitle}>Tự động phân loại</Text>
+                      <Badge variant="teal" style={styles.methodBadge}>Mặc định</Badge>
+                    </View>
+                    <Ionicons name="radio-button-on" size={18} color="#8B1E1E" />
                   </View>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                    {isDocumentTypesLoading && <ActivityIndicator size="small" color="#8B1E1E" />}
-                    {ineligibleCategories.length > 0 && (
-                      <TouchableOpacity
-                        style={styles.ineligibleInfoBtn}
-                        onPress={() => setShowIneligibleModal(true)}
-                        activeOpacity={0.7}
-                      >
-                        <Ionicons name="alert-circle" size={14} color="#D97706" />
-                        <Text style={styles.ineligibleInfoBtnText}>Khoản không giảm trừ (!)</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                </View>
-                <Text style={styles.categorySubtitle}>
-                  Chỉ các danh mục đủ điều kiện giảm trừ thuế TNCN được đề xuất dưới đây.
-                </Text>
-
-                <View style={styles.categoryGrid}>
-                  {categoryOptions.map((cat) => {
-                    const isSelected = selectedCategory === cat.code;
-                    return (
-                      <TouchableOpacity
-                        key={cat.code}
-                        style={[styles.categoryItem, isSelected && styles.categoryItemSelected]}
-                        onPress={() => setSelectedCategory(cat.code)}
-                        activeOpacity={0.75}
-                      >
-                        <View
-                          style={[
-                            styles.categoryIconWrap,
-                            isSelected && { backgroundColor: '#8B1E1E' },
-                          ]}
-                        >
-                          <Ionicons
-                            name={cat.icon as any}
-                            size={16}
-                            color={isSelected ? '#fff' : '#8B1E1E'}
-                          />
-                        </View>
-                        <View style={{ flex: 1, marginLeft: 8 }}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
-                            <Text
-                              style={[
-                                styles.categoryName,
-                                isSelected && styles.categoryNameSelected,
-                              ]}
-                              numberOfLines={1}
-                            >
-                              {cat.name}
-                            </Text>
-                            {cat.badge && (
-                              <Badge variant={cat.badgeVariant} style={{ marginTop: 1 }}>
-                                {cat.badge}
-                              </Badge>
-                            )}
-                          </View>
-                          {cat.description ? (
-                            <Text style={styles.categoryDesc} numberOfLines={2}>
-                              {cat.description}
-                            </Text>
-                          ) : null}
-                        </View>
-                        <Ionicons
-                          name={isSelected ? 'radio-button-on' : 'radio-button-off'}
-                          size={18}
-                          color={isSelected ? '#8B1E1E' : '#CBD5E1'}
-                        />
-                      </TouchableOpacity>
-                    );
-                  })}
+                  <Text style={styles.methodDesc}>
+                    Hệ thống tự động nhận diện nội dung chứng từ và áp dụng danh mục giảm trừ thuế hợp lệ.
+                  </Text>
                 </View>
 
+                {/* THÔNG TIN KHOẢN KHÔNG GIẢM TRỪ */}
                 {ineligibleCategories.length > 0 && (
                   <TouchableOpacity
                     style={styles.ineligibleNoticeBanner}
@@ -736,24 +643,22 @@ export const ExpenseUploadScreen: React.FC = () => {
                   >
                     <Ionicons name="information-circle-outline" size={16} color="#B45309" />
                     <Text style={styles.ineligibleNoticeBannerText}>
-                      Hóa đơn mua sắm, ăn uống, dịch vụ sinh hoạt... không thuộc diện giảm trừ thuế TNCN.{' '}
-                      <Text style={styles.ineligibleNoticeLink}>Xem danh mục không giảm trừ (!)</Text>
+                      Hóa đơn tiêu dùng, ăn uống, mua sắm cá nhân... không thuộc diện giảm trừ thuế TNCN.{' '}
+                      <Text style={styles.ineligibleNoticeLink}>Xem danh mục không giảm trừ</Text>
                     </Text>
                   </TouchableOpacity>
                 )}
-              </View>
-            )}
 
-            {/* NÚT GỬI */}
-            {selectedFile && !isPeriodSubmitted && (
-              <TouchableOpacity
-                style={[styles.submitBtn, !selectedFile && styles.submitBtnDisabled]}
-                onPress={handleSubmit}
-                activeOpacity={0.85}
-              >
-                <Ionicons name="sparkles" size={18} color="#fff" />
-                <Text style={styles.submitBtnText}>Đọc thông tin & Lưu chứng từ</Text>
-              </TouchableOpacity>
+                {/* NÚT GỬI */}
+                <TouchableOpacity
+                  style={[styles.submitBtn, !selectedFile && styles.submitBtnDisabled]}
+                  onPress={handleSubmit}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="cloud-upload-outline" size={18} color="#fff" />
+                  <Text style={styles.submitBtnText}>Tiến hành xử lý</Text>
+                </TouchableOpacity>
+              </>
             )}
           </>
         )}
@@ -775,9 +680,9 @@ export const ExpenseUploadScreen: React.FC = () => {
 
             <View style={styles.processingSteps}>
               {[
-                { pct: 30, label: 'Tải tệp lên hệ thống' },
-                { pct: 60, label: 'Phân loại danh mục giảm trừ' },
-                { pct: 90, label: 'Nhận diện nội dung chứng từ' },
+                { pct: 30, label: 'Tải tệp chứng từ' },
+                { pct: 60, label: 'Phân loại chi phí' },
+                { pct: 90, label: 'Đối soát thông tin' },
               ].map((s) => (
                 <View key={s.pct} style={styles.processingStepItem}>
                   <Ionicons
@@ -828,7 +733,7 @@ export const ExpenseUploadScreen: React.FC = () => {
             <View style={styles.modalNoticeBox}>
               <Ionicons name="information-circle" size={16} color="#B45309" style={{ marginTop: 1 }} />
               <Text style={styles.modalNoticeText}>
-                Theo Luật Thuế TNCN hiện hành, thuế TNCN chỉ áp dụng giảm trừ đối với các khoản chi y tế, giáo dục và đóng góp từ thiện - nhân đạo. Các hóa đơn tiêu dùng dưới đây <Text style={{ fontWeight: '700' }}>KHÔNG thuộc diện được giảm trừ thuế</Text>:
+                Theo Luật Thuế TNCN, chỉ các khoản chi y tế, giáo dục và đóng góp từ thiện - nhân đạo mới đủ điều kiện khấu trừ thuế. Các hóa đơn sau không thuộc diện giảm trừ:
               </Text>
             </View>
 
@@ -881,7 +786,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 24,
-    paddingVertical: 14,
+    paddingVertical: 12,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#F1F5F9',
@@ -893,9 +798,9 @@ const styles = StyleSheet.create({
   stepCircle: {
     width: 28,
     height: 28,
-    borderRadius: 14,
+    borderRadius: 6,
     backgroundColor: '#F1F5F9',
-    borderWidth: 2,
+    borderWidth: 1.5,
     borderColor: '#E2E8F0',
     alignItems: 'center',
     justifyContent: 'center',
@@ -936,20 +841,20 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: 16,
     paddingTop: 12,
-    paddingBottom: 40,
+    paddingBottom: 32,
   },
   // Year banner
   yearBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 8,
     backgroundColor: '#FFF8F8',
     borderWidth: 1,
     borderColor: '#FECACA',
-    borderRadius: 8,
+    borderRadius: 6,
     paddingHorizontal: 12,
-    paddingVertical: 7,
-    marginBottom: 14,
+    paddingVertical: 8,
+    marginBottom: 12,
   },
   yearBannerText: {
     fontSize: 12,
@@ -962,27 +867,28 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFF1F2',
     borderWidth: 1,
     borderColor: '#FDA4AF',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    marginBottom: 14,
+    borderRadius: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 12,
+    gap: 8,
   },
   uploadErrorTitle: {
     fontSize: 13,
     fontWeight: '700',
     color: '#9F1239',
-    marginBottom: 3,
+    marginBottom: 2,
   },
   uploadErrorMessage: {
     fontSize: 12,
     color: '#881337',
-    lineHeight: 17,
+    lineHeight: 16,
   },
   uploadErrorHint: {
     fontSize: 11,
     color: '#BE123C',
     fontWeight: '600',
-    marginTop: 5,
+    marginTop: 4,
   },
   // Locked banner
   lockedBanner: {
@@ -991,30 +897,31 @@ const styles = StyleSheet.create({
     backgroundColor: '#FEF2F2',
     borderWidth: 1,
     borderColor: '#FECACA',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    marginBottom: 14,
+    borderRadius: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 12,
+    gap: 8,
   },
   lockedBannerTitle: {
     fontSize: 13,
     fontWeight: '700',
     color: '#991B1B',
-    marginBottom: 3,
+    marginBottom: 2,
   },
   lockedBannerDesc: {
     fontSize: 12,
     color: '#7F1D1D',
-    lineHeight: 17,
+    lineHeight: 16,
   },
   // Upload card
   uploadCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    borderRadius: 6,
     borderWidth: 1,
     borderColor: '#E2E8F0',
     overflow: 'hidden',
-    marginBottom: 14,
+    marginBottom: 12,
   },
   previewContainer: {
     alignItems: 'center',
@@ -1026,7 +933,7 @@ const styles = StyleSheet.create({
   },
   pdfPreview: {
     width: '100%',
-    paddingVertical: 40,
+    paddingVertical: 36,
     alignItems: 'center',
     gap: 8,
     backgroundColor: '#F8FAFC',
@@ -1054,7 +961,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 6,
     paddingVertical: 8,
-    borderRadius: 8,
+    paddingHorizontal: 12,
+    borderRadius: 6,
     backgroundColor: '#F8FAFC',
     borderWidth: 1,
     borderColor: '#E2E8F0',
@@ -1066,15 +974,17 @@ const styles = StyleSheet.create({
   },
   uploadPlaceholder: {
     alignItems: 'center',
-    paddingVertical: 28,
-    paddingHorizontal: 20,
+    paddingVertical: 24,
+    paddingHorizontal: 16,
     gap: 8,
   },
   uploadIconRing: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
+    width: 56,
+    height: 56,
+    borderRadius: 6,
     backgroundColor: '#FFEBEE',
+    borderWidth: 1,
+    borderColor: '#FECACA',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 4,
@@ -1088,11 +998,13 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#94A3B8',
     textAlign: 'center',
+    lineHeight: 16,
   },
   uploadBtnRow: {
     flexDirection: 'row',
-    gap: 16,
-    marginTop: 16,
+    gap: 12,
+    marginTop: 12,
+    width: '100%',
   },
   uploadBtnItem: {
     alignItems: 'center',
@@ -1100,9 +1012,9 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   uploadBtnIcon: {
-    width: 52,
-    height: 52,
-    borderRadius: 16,
+    width: 48,
+    height: 48,
+    borderRadius: 6,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -1114,11 +1026,13 @@ const styles = StyleSheet.create({
   tipsRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 5,
+    gap: 6,
     backgroundColor: '#FFFBEB',
-    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    borderRadius: 6,
     paddingHorizontal: 10,
-    paddingVertical: 7,
+    paddingVertical: 8,
     marginTop: 8,
     width: '100%',
   },
@@ -1128,92 +1042,52 @@ const styles = StyleSheet.create({
     color: '#92400E',
     lineHeight: 15,
   },
-  // Category card
-  categoryCard: {
+  // Method card (phẳng, đơn, không lồng)
+  methodCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    borderRadius: 6,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
-    padding: 16,
-    marginBottom: 14,
+    borderColor: '#8B1E1E',
+    padding: 14,
+    marginBottom: 12,
   },
-  categoryHeader: {
+  methodHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 4,
+    marginBottom: 6,
   },
-  categoryHeaderLeft: {
+  methodTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-  },
-  categoryTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#0F172A',
-  },
-  categorySubtitle: {
-    fontSize: 11,
-    color: '#94A3B8',
-    marginBottom: 14,
-  },
-  categoryGrid: {
     gap: 8,
   },
-  categoryItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 10,
-    borderWidth: 1.5,
-    borderColor: '#E2E8F0',
-    backgroundColor: '#F8FAFC',
-  },
-  categoryItemSelected: {
-    borderColor: '#8B1E1E',
+  methodIconWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: 6,
     backgroundColor: '#FFF8F8',
-  },
-  categoryIconWrap: {
-    width: 34,
-    height: 34,
-    borderRadius: 8,
-    backgroundColor: '#FFEBEE',
+    borderWidth: 1,
+    borderColor: '#FECACA',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  categoryName: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#334155',
-  },
-  categoryNameSelected: {
-    color: '#8B1E1E',
+  methodTitle: {
+    fontSize: 13.5,
     fontWeight: '700',
+    color: '#0F172A',
   },
-  categoryDesc: {
-    fontSize: 11,
-    color: '#64748B',
-    marginTop: 2,
-    lineHeight: 15,
-  },
-  ineligibleInfoBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: '#FEF3C7',
-    paddingVertical: 4,
-    paddingHorizontal: 8,
+  methodBadge: {
     borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#FDE68A',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
   },
-  ineligibleInfoBtnText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#B45309',
+  methodDesc: {
+    fontSize: 12,
+    color: '#64748B',
+    lineHeight: 16,
   },
+  // Ineligible notice banner (Độc lập, không lồng)
   ineligibleNoticeBanner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1221,13 +1095,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFBEB',
     borderWidth: 1,
     borderColor: '#FDE68A',
-    borderRadius: 8,
-    padding: 10,
-    marginTop: 10,
+    borderRadius: 6,
+    padding: 12,
+    marginBottom: 12,
   },
   ineligibleNoticeBannerText: {
     flex: 1,
-    fontSize: 11.5,
+    fontSize: 12,
     color: '#92400E',
     lineHeight: 16,
   },
@@ -1236,24 +1110,105 @@ const styles = StyleSheet.create({
     color: '#B45309',
     textDecorationLine: 'underline',
   },
+  // Submit button (Phẳng, không shadow)
+  submitBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#8B1E1E',
+    paddingVertical: 14,
+    borderRadius: 6,
+    marginBottom: 12,
+  },
+  submitBtnDisabled: {
+    backgroundColor: '#CBD5E1',
+  },
+  submitBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  // Processing card
+  processingCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 6,
+    padding: 20,
+    alignItems: 'center',
+    gap: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginBottom: 12,
+  },
+  processingIconCircle: {
+    width: 56,
+    height: 56,
+    borderRadius: 6,
+    backgroundColor: '#FFEBEE',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  processingTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#0F172A',
+    textAlign: 'center',
+  },
+  processingStage: {
+    fontSize: 12,
+    color: '#64748B',
+    textAlign: 'center',
+  },
+  progressTrack: {
+    width: '100%',
+    height: 6,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    backgroundColor: '#8B1E1E',
+    borderRadius: 3,
+  },
+  progressPct: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#8B1E1E',
+  },
+  processingSteps: {
+    width: '100%',
+    gap: 8,
+    marginTop: 4,
+  },
+  processingStepItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  processingStepText: {
+    fontSize: 12,
+    color: '#94A3B8',
+  },
+  // Modal (Phẳng, bo góc 6, không shadow)
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    backgroundColor: 'rgba(15, 23, 42, 0.5)',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
+    padding: 16,
   },
   modalCard: {
     width: '100%',
     maxHeight: '82%',
     backgroundColor: '#FFFFFF',
-    borderRadius: 18,
-    padding: 18,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.15,
-    shadowRadius: 16,
-    elevation: 8,
+    borderRadius: 6,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
   },
   modalHeaderRow: {
     flexDirection: 'row',
@@ -1270,7 +1225,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   modalTitle: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
     color: '#0F172A',
   },
@@ -1284,7 +1239,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FEF3C7',
     borderWidth: 1,
     borderColor: '#FDE68A',
-    borderRadius: 10,
+    borderRadius: 6,
     padding: 10,
     marginVertical: 12,
   },
@@ -1295,7 +1250,7 @@ const styles = StyleSheet.create({
     lineHeight: 16,
   },
   modalScrollList: {
-    maxHeight: 340,
+    maxHeight: 320,
     marginBottom: 12,
   },
   ineligibleListItem: {
@@ -1309,7 +1264,7 @@ const styles = StyleSheet.create({
   ineligibleListIconWrap: {
     width: 32,
     height: 32,
-    borderRadius: 8,
+    borderRadius: 6,
     backgroundColor: '#F1F5F9',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1332,6 +1287,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   ineligibleBadge: {
+    borderRadius: 6,
     paddingHorizontal: 6,
     paddingVertical: 2,
   },
@@ -1343,7 +1299,7 @@ const styles = StyleSheet.create({
   },
   modalCloseBtn: {
     backgroundColor: '#8B1E1E',
-    borderRadius: 10,
+    borderRadius: 6,
     paddingVertical: 12,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1352,92 +1308,5 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     color: '#FFFFFF',
-  },
-  // Submit button
-  submitBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: '#8B1E1E',
-    paddingVertical: 16,
-    borderRadius: 12,
-    marginBottom: 14,
-    shadowColor: '#8B1E1E',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  submitBtnDisabled: {
-    backgroundColor: '#CBD5E1',
-    shadowOpacity: 0,
-    elevation: 0,
-  },
-  submitBtnText: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#FFFFFF',
-  },
-  // Processing card
-  processingCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 24,
-    alignItems: 'center',
-    gap: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-  },
-  processingIconCircle: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: '#FFEBEE',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 4,
-  },
-  processingTitle: {
-    fontSize: 17,
-    fontWeight: '800',
-    color: '#0F172A',
-    textAlign: 'center',
-  },
-  processingStage: {
-    fontSize: 13,
-    color: '#64748B',
-    textAlign: 'center',
-  },
-  progressTrack: {
-    width: '100%',
-    height: 8,
-    backgroundColor: '#F1F5F9',
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    backgroundColor: '#8B1E1E',
-    borderRadius: 4,
-  },
-  progressPct: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#8B1E1E',
-  },
-  processingSteps: {
-    width: '100%',
-    gap: 8,
-    marginTop: 4,
-  },
-  processingStepItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  processingStepText: {
-    fontSize: 12,
-    color: '#94A3B8',
   },
 });

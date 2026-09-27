@@ -13,10 +13,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { Ionicons } from '@expo/vector-icons';
 import { loginSchema, LoginFormData } from '../../utils/validation';
 import { CustomInput } from '../../components/common/CustomInput';
 import { CustomButton } from '../../components/common/CustomButton';
-import { HeaderMotif } from '../../components/common/HeaderMotif';
+import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
+import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
 import { theme } from '../../constants/theme';
 import { RootNavigationProp } from '../../navigation/types';
 import { authApi } from '../../api/authApi';
@@ -31,7 +33,6 @@ export const LoginScreen: React.FC = () => {
   const {
     control,
     handleSubmit,
-    setValue,
     formState: { errors },
   } = useForm<LoginFormData>({
     resolver: zodResolver(loginSchema),
@@ -86,8 +87,8 @@ export const LoginScreen: React.FC = () => {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <HeaderMotif title="ĐĂNG NHẬP" />
+    <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
+      <DrumPatternBackdrop variant="full" />
 
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -98,50 +99,48 @@ export const LoginScreen: React.FC = () => {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          {/* Card Container theo phong cách iPhone 17 - 12 */}
-          <View style={styles.formCard}>
-            <Text style={styles.cardHeader}>Đăng nhập tài khoản</Text>
-            <Text style={styles.cardSubtitle}>
-              Sử dụng số Căn cước công dân hoặc email đã đăng ký
-            </Text>
+          <View style={styles.langRow}>
+            <TouchableOpacity
+              style={styles.langBtn}
+              onPress={() =>
+                Alert.alert('Ngôn ngữ', 'Hiện tại ứng dụng dùng tiếng Việt.')
+              }
+              accessibilityRole="button"
+              accessibilityLabel="Chọn ngôn ngữ"
+            >
+              <Text style={styles.langText}>Tiếng Việt</Text>
+              <Ionicons name="chevron-down" size={13} color={theme.colors.textPrimary} />
+            </TouchableOpacity>
+          </View>
 
-            {/* Ô Tài khoản */}
+          <View style={styles.brandBlock}>
+            <Text style={styles.brandTitle}>TaxKeep VN</Text>
+            <Text style={styles.brandSubtitle}>Kê khai và giảm trừ gia cảnh</Text>
+            <GoldDoubleRule style={styles.brandRule} />
+          </View>
+
+          <View style={styles.formBlock}>
+            <Text style={styles.fieldLabel}>Số CCCD hoặc email</Text>
             <Controller
               control={control}
               name="account"
               render={({ field: { onChange, onBlur, value } }) => (
                 <CustomInput
-                  label="Tài khoản"
-                  required
                   placeholder="Nhập số CCCD (12 số) hoặc Email"
                   autoCapitalize="none"
+                  keyboardType="default"
                   onBlur={onBlur}
                   onChangeText={onChange}
                   value={value}
                   error={errors.account?.message}
+                  containerStyle={styles.inputGap}
+                  style={styles.fieldInput}
                 />
               )}
             />
 
-            {/* Ô Mật khẩu */}
-            <Controller
-              control={control}
-              name="password"
-              render={({ field: { onChange, onBlur, value } }) => (
-                <CustomInput
-                  label="Mật khẩu"
-                  required
-                  isPassword
-                  placeholder="Nhập mật khẩu"
-                  onBlur={onBlur}
-                  onChangeText={onChange}
-                  value={value}
-                  error={errors.password?.message}
-                />
-              )}
-            />
-
-            <View style={styles.forgotPasswordRow}>
+            <View style={styles.passwordLabelRow}>
+              <Text style={styles.fieldLabel}>Mật khẩu</Text>
               <TouchableOpacity
                 onPress={() =>
                   Alert.alert(
@@ -150,23 +149,38 @@ export const LoginScreen: React.FC = () => {
                   )
                 }
               >
-                <Text style={styles.forgotPasswordText}>Quên mật khẩu?</Text>
+                <Text style={styles.forgotText}>Quên mật khẩu?</Text>
               </TouchableOpacity>
             </View>
+            <Controller
+              control={control}
+              name="password"
+              render={({ field: { onChange, onBlur, value } }) => (
+                <CustomInput
+                  isPassword
+                  placeholder="Nhập mật khẩu"
+                  onBlur={onBlur}
+                  onChangeText={onChange}
+                  value={value}
+                  error={errors.password?.message}
+                  containerStyle={styles.inputGap}
+                  style={styles.fieldInput}
+                />
+              )}
+            />
 
-            {/* Nút Đăng nhập */}
             <CustomButton
               title="Đăng nhập"
               onPress={handleSubmit(onSubmit)}
               loading={loading}
               style={styles.loginBtn}
+              textStyle={styles.loginBtnText}
             />
 
-            {/* Chuyển sang màn Đăng ký */}
             <View style={styles.switchAuthRow}>
               <Text style={styles.switchAuthText}>Chưa có tài khoản? </Text>
               <TouchableOpacity onPress={() => navigation.navigate('Register')}>
-                <Text style={styles.switchAuthLink}>Đăng ký ngay</Text>
+                <Text style={styles.switchAuthLink}>Đăng ký</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -179,60 +193,95 @@ export const LoginScreen: React.FC = () => {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: theme.colors.background,
+    backgroundColor: '#FFFFFF',
   },
   keyboardView: {
     flex: 1,
   },
   scrollContent: {
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.lg,
+    flexGrow: 1,
+    paddingBottom: 40,
   },
-  formCard: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.borderRadius.lg,
-    padding: theme.spacing.lg,
-    ...theme.shadows.card,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  cardHeader: {
-    ...theme.typography.titleLarge,
-    color: theme.colors.primary,
-    marginBottom: 6,
-  },
-  cardSubtitle: {
-    ...theme.typography.bodyMedium,
-    color: theme.colors.textSecondary,
-    marginBottom: theme.spacing.lg,
-  },
-  forgotPasswordRow: {
+  langRow: {
     alignItems: 'flex-end',
-    marginBottom: theme.spacing.lg,
-    marginTop: -8,
+    paddingHorizontal: 20,
+    paddingTop: 6,
   },
-  forgotPasswordText: {
-    ...theme.typography.caption,
+  langBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  langText: {
+    ...theme.typography.fieldLabel,
+    color: theme.colors.textPrimary,
+  },
+  brandBlock: {
+    alignItems: 'center',
+    marginTop: 84,
+    gap: 8,
+    paddingHorizontal: 20,
+  },
+  brandTitle: {
+    ...theme.typography.appTitle,
+    color: theme.colors.primaryDark,
+  },
+  brandSubtitle: {
+    ...theme.typography.body,
+    fontSize: 13,
+    lineHeight: 20,
+    color: '#5A4A22',
+  },
+  brandRule: {
+    width: 56,
+    marginTop: 6,
+  },
+  formBlock: {
+    paddingHorizontal: 20,
+    paddingTop: 48,
+  },
+  fieldLabel: {
+    ...theme.typography.fieldLabel,
+    color: theme.colors.textPrimary,
+  },
+  fieldInput: {
+    ...theme.typography.inputText,
+  },
+  inputGap: {
+    marginTop: 6,
+    marginBottom: 16,
+  },
+  passwordLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  forgotText: {
+    ...theme.typography.fieldLabel,
     color: theme.colors.primary,
-    fontWeight: '600',
   },
   loginBtn: {
-    marginTop: theme.spacing.sm,
+    marginTop: 4,
+    minHeight: 52,
+    borderRadius: 10,
+  },
+  loginBtnText: {
+    ...theme.typography.buttonText,
   },
   switchAuthRow: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: theme.spacing.xl,
+    marginTop: 24,
   },
   switchAuthText: {
-    ...theme.typography.bodyMedium,
+    ...theme.typography.body,
     color: theme.colors.textSecondary,
   },
   switchAuthLink: {
-    ...theme.typography.bodyMedium,
+    ...theme.typography.buttonText,
+    fontSize: 14,
+    lineHeight: 20,
     color: theme.colors.primary,
-    fontWeight: '700',
-    textDecorationLine: 'underline',
   },
 });

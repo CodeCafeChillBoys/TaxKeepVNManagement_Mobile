@@ -31,7 +31,7 @@ interface ExpenseState {
   addYear: (year: number) => void;
   removeYear: (year: number) => void;
   syncPeriods: (periods: TaxPeriodItem[]) => Promise<void>;
-  initPeriodForYear: (year: number, userId?: string) => Promise<TaxPeriodItem>;
+  initPeriodForYear: (year: number, userId?: string) => Promise<TaxPeriodItem | null>;
   submitPeriodForYear: (year: number) => Promise<TaxPeriodItem>;
   fetchDocumentTypes: (isTaxEligible?: boolean) => Promise<TaxDocumentTypeItem[]>;
   addOrUpdateDocument: (year: number, document: ExpenseOcrResult) => Promise<void>;
@@ -234,8 +234,11 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
       }
 
       console.warn(`Lỗi khi khởi tạo TaxPeriod cho năm ${year}:`, err);
-      set({ isLoading: false });
-      throw err;
+      set({
+        isLoading: false,
+        error: `Chưa tạo được hồ sơ quyết toán năm ${year}. Kiểm tra kết nối mạng rồi thử lại.`,
+      });
+      return null;
     }
   },
 
@@ -264,8 +267,7 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
       }
       set({ isDocumentTypesLoading: false });
       return get().documentTypes;
-    } catch (err) {
-      console.warn('Lỗi khi tải danh sách loại chứng từ thuế từ API:', err);
+    } catch {
       set({ isDocumentTypesLoading: false });
       return get().documentTypes;
     }

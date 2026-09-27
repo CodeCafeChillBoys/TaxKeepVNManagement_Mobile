@@ -1,4 +1,6 @@
 import { Platform } from 'react-native';
+import { fonts } from './fonts';
+
 export const theme = {
   colors: {
     // Primary palette
@@ -66,6 +68,70 @@ export const theme = {
       fontSize: 11,
       fontWeight: '500' as const,
       lineHeight: 14,
+    },
+    /** DanhGiaUI §8 — 1px = 1dp, không scale theo chiều rộng máy. */
+    appTitle: {
+      fontFamily: fonts.serifBold,
+      fontSize: 36,
+      lineHeight: 42,
+      letterSpacing: 0,
+    },
+    amountLarge: {
+      fontFamily: fonts.serifBold,
+      fontSize: 36,
+      lineHeight: 40,
+      letterSpacing: -0.2,
+    },
+    screenTitle: {
+      fontFamily: fonts.serifBold,
+      fontSize: 26,
+      lineHeight: 32,
+    },
+    sectionTitle: {
+      fontFamily: fonts.serifBold,
+      fontSize: 18,
+      lineHeight: 24,
+    },
+    eyebrow: {
+      fontFamily: fonts.bodySemi,
+      fontSize: 12,
+      lineHeight: 16,
+      letterSpacing: 1,
+    },
+    fieldLabel: {
+      fontFamily: fonts.bodySemi,
+      fontSize: 13,
+      lineHeight: 18,
+    },
+    inputText: {
+      fontFamily: fonts.body,
+      fontSize: 15,
+      lineHeight: 20,
+    },
+    buttonText: {
+      fontFamily: fonts.bodyBold,
+      fontSize: 16,
+      lineHeight: 20,
+    },
+    body: {
+      fontFamily: fonts.body,
+      fontSize: 14,
+      lineHeight: 20,
+    },
+    helper: {
+      fontFamily: fonts.body,
+      fontSize: 12,
+      lineHeight: 16,
+    },
+    indexNumber: {
+      fontFamily: fonts.serifBold,
+      fontSize: 15,
+      lineHeight: 20,
+    },
+    tabBarLabel: {
+      fontFamily: fonts.body,
+      fontSize: 10,
+      lineHeight: 12,
     },
   },
   

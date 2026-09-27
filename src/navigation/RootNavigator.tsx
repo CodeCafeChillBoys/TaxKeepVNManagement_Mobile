@@ -14,6 +14,7 @@ import { ChangePasswordScreen } from '../screens/auth/ChangePasswordScreen';
 import { LawConditionsScreen } from '../screens/home/LawConditionsScreen';
 import { TaxRegistrationScreen } from '../screens/dependent/TaxRegistrationScreen';
 import { ProofDocumentsScreen } from '../screens/dependent/ProofDocumentsScreen';
+import { DependentSavedScreen } from '../screens/dependent/DependentSavedScreen';
 import { DependentListScreen } from '../screens/dependent/DependentListScreen';
 import { ScanIdentityScreen } from '../screens/common/ScanIdentityScreen';
 import { ExpenseListScreen } from '../screens/expense/ExpenseListScreen';
@@ -23,6 +24,10 @@ import { useAuthStore } from '../stores/useAuthStore';
 import { theme } from '../constants/theme';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
+
+const tabScreenOptions = {
+  animation: 'none' as const,
+};
 
 export const RootNavigator: React.FC = () => {
   const { isAuthenticated, isLoading, checkAuth } = useAuthStore();
@@ -58,15 +63,16 @@ export const RootNavigator: React.FC = () => {
         <Stack.Screen name="Login" component={LoginScreen} />
         <Stack.Screen name="Register" component={RegisterScreen} />
         <Stack.Screen name="VerifyPending" component={VerifyPendingScreen} />
-        <Stack.Screen name="Home" component={HomeScreen} />
-        <Stack.Screen name="Profile" component={ProfileScreen} />
+        <Stack.Screen name="Home" component={HomeScreen} options={tabScreenOptions} />
+        <Stack.Screen name="Profile" component={ProfileScreen} options={tabScreenOptions} />
         <Stack.Screen name="EditProfile" component={EditProfileScreen} />
-        <Stack.Screen name="IncomeSourceList" component={IncomeSourceListScreen} />
+        <Stack.Screen name="IncomeSourceList" component={IncomeSourceListScreen} options={tabScreenOptions} />
         <Stack.Screen name="ChangePassword" component={ChangePasswordScreen} />
         <Stack.Screen name="LawConditions" component={LawConditionsScreen} />
         <Stack.Screen name="TaxRegistration" component={TaxRegistrationScreen} />
         <Stack.Screen name="ProofDocuments" component={ProofDocumentsScreen} />
-        <Stack.Screen name="DependentList" component={DependentListScreen} />
+        <Stack.Screen name="DependentSaved" component={DependentSavedScreen} />
+        <Stack.Screen name="DependentList" component={DependentListScreen} options={tabScreenOptions} />
         <Stack.Screen name="ScanIdentity" component={ScanIdentityScreen} />
         <Stack.Screen name="ExpenseList" component={ExpenseListScreen} />
         <Stack.Screen name="ExpenseUpload" component={ExpenseUploadScreen} />

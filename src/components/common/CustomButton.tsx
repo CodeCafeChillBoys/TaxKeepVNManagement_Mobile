@@ -132,8 +132,7 @@ const styles = StyleSheet.create({
       : { shadowOpacity: 0, elevation: 0 }),
   },
   text: {
-    ...theme.typography.titleMedium,
-    fontSize: 16,
+    ...theme.typography.buttonText,
     textAlign: 'center',
   },
   textPrimary: {

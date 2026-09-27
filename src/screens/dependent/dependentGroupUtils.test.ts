@@ -2,6 +2,7 @@ import {
   filterChangeGroupOptions,
   groupCodeToIndex,
   groupsForRelationship,
+  humanizeGroupCodes,
   mapDependentLifecycleError,
 } from './dependentGroupUtils';
 
@@ -126,6 +127,17 @@ describe('dependentGroupUtils', () => {
       expect(mapDependentLifecycleError({ code: 'ECONNABORTED' })).toBe(
         'Không kết nối được. Thử lại.'
       );
+    });
+  });
+
+  describe('humanizeGroupCodes', () => {
+    it('replaces group enums with user labels', () => {
+      const raw =
+        "chuyển từ nhóm 'CHILD_OVER_18_STUDYING' sang nhóm 'CHILD_UNDER_18'.";
+      expect(raw).not.toContain(humanizeGroupCodes(raw));
+      expect(humanizeGroupCodes(raw)).toContain('Nhóm 2:');
+      expect(humanizeGroupCodes(raw)).toContain('Nhóm 1:');
+      expect(humanizeGroupCodes(raw)).not.toContain('CHILD_');
     });
   });
 });

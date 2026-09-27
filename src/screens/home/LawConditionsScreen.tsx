@@ -10,8 +10,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
+import { fonts } from '../../constants/fonts';
 import { RootNavigationProp } from '../../navigation/types';
 import { dependentDocumentApi } from '../../api/dependentDocumentApi';
+import { DrumHeader } from '../../components/brand/DrumHeader';
+import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
 
 /**
  * Màn hình: Điều kiện đăng kí (Figma Frame: iPhone 17 - 14)
@@ -148,6 +151,7 @@ const LAW_SECTIONS: LawConditionSection[] = [
 export const LawConditionsScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
   const [sections, setSections] = useState<LawConditionSection[]>(LAW_SECTIONS);
+  const [openId, setOpenId] = useState<number>(1);
 
   useEffect(() => {
     loadRules();
@@ -186,75 +190,77 @@ export const LawConditionsScreen: React.FC = () => {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      {/* Header chuẩn Figma: Nền hoa văn vàng be + Tiêu đề "Điều kiện đăng kí" */}
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backBtn}
-          onPress={() => navigation.goBack()}
-          accessibilityRole="button"
-          accessibilityLabel="Quay lại"
-          testID="lawConditionsBackBtn"
-        >
-          <Ionicons name="arrow-back" size={26} color="#1A1A1A" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle} numberOfLines={1}>
-          Điều kiện đăng kí
-        </Text>
-        <View style={{ width: 44 }} />
-      </View>
+    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+      <DrumHeader
+        title="Điều kiện luật"
+        onBack={() => navigation.goBack()}
+        backTestID="lawConditionsBackBtn"
+      />
 
-      {/* Nội dung văn bản pháp luật cuộn mượt chuẩn iPhone 17 - 14 */}
       <ScrollView
+        style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {sections.map((sec) => (
-          <View key={sec.id} style={styles.sectionCard}>
-            {/* Tiêu đề nhóm */}
-            <Text style={styles.groupTitle}>{sec.groupTitle}</Text>
+        <Text style={styles.lead}>
+          Năm nhóm giảm trừ gia cảnh. Mở một nhóm để xem điều kiện và giấy tờ cần nộp.
+        </Text>
+        <GoldDoubleRule style={styles.rule} />
 
-            {/* Điều kiện logic (Nhóm 1, 2, 3) */}
-            {sec.logicCondition && (
-              <Text style={styles.logicText}>
-                -Điều kiện logic: {sec.logicCondition}
-              </Text>
-            )}
-
-            {/* Bao gồm đối tượng (Nhóm 4, 5) */}
-            {sec.includesText && (
-              <Text style={styles.includesText}>
-                -Bao gồm: {sec.includesText}
-              </Text>
-            )}
-
-            {/* Danh mục tài liệu bắt buộc upload */}
-            <Text style={styles.docsHeader}>-Tài liệu bắt buộc upload:</Text>
-            <View style={styles.docsList}>
-              {sec.docs.map((doc) => (
-                <View key={doc.code} style={styles.docItem}>
-                  <Text style={styles.docItemText}>
-                    {doc.code}. {doc.text}
-                  </Text>
-
-                  {/* Các gạch đầu dòng chi tiết bên dưới mục b, c, d */}
-                  {doc.subItems && (
-                    <View style={styles.subItemsContainer}>
-                      {doc.subItems.map((sub, sIdx) => (
-                        <View key={sIdx} style={styles.subItemRow}>
-                          <Text style={styles.bulletDot}>•</Text>
-                          <Text style={styles.subItemText}>{sub}</Text>
-                        </View>
-                      ))}
-                    </View>
-                  )}
+        {sections.map((sec) => {
+          const open = openId === sec.id;
+          const shortTitle = sec.groupTitle.replace(/^Nhóm\s+\d+\s*:\s*/, '');
+          return (
+            <View key={sec.id} style={styles.section}>
+              <TouchableOpacity
+                style={styles.sectionHead}
+                onPress={() => setOpenId(open ? 0 : sec.id)}
+                accessibilityRole="button"
+                accessibilityState={{ expanded: open }}
+              >
+                <Text style={styles.index}>{String(sec.id).padStart(2, '0')}</Text>
+                <View style={styles.sectionTitles}>
+                  <Text style={styles.groupTitle}>{shortTitle}</Text>
+                  {!open && (sec.logicCondition || sec.includesText) ? (
+                    <Text style={styles.preview} numberOfLines={1}>
+                      {sec.logicCondition || sec.includesText}
+                    </Text>
+                  ) : null}
                 </View>
-              ))}
-            </View>
-          </View>
-        ))}
+                <Ionicons
+                  name={open ? 'chevron-up' : 'chevron-down'}
+                  size={18}
+                  color="#999999"
+                />
+              </TouchableOpacity>
 
-        <View style={{ height: 30 }} />
+              {open ? (
+                <View style={styles.body}>
+                  {sec.logicCondition ? (
+                    <Text style={styles.note}>{sec.logicCondition}</Text>
+                  ) : null}
+                  {sec.includesText ? (
+                    <Text style={styles.note}>Gồm {sec.includesText}</Text>
+                  ) : null}
+                  <Text style={styles.docsLabel}>Giấy tờ cần nộp</Text>
+                  {sec.docs.map((doc) => (
+                    <View key={doc.code} style={styles.docItem}>
+                      <Text style={styles.docLetter}>{doc.code}</Text>
+                      <View style={styles.docCopy}>
+                        <Text style={styles.docText}>{doc.text}</Text>
+                        {doc.subItems?.map((sub, sIdx) => (
+                          <Text key={sIdx} style={styles.subItem}>
+                            {sub}
+                          </Text>
+                        ))}
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+            </View>
+          );
+        })}
       </ScrollView>
     </SafeAreaView>
   );
@@ -263,102 +269,105 @@ export const LawConditionsScreen: React.FC = () => {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#EBE4D5',
+    backgroundColor: theme.colors.background,
   },
-  header: {
-    height: 60,
-    backgroundColor: '#EBE4D5',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#DDD5C4',
-  },
-  backBtn: {
-    width: 44,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerTitle: {
-    ...theme.typography.titleLarge,
+  scroll: {
     flex: 1,
-    fontSize: 19,
-    fontWeight: '700',
-    color: '#1A1A1A',
-    textAlign: 'center',
   },
   scrollContent: {
-    paddingHorizontal: 20,
-    paddingTop: 20,
+    paddingHorizontal: 22,
+    paddingTop: 8,
     paddingBottom: 40,
-    backgroundColor: '#FFFFFF',
   },
-  sectionCard: {
-    marginBottom: 24,
-  },
-  groupTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#000000',
+  lead: {
+    fontFamily: fonts.body,
+    fontSize: 14,
     lineHeight: 22,
+    color: '#444444',
+  },
+  rule: {
+    marginTop: 16,
     marginBottom: 4,
   },
-  logicText: {
-    fontSize: 13.5,
-    fontWeight: '400',
-    color: '#1A1A1A',
-    lineHeight: 20,
-    marginBottom: 2,
+  section: {
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
   },
-  includesText: {
-    fontSize: 13.5,
-    fontWeight: '400',
-    color: '#1A1A1A',
-    lineHeight: 20,
-    marginBottom: 2,
-  },
-  docsHeader: {
-    fontSize: 13.5,
-    fontWeight: '400',
-    color: '#1A1A1A',
-    lineHeight: 20,
-    marginBottom: 2,
-  },
-  docsList: {
-    paddingLeft: 12,
-  },
-  docItem: {
-    marginTop: 3,
-    marginBottom: 4,
-  },
-  docItemText: {
-    fontSize: 13.5,
-    fontWeight: '400',
-    color: '#1A1A1A',
-    lineHeight: 20,
-  },
-  subItemsContainer: {
-    paddingLeft: 14,
-    marginTop: 3,
-    marginBottom: 4,
-  },
-  subItemRow: {
+  sectionHead: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    marginBottom: 3,
+    gap: 12,
+    paddingVertical: 14,
   },
-  bulletDot: {
-    fontSize: 14,
-    color: '#1A1A1A',
-    marginRight: 6,
-    lineHeight: 19,
+  index: {
+    width: 28,
+    fontFamily: fonts.serifBold,
+    fontSize: 15,
+    lineHeight: 22,
+    color: theme.colors.gold,
   },
-  subItemText: {
+  sectionTitles: {
     flex: 1,
+    gap: 2,
+  },
+  groupTitle: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 15,
+    lineHeight: 22,
+    color: theme.colors.textPrimary,
+  },
+  preview: {
+    fontFamily: fonts.body,
     fontSize: 13,
-    color: '#333333',
+    lineHeight: 18,
+    color: theme.colors.textSecondary,
+  },
+  body: {
+    paddingLeft: 40,
+    paddingBottom: 14,
+  },
+  note: {
+    fontFamily: fonts.body,
+    fontSize: 14,
+    lineHeight: 21,
+    color: '#444444',
+    marginBottom: 8,
+  },
+  docsLabel: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 12,
+    lineHeight: 16,
+    letterSpacing: 0.4,
+    color: '#5A4A22',
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  docItem: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 10,
+  },
+  docLetter: {
+    width: 16,
+    fontFamily: fonts.serifBold,
+    fontSize: 14,
+    lineHeight: 20,
+    color: theme.colors.primaryDark,
+  },
+  docCopy: {
+    flex: 1,
+  },
+  docText: {
+    fontFamily: fonts.body,
+    fontSize: 14,
+    lineHeight: 20,
+    color: theme.colors.textPrimary,
+  },
+  subItem: {
+    fontFamily: fonts.body,
+    fontSize: 13,
     lineHeight: 19,
+    color: '#555555',
+    marginTop: 4,
   },
 });

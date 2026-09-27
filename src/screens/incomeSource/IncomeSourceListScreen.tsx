@@ -18,6 +18,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
+import { fonts } from '../../constants/fonts';
+import { DrumHeader } from '../../components/brand/DrumHeader';
+import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
+import { MainTabBar } from '../../components/navigation/MainTabBar';
 import {
   incomeSourceApi,
   IncomeSourceItem,
@@ -288,43 +292,29 @@ export const IncomeSourceListScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
-      {/* 1. Header Motif */}
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backBtn}
-          onPress={() => navigation.goBack()}
-          accessibilityRole="button"
-          accessibilityLabel="Quay lại"
-          testID="backBtn"
-        >
-          <Ionicons name="arrow-back" size={24} color={theme.colors.textPrimary} />
-        </TouchableOpacity>
+      <DrumHeader
+        title="Nơi chi trả"
+        onBack={() => {
+          if (navigation.canGoBack()) navigation.goBack();
+          else navigation.navigate('Home');
+        }}
+        backTestID="backBtn"
+        right={
+          <TouchableOpacity
+            style={styles.addHeaderBtn}
+            onPress={handleOpenCreateModal}
+            accessibilityRole="button"
+            accessibilityLabel="Thêm nơi chi trả"
+            testID="addIncomeSourceBtn"
+          >
+            <Ionicons name="add" size={26} color={theme.colors.primary} />
+          </TouchableOpacity>
+        }
+      />
 
-        <Text style={styles.headerTitle}>NƠI CHI TRẢ THU NHẬP</Text>
-
-        <TouchableOpacity
-          style={styles.addHeaderBtn}
-          onPress={handleOpenCreateModal}
-          accessibilityRole="button"
-          accessibilityLabel="Thêm nơi chi trả"
-          testID="addIncomeSourceBtn"
-        >
-          <Ionicons name="add-circle" size={26} color={theme.colors.primary} />
-        </TouchableOpacity>
-      </View>
-
-      {/* 2. Banner giải thích nghiệp vụ */}
-      <View style={styles.banner}>
-        <View style={styles.bannerIconBox}>
-          <Ionicons name="business" size={22} color={theme.colors.primary} />
-        </View>
-        <View style={styles.bannerTextBox}>
-          <Text style={styles.bannerTitle}>Khai báo nguồn thu nhập</Text>
-          <Text style={styles.bannerDesc}>
-            Danh sách các cơ quan, doanh nghiệp chi trả tiền lương của bạn. Dữ liệu này được dùng để đối soát và lập hồ sơ quyết toán thuế TNCN.
-          </Text>
-        </View>
-      </View>
+      <Text style={styles.pageLead}>
+        Cơ quan chi trả lương, dùng khi đối soát và quyết toán thuế thu nhập cá nhân.
+      </Text>
 
       {/* 2.1 Bộ chọn năm tính thuế (Tabs TaxYear) */}
       <View style={styles.yearFilterRow}>
@@ -360,29 +350,15 @@ export const IncomeSourceListScreen: React.FC = () => {
       {/* 2.2 Bảng tổng hợp thu nhập & thuế khấu trừ (Gọi từ GET /summary) */}
       {summary && (
         <View style={styles.summaryCard} testID="incomeSummaryCard">
-          <View style={styles.summaryHeader}>
-            <View style={styles.summaryHeaderLeft}>
-              <Ionicons name="stats-chart" size={16} color={theme.colors.primary} />
-              <Text style={styles.summaryTitle}>
-                Tổng hợp thu nhập {selectedYearFilter > 0 ? `năm ${selectedYearFilter}` : 'năm 2026'}
-              </Text>
-            </View>
-            <Text style={styles.summaryCount}>
-              {summary.totalSources || sources.length} nơi chi trả
-            </Text>
-          </View>
-
-          <View style={styles.summaryMetricsRow}>
-            <View style={styles.summaryMetricItem}>
-              <Text style={styles.summaryMetricLabel}>Tổng thu nhập</Text>
-              <Text style={styles.summaryIncomeValue}>{formatCurrency(summary.totalIncome)} ₫</Text>
-            </View>
-            <View style={styles.summaryDivider} />
-            <View style={styles.summaryMetricItem}>
-              <Text style={styles.summaryMetricLabel}>Thuế đã khấu trừ</Text>
-              <Text style={styles.summaryTaxValue}>{formatCurrency(summary.totalTaxWithheld)} ₫</Text>
-            </View>
-          </View>
+          <Text style={styles.summaryTitle}>
+            Thu nhập {selectedYearFilter > 0 ? `năm ${selectedYearFilter}` : 'năm 2026'}
+          </Text>
+          <Text style={styles.summaryIncomeValue}>{formatCurrency(summary.totalIncome)} đ</Text>
+          <Text style={styles.summaryTaxValue}>
+            Thuế đã khấu trừ {formatCurrency(summary.totalTaxWithheld)} đ ·{' '}
+            {summary.totalSources || sources.length} nơi chi trả
+          </Text>
+          <GoldDoubleRule style={styles.summaryRule} />
         </View>
       )}
 
@@ -409,16 +385,11 @@ export const IncomeSourceListScreen: React.FC = () => {
       {/* 3.1 Thống kê danh sách */}
       {!loading && sources.length > 0 && (
         <View style={styles.listHeaderBar}>
-          <View style={styles.listHeaderTitleRow}>
-            <Text style={styles.listHeaderTitle}>DANH SÁCH NƠI CHI TRẢ</Text>
-            <View style={styles.totalBadge}>
-              <Text style={styles.totalBadgeText}>
-                {pagination ? `${pagination.totalItems} đơn vị` : `${sources.length} đơn vị`}
-              </Text>
-            </View>
-          </View>
+          <Text style={styles.listHeaderTitle}>Danh sách</Text>
           <Text style={styles.listHeaderSubtext}>
-            {sources.filter((s) => s.isActive).length} đang chi trả • {sources.filter((s) => !s.isActive).length} đã dừng
+            {pagination ? pagination.totalItems : sources.length} đơn vị ·{' '}
+            {sources.filter((s) => s.isActive).length} đang chi trả ·{' '}
+            {sources.filter((s) => !s.isActive).length} đã dừng
           </Text>
         </View>
       )}
@@ -431,6 +402,7 @@ export const IncomeSourceListScreen: React.FC = () => {
         </View>
       ) : (
         <FlatList
+          style={styles.list}
           data={filteredSources}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.listContent}
@@ -443,9 +415,6 @@ export const IncomeSourceListScreen: React.FC = () => {
           }
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
-              <View style={styles.emptyIconCircle}>
-                <Ionicons name="business-outline" size={48} color={theme.colors.primary} />
-              </View>
               <Text style={styles.emptyTitle}>Chưa có nơi chi trả nào</Text>
               <Text style={styles.emptySubtext}>
                 {searchQuery
@@ -465,105 +434,56 @@ export const IncomeSourceListScreen: React.FC = () => {
               )}
             </View>
           }
-          renderItem={({ item }) => (
+          renderItem={({ item, index }) => (
             <View style={styles.card} testID={`incomeSourceCard_${item.id}`}>
               <View style={styles.cardHeader}>
-                <View style={styles.companyAvatarBox}>
-                  <Ionicons name="business" size={22} color={theme.colors.primary} />
-                </View>
-
+                <Text style={styles.ledgerIndex}>{String(index + 1).padStart(2, '0')}</Text>
                 <View style={styles.cardMainInfo}>
                   <Text style={styles.companyName} numberOfLines={2}>
                     {item.companyName}
                   </Text>
-                  <View style={styles.taxBadgeRow}>
-                    <View style={styles.taxBadge}>
-                      <Ionicons name="shield-checkmark" size={13} color={theme.colors.gold} />
-                      <Text style={styles.taxCodeText}>MST: {item.companyTaxCode || item.companyTaxId}</Text>
-                    </View>
-
-                    <View style={styles.yearBadge}>
-                      <Ionicons name="calendar" size={12} color="#1565C0" />
-                      <Text style={styles.yearBadgeText}>Năm {item.taxYear || 2026}</Text>
-                    </View>
-
-                    <View
-                      style={[
-                        styles.statusChip,
-                        item.isActive ? styles.statusActive : styles.statusInactive,
-                      ]}
-                    >
-                      <View
-                        style={[
-                          styles.statusDot,
-                          { backgroundColor: item.isActive ? '#2E7D32' : '#757575' },
-                        ]}
-                      />
-                      <Text
-                        style={[
-                          styles.statusText,
-                          { color: item.isActive ? '#2E7D32' : '#757575' },
-                        ]}
-                      >
-                        {item.isActive ? 'Đang chi trả' : 'Đã dừng'}
-                      </Text>
-                    </View>
-                  </View>
+                  <Text style={styles.companyMeta}>
+                    MST {item.companyTaxCode || item.companyTaxId} · Năm {item.taxYear || 2026} ·{' '}
+                    <Text style={item.isActive ? styles.statusActiveText : styles.statusInactiveText}>
+                      {item.isActive ? 'Đang chi trả' : 'Đã dừng'}
+                    </Text>
+                  </Text>
                 </View>
               </View>
 
-              {/* Dòng hiển thị Thu nhập & Thuế đã khấu trừ (Các field mới của BE) */}
               <View style={styles.financialRow}>
                 <View style={styles.financialCol}>
-                  <Text style={styles.financialLabel}>Thu nhập năm:</Text>
-                  <Text style={styles.incomeValueText}>{formatCurrency(item.totalIncome)} ₫</Text>
+                  <Text style={styles.financialLabel}>Thu nhập năm</Text>
+                  <Text style={styles.incomeValueText}>{formatCurrency(item.totalIncome)} đ</Text>
                 </View>
-                <View style={styles.financialDivider} />
                 <View style={styles.financialCol}>
-                  <Text style={styles.financialLabel}>Thuế đã khấu trừ:</Text>
-                  <Text style={styles.taxValueText}>{formatCurrency(item.taxWithheld)} ₫</Text>
+                  <Text style={styles.financialLabel}>Thuế đã khấu trừ</Text>
+                  <Text style={styles.taxValueText}>{formatCurrency(item.taxWithheld)} đ</Text>
                 </View>
               </View>
 
-              {/* Thông tin ngày khai báo & cập nhật từ API */}
-              <View style={styles.cardMetaBox}>
-                <View style={styles.metaRow}>
-                  <Ionicons name="calendar-outline" size={12} color={theme.colors.textSecondary} />
-                  <Text style={styles.metaLabel}>Khai báo:</Text>
-                  <Text style={styles.metaValue}>{formatDate(item.createdAt)}</Text>
-                </View>
+              <Text style={styles.metaValue}>
+                Khai báo {formatDate(item.createdAt)}
+                {item.updatedAt && item.updatedAt !== item.createdAt
+                  ? ` · Cập nhật ${formatDate(item.updatedAt)}`
+                  : ''}
+              </Text>
 
-                {item.updatedAt && item.updatedAt !== item.createdAt && (
-                  <View style={[styles.metaRow, { marginTop: 3 }]}>
-                    <Ionicons name="sync-outline" size={12} color={theme.colors.gold} />
-                    <Text style={[styles.metaLabel, { color: theme.colors.gold }]}>Cập nhật:</Text>
-                    <Text style={[styles.metaValue, { color: theme.colors.textPrimary }]}>
-                      {formatDate(item.updatedAt)}
-                    </Text>
-                  </View>
-                )}
-              </View>
-
-              {/* Nút thao tác Sửa / Xóa */}
               <View style={styles.cardActions}>
                 <TouchableOpacity
                   style={styles.actionBtn}
                   onPress={() => handleOpenEditModal(item)}
                   testID={`editIncomeSourceBtn_${item.id}`}
                 >
-                  <Ionicons name="create-outline" size={16} color={theme.colors.primary} />
                   <Text style={styles.actionBtnText}>Sửa</Text>
                 </TouchableOpacity>
-
-                <View style={styles.actionDivider} />
-
+                <Text style={styles.actionDivider}>·</Text>
                 <TouchableOpacity
                   style={styles.actionBtn}
                   onPress={() => handleDelete(item)}
                   testID={`deleteIncomeSourceBtn_${item.id}`}
                 >
-                  <Ionicons name="trash-outline" size={16} color={theme.colors.error} />
-                  <Text style={[styles.actionBtnText, { color: theme.colors.error }]}>Xóa</Text>
+                  <Text style={styles.actionBtnDanger}>Xóa</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -770,6 +690,7 @@ export const IncomeSourceListScreen: React.FC = () => {
           </View>
         </View>
       </Modal>
+      <MainTabBar active="IncomeSourceList" />
     </SafeAreaView>
   );
 };
@@ -789,6 +710,10 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
   },
+  headerSide: {
+    width: 40,
+    height: 40,
+  },
   backBtn: {
     width: 40,
     height: 40,
@@ -802,10 +727,18 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   addHeaderBtn: {
-    width: 40,
-    height: 40,
+    width: 44,
+    height: 44,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  pageLead: {
+    fontFamily: fonts.body,
+    fontSize: 14,
+    lineHeight: 21,
+    color: '#444444',
+    paddingHorizontal: 22,
+    paddingTop: 8,
   },
   banner: {
     flexDirection: 'row',
@@ -846,8 +779,8 @@ const styles = StyleSheet.create({
   yearFilterRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: theme.spacing.md,
-    marginTop: 12,
+    paddingHorizontal: 22,
+    marginTop: 14,
   },
   yearFilterLabel: {
     fontSize: 13,
@@ -860,11 +793,11 @@ const styles = StyleSheet.create({
   },
   yearChip: {
     paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 16,
-    backgroundColor: '#FAF5EE',
+    paddingVertical: 6,
+    borderRadius: 10,
+    backgroundColor: 'transparent',
     borderWidth: 1,
-    borderColor: '#E8DED1',
+    borderColor: theme.colors.border,
   },
   yearChipSelected: {
     backgroundColor: theme.colors.primary,
@@ -880,14 +813,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   summaryCard: {
-    marginHorizontal: theme.spacing.md,
-    marginTop: 10,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#E8DED1',
-    ...theme.shadows.card,
+    marginHorizontal: 22,
+    marginTop: 18,
+    alignItems: 'center',
   },
   summaryHeader: {
     flexDirection: 'row',
@@ -904,9 +832,10 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   summaryTitle: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: theme.colors.primary,
+    fontFamily: fonts.bodyMedium,
+    fontSize: 12,
+    lineHeight: 16,
+    color: '#5A4A22',
   },
   summaryCount: {
     fontSize: 12,
@@ -926,14 +855,23 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   summaryIncomeValue: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#1565C0',
+    fontFamily: fonts.serifBold,
+    fontSize: 32,
+    lineHeight: 38,
+    color: theme.colors.primaryDark,
+    marginTop: 4,
   },
   summaryTaxValue: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#2E7D32',
+    fontFamily: fonts.body,
+    fontSize: 12,
+    lineHeight: 18,
+    color: theme.colors.textSecondary,
+    textAlign: 'center',
+    marginTop: 4,
+  },
+  summaryRule: {
+    alignSelf: 'stretch',
+    marginTop: 16,
   },
   summaryDivider: {
     width: 1,
@@ -942,18 +880,16 @@ const styles = StyleSheet.create({
     marginHorizontal: 12,
   },
   searchContainer: {
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.sm,
+    paddingHorizontal: 22,
+    paddingTop: 16,
+    paddingBottom: 8,
   },
   searchBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: theme.colors.surface,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    borderRadius: theme.borderRadius.md,
-    paddingHorizontal: 12,
-    height: 44,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+    height: 40,
   },
   searchInput: {
     flex: 1,
@@ -970,18 +906,18 @@ const styles = StyleSheet.create({
     color: theme.colors.textSecondary,
     marginTop: 12,
   },
+  list: {
+    flex: 1,
+  },
   listContent: {
-    paddingHorizontal: theme.spacing.md,
+    paddingHorizontal: 22,
     paddingBottom: 40,
   },
   card: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.borderRadius.md,
-    padding: theme.spacing.md,
-    marginBottom: theme.spacing.md,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    ...theme.shadows.card,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+    gap: 6,
   },
   cardHeader: {
     flexDirection: 'row',
@@ -1001,10 +937,31 @@ const styles = StyleSheet.create({
   cardMainInfo: {
     flex: 1,
   },
+  ledgerIndex: {
+    width: 28,
+    fontFamily: fonts.serifBold,
+    fontSize: 15,
+    lineHeight: 22,
+    color: theme.colors.gold,
+  },
   companyName: {
-    ...theme.typography.bodyLarge,
-    fontWeight: '700',
+    fontFamily: fonts.bodySemi,
+    fontSize: 16,
+    lineHeight: 22,
     color: theme.colors.textPrimary,
+  },
+  companyMeta: {
+    fontFamily: fonts.body,
+    fontSize: 13,
+    lineHeight: 18,
+    color: theme.colors.textSecondary,
+    marginTop: 2,
+  },
+  statusActiveText: {
+    color: '#3D5C3A',
+  },
+  statusInactiveText: {
+    color: '#888888',
   },
   taxBadgeRow: {
     flexDirection: 'row',
@@ -1068,29 +1025,31 @@ const styles = StyleSheet.create({
   },
   financialRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FAF7F2',
-    borderRadius: 8,
-    padding: 10,
-    marginTop: 10,
+    marginLeft: 28,
+    marginTop: 6,
+    gap: 16,
   },
   financialCol: {
     flex: 1,
   },
   financialLabel: {
-    fontSize: 11,
+    fontFamily: fonts.body,
+    fontSize: 12,
+    lineHeight: 16,
     color: theme.colors.textSecondary,
     marginBottom: 2,
   },
   incomeValueText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#1565C0',
+    fontFamily: fonts.serifBold,
+    fontSize: 16,
+    lineHeight: 22,
+    color: theme.colors.textPrimary,
   },
   taxValueText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#2E7D32',
+    fontFamily: fonts.serifBold,
+    fontSize: 16,
+    lineHeight: 22,
+    color: theme.colors.textPrimary,
   },
   financialDivider: {
     width: 1,
@@ -1115,34 +1074,38 @@ const styles = StyleSheet.create({
     marginRight: 6,
   },
   metaValue: {
-    ...theme.typography.caption,
-    fontWeight: '500',
-    color: theme.colors.textSecondary,
+    marginLeft: 28,
+    fontFamily: fonts.body,
+    fontSize: 12,
+    lineHeight: 16,
+    color: '#8A8175',
   },
   cardActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderTopWidth: 1,
-    borderTopColor: '#F0EFEB',
-    marginTop: 10,
-    paddingTop: 10,
+    marginLeft: 28,
+    marginTop: 4,
+    gap: 8,
   },
   actionBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
     paddingVertical: 4,
   },
   actionBtnText: {
-    ...theme.typography.caption,
-    fontWeight: '600',
-    marginLeft: 6,
+    fontFamily: fonts.bodySemi,
+    fontSize: 13,
+    lineHeight: 18,
+    color: theme.colors.primary,
+  },
+  actionBtnDanger: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 13,
+    lineHeight: 18,
+    color: theme.colors.error,
   },
   actionDivider: {
-    width: 1,
-    height: 18,
-    backgroundColor: '#E0E0E0',
+    fontFamily: fonts.body,
+    fontSize: 13,
+    color: '#BBBBBB',
   },
   listHeaderBar: {
     paddingHorizontal: theme.spacing.md,
@@ -1154,10 +1117,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   listHeaderTitle: {
-    ...theme.typography.caption,
-    fontWeight: '700',
-    color: theme.colors.textSecondary,
-    letterSpacing: 0.5,
+    fontFamily: fonts.serifBold,
+    fontSize: 18,
+    lineHeight: 24,
+    color: theme.colors.textPrimary,
   },
   totalBadge: {
     backgroundColor: '#FAF5EE',

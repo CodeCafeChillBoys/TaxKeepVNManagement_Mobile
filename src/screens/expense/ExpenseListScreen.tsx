@@ -56,6 +56,7 @@ export const ExpenseListScreen: React.FC = () => {
     periods,
     documentTypes,
     isDocumentTypesLoading,
+    error: periodError,
     setSelectedYear,
     addYear,
     removeYear,
@@ -464,6 +465,12 @@ export const ExpenseListScreen: React.FC = () => {
             <Text style={styles.emptyStateSubtitle}>
               Tạo kỳ kê khai thuế để bắt đầu lưu trữ và quản lý hóa đơn chi phí được giảm trừ thuế TNCN.
             </Text>
+            {periodError ? (
+              <View style={styles.periodErrorBox} testID="expensePeriodError">
+                <Ionicons name="information-circle-outline" size={18} color="#9A3412" />
+                <Text style={styles.periodErrorText}>{periodError}</Text>
+              </View>
+            ) : null}
             <Button
               variant="default"
               size="lg"
@@ -1629,6 +1636,25 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 19,
     marginBottom: 24,
+  },
+  periodErrorBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: '#FFF7ED',
+    borderWidth: 1,
+    borderColor: '#FDBA74',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginTop: -8,
+    marginBottom: 16,
+  },
+  periodErrorText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 18,
+    color: '#9A3412',
   },
   emptyStateCta: {
     width: '100%',

@@ -1,0 +1,60 @@
+{
+  "document": {
+    "documentNumber": "103/VBHN-VPQH",
+    "documentType": "VBHN",
+    "issuer": "VĂN PHÒNG QUỐC HỘI",
+    "title": "Văn bản hợp nhất Luật Thuế thu nhập cá nhân"
+  },
+  "relations": [
+    {
+      "relationKey": "rel-1",
+      "type": "CONSOLIDATES",
+      "targetDocumentNumber": "04/2007/QH12",
+      "note": "BASE"
+    },
+    {
+      "relationKey": "rel-2",
+      "type": "CONSOLIDATES",
+      "targetDocumentNumber": "26/2012/QH13"
+    },
+    {
+      "relationKey": "rel-3",
+      "type": "CONSOLIDATES",
+      "targetDocumentNumber": "71/2014/QH13"
+    }
+  ],
+  "operations": [
+    {
+      "opKey": "op-1",
+      "op": "ADD",
+      "ruleCode": "PIT_TAX_SCHEDULE",
+      "after": [
+        { "toAnnual": 60000000, "rate": 0.05 },
+        { "toAnnual": 120000000, "rate": 0.1 },
+        { "toAnnual": 216000000, "rate": 0.15 },
+        { "toAnnual": 384000000, "rate": 0.2 },
+        { "toAnnual": 624000000, "rate": 0.25 },
+        { "toAnnual": 960000000, "rate": 0.3 },
+        { "toAnnual": null, "rate": 0.35 }
+      ],
+      "applyFrom": "2009-01-01",
+      "citation": { "article": "22" }
+    },
+    {
+      "opKey": "op-2",
+      "op": "ADD",
+      "ruleCode": "PIT_DEDUCTION_PERSONAL",
+      "after": { "valueNumber": 9000000, "unit": "VND/month" },
+      "applyFrom": "2013-07-01",
+      "citation": { "article": "19" }
+    },
+    {
+      "opKey": "op-3",
+      "op": "ADD",
+      "ruleCode": "PIT_DEDUCTION_DEPENDENT",
+      "after": { "valueNumber": 3600000, "unit": "VND/person/month" },
+      "applyFrom": "2013-07-01",
+      "citation": { "article": "19" }
+    }
+  ]
+}

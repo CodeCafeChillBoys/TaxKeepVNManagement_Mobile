@@ -16,6 +16,7 @@ import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { HeaderMotif } from '../../components/common/HeaderMotif';
+import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { RootNavigationProp } from '../../navigation/types';
 import { ExpenseOcrResult } from '../../types/expense';
 import { expenseApi, mapDocumentReviewToOcrResult } from '../../api/expenseApi';
@@ -86,6 +87,7 @@ export const ExpenseListScreen: React.FC = () => {
       const syncData = async () => {
         await loadFromStorage(user?.id);
         await fetchDocumentTypes();
+        if (!user?.id) return;
         try {
           await useExpenseStore.getState().syncPeriods(await expenseApi.getTaxPeriods());
         } catch {
@@ -120,6 +122,10 @@ export const ExpenseListScreen: React.FC = () => {
     setRefreshing(true);
     await loadFromStorage(user?.id);
     await fetchDocumentTypes();
+    if (!user?.id) {
+      setRefreshing(false);
+      return;
+    }
     try {
       await useExpenseStore.getState().syncPeriods(await expenseApi.getTaxPeriods());
     } catch {
@@ -447,7 +453,8 @@ export const ExpenseListScreen: React.FC = () => {
 
   // ===================== RENDER =====================
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={styles.safeArea} edges={['top']}>
+      <DrumPatternBackdrop variant="soft" />
       <HeaderMotif title="HÓA ĐƠN CHI PHÍ" onBack={() => navigation.goBack()} />
 
       {/* CHƯA CÓ KỲ NĂM: Màn hình khởi tạo */}
@@ -1176,14 +1183,14 @@ const styles = StyleSheet.create({
   },
   safeArea: {
     flex: 1,
-    backgroundColor: '#F8F5EE',
+    backgroundColor: theme.colors.background,
   },
   // --- Year bar ---
   yearBarContainer: {
     paddingHorizontal: 16,
     paddingTop: 8,
     paddingBottom: 4,
-    backgroundColor: '#F8F5EE',
+    backgroundColor: 'transparent',
   },
   yearScroll: {
     flexDirection: 'row',
@@ -1198,7 +1205,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: theme.colors.border,
     gap: 4,
   },
   yearChipActive: {
@@ -1275,7 +1282,7 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderLeftWidth: 4,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: theme.colors.border,
   },
   kpiBoxVal: {
     fontSize: 20,
@@ -1336,7 +1343,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: theme.colors.border,
     gap: 8,
   },
   searchInput: {
@@ -1416,7 +1423,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: theme.colors.border,
   },
   statusPillActive: {
     backgroundColor: '#8B1E1E',

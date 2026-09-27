@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ViewStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 
@@ -7,15 +7,17 @@ interface HeaderMotifProps {
   title: string;
   onBack?: () => void;
   showFlag?: boolean;
+  style?: ViewStyle;
 }
 
 export const HeaderMotif: React.FC<HeaderMotifProps> = ({
   title,
   onBack,
   showFlag = true,
+  style,
 }) => {
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, style]}>
       <View style={styles.topRow}>
         {onBack ? (
           <TouchableOpacity
@@ -55,7 +57,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: theme.spacing.md,
     paddingTop: theme.spacing.sm,
     paddingBottom: theme.spacing.md,
-    backgroundColor: theme.colors.background,
+    backgroundColor: 'transparent',
   },
   topRow: {
     flexDirection: 'row',

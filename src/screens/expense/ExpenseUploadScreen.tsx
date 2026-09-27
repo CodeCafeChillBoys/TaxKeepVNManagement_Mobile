@@ -15,10 +15,13 @@ import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { Ionicons } from '@expo/vector-icons';
+import { theme } from '../../constants/theme';
 import { HeaderMotif } from '../../components/common/HeaderMotif';
+import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { expenseApi, mapDocumentReviewToOcrResult } from '../../api/expenseApi';
 import { useExpenseStore } from '../../stores/useExpenseStore';
+import { useAuthStore } from '../../stores/useAuthStore';
 import { getDocumentTypeIcon } from './expenseGroupUtils';
 import { Badge, useToast } from '../../components/ui';
 import { parseBackendError } from './expenseValidationUtils';
@@ -34,13 +37,23 @@ export const ExpenseUploadScreen: React.FC = () => {
   const periodId = route.params?.periodId;
 
   const { toast } = useToast();
-  const { periods, documentTypes, fetchDocumentTypes, isDocumentTypesLoading, addOrUpdateDocument } = useExpenseStore();
+  const { user } = useAuthStore();
+  const {
+    periods,
+    documentTypes,
+    fetchDocumentTypes,
+    isDocumentTypesLoading,
+    systemConfigs,
+    fetchSystemConfigs,
+    addOrUpdateDocument,
+  } = useExpenseStore();
 
   const activePeriod = periods[targetYear];
   const isPeriodSubmitted = activePeriod?.status === 'SUBMITTED';
 
   useEffect(() => {
     fetchDocumentTypes();
+    fetchSystemConfigs();
   }, []);
 
   const ineligibleCategories = useMemo(() => {
@@ -264,11 +277,11 @@ export const ExpenseUploadScreen: React.FC = () => {
     setProcessingStage('Đang kết nối hồ sơ quyết toán...');
 
     try {
-      let activePeriodId = periodId;
+      let activePeriodId = periodId || activePeriod?.periodId;
       if (!activePeriodId) {
         setProcessingStage('Đang kiểm tra thông tin kỳ tính thuế...');
         setProcessingProgress(20);
-        const period = await expenseApi.createOrGetTaxPeriod(targetYear);
+        const period = await expenseApi.createOrGetTaxPeriod(targetYear, user?.id);
         if (period.status === 'SUBMITTED') {
           setProcessing(false);
           setCurrentStep(1);
@@ -394,7 +407,7 @@ export const ExpenseUploadScreen: React.FC = () => {
       setProcessing(false);
 
       if (extractedDoc && extractedDoc.status === 'EXTRACTED') {
-        const ocrResult = mapDocumentReviewToOcrResult(extractedDoc, targetYear, documentTypes);
+        const ocrResult = mapDocumentReviewToOcrResult(extractedDoc, targetYear, documentTypes, systemConfigs);
         ocrResult.originalFileUri = selectedFile?.uri;
         if (!ocrResult.docTypeCode || ocrResult.docTypeCode === 'UNSUPPORTED') {
           const defaultType = documentTypes?.find((t) => t.isTaxEligible) || documentTypes?.[0];
@@ -422,6 +435,7 @@ export const ExpenseUploadScreen: React.FC = () => {
         );
       }
     } catch (err: any) {
+      console.error('[ExpenseUpload Error]:', err?.code, err?.message, err?.response?.status, err?.response?.data);
       setProcessing(false);
       setCurrentStep(selectedFile ? 2 : 1);
       const parsed = parseBackendError(err);
@@ -437,7 +451,8 @@ export const ExpenseUploadScreen: React.FC = () => {
   ];
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={styles.safeArea} edges={['top']}>
+      <DrumPatternBackdrop variant="soft" />
       <HeaderMotif title="TẢI LÊN HÓA ĐƠN CHI PHÍ" onBack={() => navigation.goBack()} />
 
       {/* STEP INDICATOR */}
@@ -779,7 +794,7 @@ export const ExpenseUploadScreen: React.FC = () => {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#F8F5EE',
+    backgroundColor: theme.colors.background,
   },
   // Step indicator
   stepRow: {
@@ -787,9 +802,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 24,
     paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'rgba(255, 255, 255, 0.88)',
     borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
+    borderBottomColor: theme.colors.border,
   },
   stepItem: {
     alignItems: 'center',

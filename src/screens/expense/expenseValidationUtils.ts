@@ -35,23 +35,28 @@ export function calculateItemsTotal(items: InvoiceLineItem[]): number {
 
 /**
  * Kiểm tra xem có trường cốt lõi nào có điểm tin cậy dưới ngưỡng quy định hay không (Mục 6.3)
+ * Hỗ trợ danh sách trường cốt lõi cấu hình động từ Admin (CRUCIAL_FIELDS_{category} hoặc CRUCIAL_EXTRACTION_FIELDS)
  */
 export function validateCrucialFields(
   fields: ExtractedFieldItem[] = [],
-  appliedThreshold: number = 0.8
+  appliedThreshold: number = 0.8,
+  customCrucialFieldNames?: string[]
 ): {
   isPassed: boolean;
   hasCrucialLowConfidence: boolean;
   lowConfidenceCrucialFields: string[];
 } {
+  const crucialNames = (customCrucialFieldNames && customCrucialFieldNames.length > 0)
+    ? customCrucialFieldNames
+    : CRUCIAL_FIELD_NAMES;
   const lowFields: string[] = [];
 
   for (const field of fields) {
     const normalizedName = field.fieldName.toLowerCase().replace(/([A-Z])/g, '_$1').toLowerCase();
     const isCrucial =
       field.isCrucial ||
-      CRUCIAL_FIELD_NAMES.some(
-        (name) => normalizedName.includes(name) || name.includes(normalizedName)
+      crucialNames.some(
+        (name) => normalizedName.includes(name.toLowerCase()) || name.toLowerCase().includes(normalizedName)
       );
 
     if (isCrucial && field.confidenceScore < appliedThreshold) {

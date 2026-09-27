@@ -12,8 +12,10 @@ import {
   ExpenseOcrResult,
   InvoiceLineItem,
   PagedResult,
+  SystemConfigItem,
   TaxDocumentTypeItem,
   TaxPeriodItem,
+  ThresholdResolveResponse,
 } from '../types/expense';
 
 /**
@@ -102,11 +104,41 @@ async function getFileBase64AndMime(file: {
 export function mapDocumentReviewToOcrResult(
   doc: DocumentReviewResponse,
   fallbackYear?: number,
-  documentTypes?: TaxDocumentTypeItem[]
+  documentTypes?: TaxDocumentTypeItem[],
+  systemConfigs?: Record<string, string>
 ): ExpenseOcrResult {
   const matchedType = documentTypes?.find((t) => t.code === doc.docTypeCode);
   const docTypeCode = doc.docTypeCode || '';
   const docTypeName = doc.docTypeName || matchedType?.name || (doc.docTypeCode ? doc.docTypeCode : 'Chứng từ chi phí');
+
+  // Tính ngưỡng tin cậy theo thứ tự ưu tiên 3 tầng từ Cấu hình AI & Ngưỡng OCR của Admin:
+  // Tầng 1: Ngưỡng riêng theo danh mục (vd: THRESHOLD_MEDICAL_EXPENSE_INVOICE) nếu Admin có cài
+  // Tầng 2: Ngưỡng nhận diện tối thiểu chung toàn hệ thống (AI_CONFIDENCE_THRESHOLD)
+  // Tầng 3: Giá trị mặc định an toàn (0.80)
+  let appliedThreshold = 0.8;
+  if (systemConfigs) {
+    if (docTypeCode) {
+      const specificKey = `THRESHOLD_${docTypeCode.trim().toUpperCase()}`;
+      const specificVal = systemConfigs[specificKey];
+      if (specificVal !== undefined && specificVal !== null && specificVal !== '') {
+        const num = parseFloat(String(specificVal).replace(',', '.'));
+        if (!isNaN(num) && num >= 0 && num <= 1) {
+          appliedThreshold = num;
+        }
+      }
+    }
+    // Nếu chưa nhận được ngưỡng riêng của danh mục, fallback về ngưỡng nhận diện tối thiểu chung
+    if (appliedThreshold === 0.8 && systemConfigs['AI_CONFIDENCE_THRESHOLD']) {
+      const generalVal = systemConfigs['AI_CONFIDENCE_THRESHOLD'];
+      const num = parseFloat(String(generalVal).replace(',', '.'));
+      if (!isNaN(num) && num >= 0 && num <= 1) {
+        appliedThreshold = num;
+      }
+    }
+  }
+
+  const overallConfidence = 0.95;
+  const isPassedThreshold = overallConfidence >= appliedThreshold;
 
   return {
     id: doc.id,
@@ -142,9 +174,9 @@ export function mapDocumentReviewToOcrResult(
       unitPrice: it.unitPrice ?? 0,
       totalPrice: it.totalPrice ?? (it.quantity ?? 1) * (it.unitPrice ?? 0),
     })),
-    overallConfidence: 0.95,
-    appliedThreshold: 0.8,
-    isPassedThreshold: true,
+    overallConfidence,
+    appliedThreshold,
+    isPassedThreshold,
     hasCrucialLowConfidence: false,
     fields: [],
     qualityEvaluation: {
@@ -157,7 +189,7 @@ export function mapDocumentReviewToOcrResult(
       isYearValid: doc.isYearValid ?? true,
       isDocTypeValid: doc.isTaxEligible ?? true,
       isIdentityValid: doc.isIdentityValid ?? true,
-      isPassedThreshold: true,
+      isPassedThreshold,
     },
     validationErrors: (() => {
       const errs: any[] = [];
@@ -293,9 +325,13 @@ async function resolveUserId(userId?: string): Promise<string | undefined> {
     if (token) {
       const parts = token.split('.');
       if (parts.length === 3) {
-        const payloadStr = atob(parts[1].replace(/-/g, '+').replace(/_/g, '/'));
-        const payload = JSON.parse(payloadStr);
-        return payload.userId || payload.sub;
+        const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+        const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
+        const payloadStr = typeof atob === 'function' ? atob(padded) : '';
+        if (payloadStr) {
+          const payload = JSON.parse(payloadStr);
+          return payload.userId || payload.sub || payload.nameid;
+        }
       }
     }
   } catch {}
@@ -384,9 +420,9 @@ export const expenseApi = {
       {
         headers: {
           Accept: 'application/json',
+          'Content-Type': undefined as unknown as string,
         },
-        transformRequest: (data) => data,
-        timeout: 60000,
+        timeout: 120000,
       }
     );
 
@@ -492,4 +528,46 @@ export const expenseApi = {
     );
     return res.data.data!;
   },
+
+  /**
+   * Lấy toàn bộ danh sách cấu hình hệ thống từ Admin (GET /api/admin/system-configs)
+   */
+  async getSystemConfigs(activeOnly = true): Promise<SystemConfigItem[]> {
+    try {
+      const res = await apiClient.get<any>(`/api/admin/system-configs`, {
+        params: { activeOnly },
+      });
+      const raw = res.data;
+      if (Array.isArray(raw)) return raw;
+      if (Array.isArray(raw?.value)) return raw.value;
+      if (Array.isArray(raw?.data)) return raw.data;
+      return [];
+    } catch (err) {
+      console.warn('Lỗi khi tải cấu hình hệ thống từ Backend:', err);
+      return [];
+    }
+  },
+
+  /**
+   * Truy vấn ngưỡng nhận diện resolved trực tiếp từ Backend cho từng loại chứng từ
+   * GET /api/admin/system-configs/threshold/test-resolve?categoryCode={categoryCode}
+   */
+  async resolveThreshold(categoryCode?: string | null): Promise<ThresholdResolveResponse> {
+    try {
+      const params = categoryCode ? { categoryCode } : {};
+      const res = await apiClient.get<ThresholdResolveResponse>(
+        `/api/admin/system-configs/threshold/test-resolve`,
+        { params }
+      );
+      return res.data;
+    } catch (err) {
+      console.warn('Lỗi khi resolve ngưỡng nhận diện từ Backend:', err);
+      return {
+        category_code: categoryCode || null,
+        resolved_threshold: 0.8,
+        note: 'Fallback do lỗi kết nối',
+      };
+    }
+  },
 };
+

@@ -22,6 +22,8 @@ interface ExpenseState {
   documents: Record<number, ExpenseOcrResult[]>;
   documentTypes: TaxDocumentTypeItem[];
   isDocumentTypesLoading: boolean;
+  systemConfigs: Record<string, string>;
+  isSystemConfigsLoading: boolean;
   isLoading: boolean;
   error: string | null;
 
@@ -34,6 +36,9 @@ interface ExpenseState {
   initPeriodForYear: (year: number, userId?: string) => Promise<TaxPeriodItem | null>;
   submitPeriodForYear: (year: number) => Promise<TaxPeriodItem>;
   fetchDocumentTypes: (isTaxEligible?: boolean) => Promise<TaxDocumentTypeItem[]>;
+  fetchSystemConfigs: () => Promise<Record<string, string>>;
+  getThresholdForCategory: (categoryCode?: string | null) => number;
+  getCrucialFieldsForCategory: (categoryCode?: string | null) => string[];
   addOrUpdateDocument: (year: number, document: ExpenseOcrResult) => Promise<void>;
   confirmDocument: (
     year: number,
@@ -54,6 +59,8 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
   documents: {},
   documentTypes: [],
   isDocumentTypesLoading: false,
+  systemConfigs: {},
+  isSystemConfigsLoading: false,
   isLoading: false,
   error: null,
 
@@ -228,6 +235,12 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
         return submittedPeriod;
       }
 
+      if (err?.response?.status === 401) {
+        // Phiên đăng nhập hết hạn hoặc chưa đăng nhập, không log warning hệ thống
+        set({ isLoading: false });
+        return null;
+      }
+
       if (err?.response?.status === 404) {
         // Kỳ tính thuế không tồn tại hoặc đã bị xóa trong DB
         get().removeYear(year);
@@ -271,6 +284,78 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
       set({ isDocumentTypesLoading: false });
       return get().documentTypes;
     }
+  },
+
+  fetchSystemConfigs: async () => {
+    set({ isSystemConfigsLoading: true });
+    try {
+      const list = await expenseApi.getSystemConfigs(true);
+      if (Array.isArray(list) && list.length > 0) {
+        const configMap: Record<string, string> = {};
+        for (const item of list) {
+          if (item && item.config_key) {
+            configMap[item.config_key] = item.config_value;
+          }
+        }
+        set({ systemConfigs: configMap, isSystemConfigsLoading: false });
+        get().saveToStorage();
+        return configMap;
+      }
+      set({ isSystemConfigsLoading: false });
+      return get().systemConfigs;
+    } catch (err) {
+      console.warn('Lỗi khi tải cấu hình hệ thống từ admin:', err);
+      set({ isSystemConfigsLoading: false });
+      return get().systemConfigs;
+    }
+  },
+
+  getThresholdForCategory: (categoryCode?: string | null) => {
+    const configs = get().systemConfigs;
+    // Tầng 1: Kiểm tra ngưỡng riêng theo danh mục (vd: THRESHOLD_MEDICAL_EXPENSE_INVOICE) do Admin cấu hình
+    if (categoryCode && typeof categoryCode === 'string') {
+      const specificKey = `THRESHOLD_${categoryCode.trim().toUpperCase()}`;
+      const specificVal = configs[specificKey];
+      if (specificVal !== undefined && specificVal !== null && specificVal !== '') {
+        const num = parseFloat(String(specificVal).replace(',', '.'));
+        if (!isNaN(num) && num >= 0 && num <= 1) {
+          return num;
+        }
+      }
+    }
+
+    // Tầng 2: Nếu danh mục chưa được cấu hình riêng, lấy Độ chính xác nhận diện tối thiểu chung (AI_CONFIDENCE_THRESHOLD)
+    const generalVal = configs['AI_CONFIDENCE_THRESHOLD'];
+    if (generalVal !== undefined && generalVal !== null && generalVal !== '') {
+      const num = parseFloat(String(generalVal).replace(',', '.'));
+      if (!isNaN(num) && num >= 0 && num <= 1) {
+        return num;
+      }
+    }
+
+    // Tầng 3: Fallback mặc định an toàn (0.80)
+    return 0.8;
+  },
+
+  getCrucialFieldsForCategory: (categoryCode?: string | null) => {
+    const configs = get().systemConfigs;
+    // Tầng 1: Kiểm tra trường cốt lõi theo danh mục CRUCIAL_FIELDS_{categoryCode}
+    if (categoryCode && typeof categoryCode === 'string') {
+      const specificKey = `CRUCIAL_FIELDS_${categoryCode.trim().toUpperCase()}`;
+      const specificVal = configs[specificKey];
+      if (specificVal && typeof specificVal === 'string' && specificVal.trim()) {
+        return specificVal.split(',').map((s) => s.trim()).filter(Boolean);
+      }
+    }
+
+    // Tầng 2: Kiểm tra trường cốt lõi chung toàn hệ thống CRUCIAL_EXTRACTION_FIELDS
+    const generalVal = configs['CRUCIAL_EXTRACTION_FIELDS'];
+    if (generalVal && typeof generalVal === 'string' && generalVal.trim()) {
+      return generalVal.split(',').map((s) => s.trim()).filter(Boolean);
+    }
+
+    // Tầng 3: Danh sách mặc định
+    return ['total_amount', 'seller_tax_code', 'buyer_id_card', 'invoice_number'];
   },
 
   addOrUpdateDocument: async (year: number, document: ExpenseOcrResult) => {
@@ -390,7 +475,7 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
 
   saveToStorage: async () => {
     try {
-      const { currentUserId, availableYears, periods, documents, selectedYear, documentTypes } = get();
+      const { currentUserId, availableYears, periods, documents, selectedYear, documentTypes, systemConfigs } = get();
       let targetUserId = currentUserId;
       if (!targetUserId) {
         try {
@@ -405,6 +490,7 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
         documents,
         selectedYear,
         documentTypes,
+        systemConfigs,
       });
       await storageHelper.setItem(key, payload);
     } catch (e) {
@@ -463,6 +549,7 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
             Array.isArray(parsed.documentTypes) && parsed.documentTypes.length > 0
               ? parsed.documentTypes
               : DEFAULT_DOCUMENT_TYPES,
+          systemConfigs: parsed.systemConfigs || {},
         });
       } else {
         set({

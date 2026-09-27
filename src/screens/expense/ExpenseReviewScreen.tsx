@@ -16,6 +16,7 @@ import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { HeaderMotif } from '../../components/common/HeaderMotif';
+import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { ExpenseOcrResult, InvoiceLineItem, ValidationErrorItem } from '../../types/expense';
 import {
@@ -46,7 +47,20 @@ export const ExpenseReviewScreen: React.FC = () => {
   const periodIdParam = route.params?.periodId || initialData.periodId;
 
   const { toast } = useToast();
-  const { addOrUpdateDocument, removeDocument, setSelectedYear, documentTypes, fetchDocumentTypes, documents, selectedYear, periods } = useExpenseStore();
+  const {
+    addOrUpdateDocument,
+    removeDocument,
+    setSelectedYear,
+    documentTypes,
+    fetchDocumentTypes,
+    systemConfigs,
+    fetchSystemConfigs,
+    getThresholdForCategory,
+    getCrucialFieldsForCategory,
+    documents,
+    selectedYear,
+    periods,
+  } = useExpenseStore();
 
   const activeTaxYear = selectedYear || initialData.extractedYear || new Date().getFullYear();
   const activePeriod = periods[activeTaxYear];
@@ -61,7 +75,10 @@ export const ExpenseReviewScreen: React.FC = () => {
   const [showDocTypeModal, setShowDocTypeModal] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<TabType>('KIEM_TRA');
 
-  useEffect(() => { fetchDocumentTypes(); }, [fetchDocumentTypes]);
+  useEffect(() => {
+    fetchDocumentTypes();
+    fetchSystemConfigs();
+  }, [fetchDocumentTypes, fetchSystemConfigs]);
 
   // Kiểm tra tính tồn tại của chứng từ trên máy chủ, nếu đã xóa trong DB thì quay lại
   useEffect(() => {
@@ -122,7 +139,83 @@ export const ExpenseReviewScreen: React.FC = () => {
     return calculateItemsTotal(initialData.items || []);
   });
 
-  const crucialCheck = validateCrucialFields(initialData.fields || [], initialData.appliedThreshold || 0.8);
+  // Truy vấn ngưỡng trực tiếp từ API Backend (test-resolve) nếu có kết nối mạng
+  const [serverResolvedThreshold, setServerResolvedThreshold] = useState<number | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    if (currentDocTypeCode) {
+      expenseApi
+        .resolveThreshold(currentDocTypeCode)
+        .then((res) => {
+          if (isMounted && res && typeof res.resolved_threshold === 'number') {
+            setServerResolvedThreshold(res.resolved_threshold);
+          }
+        })
+        .catch(() => {});
+    }
+    return () => {
+      isMounted = false;
+    };
+  }, [currentDocTypeCode]);
+
+  // Ngưỡng trích xuất OCR động lấy từ cấu hình Admin (3 tầng ưu tiên):
+  // Tầng 1: Ngưỡng riêng theo danh mục (vd: THRESHOLD_MEDICAL_EXPENSE_INVOICE = 0.85)
+  // Tầng 2: Ngưỡng nhận diện tối thiểu chung toàn hệ thống (AI_CONFIDENCE_THRESHOLD = 0.80)
+  // Tầng 3: Giá trị mặc định an toàn (0.80)
+  const dynamicThreshold = useMemo(() => {
+    if (serverResolvedThreshold !== null) {
+      return serverResolvedThreshold;
+    }
+    return getThresholdForCategory(currentDocTypeCode);
+  }, [serverResolvedThreshold, getThresholdForCategory, currentDocTypeCode, systemConfigs]);
+
+  // Danh sách trường cốt lõi theo cấu hình Admin (CRUCIAL_FIELDS_{category} hoặc CRUCIAL_EXTRACTION_FIELDS)
+  const effectiveCrucialFields = useMemo(() => {
+    return getCrucialFieldsForCategory(currentDocTypeCode);
+  }, [getCrucialFieldsForCategory, currentDocTypeCode, systemConfigs]);
+
+  const effectiveConfidence = initialData.overallConfidence !== undefined ? initialData.overallConfidence : 0.95;
+
+  const crucialCheck = useMemo(() => {
+    return validateCrucialFields(initialData.fields || [], dynamicThreshold, effectiveCrucialFields);
+  }, [initialData.fields, dynamicThreshold, effectiveCrucialFields]);
+
+  const isPassedThreshold = effectiveConfidence >= dynamicThreshold && !crucialCheck.hasCrucialLowConfidence;
+
+  // Ánh xạ nhãn tiếng Việt cho các trường cốt lõi
+  const CRUCIAL_FIELD_LABELS: Record<string, string> = {
+    total_amount: 'Tổng tiền thanh toán',
+    seller_tax_code: 'Mã số thuế bên bán',
+    buyer_id_card: 'Số CCCD người mua',
+    invoice_number: 'Số hóa đơn',
+    seller_name: 'Tên đơn vị bán',
+    invoice_date: 'Ngày lập hóa đơn',
+    buyer_name: 'Họ tên người mua',
+    buyer_tax_code: 'Mã số thuế người mua',
+  };
+
+  const crucialDisplayItems = useMemo(() => {
+    return effectiveCrucialFields.map((fieldKey) => {
+      const normKey = fieldKey.trim().toLowerCase();
+      const label = CRUCIAL_FIELD_LABELS[normKey] || fieldKey;
+      const matchingField = (initialData.fields || []).find((f) => {
+        const fNorm = f.fieldName.toLowerCase().replace(/([A-Z])/g, '_$1').toLowerCase();
+        return fNorm.includes(normKey) || normKey.includes(fNorm);
+      });
+      const isLowConfidence = matchingField
+        ? matchingField.confidenceScore < dynamicThreshold
+        : (crucialCheck.lowConfidenceCrucialFields || []).some(
+            (lf) => lf.toLowerCase().includes(normKey) || normKey.includes(lf.toLowerCase())
+          );
+
+      return {
+        key: fieldKey,
+        label,
+        isLowConfidence,
+      };
+    });
+  }, [effectiveCrucialFields, initialData.fields, dynamicThreshold, crucialCheck]);
 
   const isDuplicate = useMemo(() => {
     const year = selectedYear || initialData.extractedYear || new Date().getFullYear();
@@ -340,6 +433,9 @@ export const ExpenseReviewScreen: React.FC = () => {
         totalAmount: totalAmount,
         items: items,
         isNotReimbursed: isNotReimbursed,
+        appliedThreshold: dynamicThreshold,
+        overallConfidence: effectiveConfidence,
+        isPassedThreshold: isPassedThreshold,
         status: 'CONFIRMED',
       };
 
@@ -417,7 +513,8 @@ export const ExpenseReviewScreen: React.FC = () => {
   );
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={styles.safeArea} edges={['top']}>
+      <DrumPatternBackdrop variant="soft" />
       <HeaderMotif
         title={isReadOnly ? 'CHI TIẾT CHỨNG TỪ' : 'SOÁT XÉT HÓA ĐƠN'}
         onBack={() => navigation.goBack()}
@@ -540,35 +637,30 @@ export const ExpenseReviewScreen: React.FC = () => {
               <View style={styles.cardHeader}>
                 <Ionicons name="stats-chart-outline" size={15} color="#475569" />
                 <Text style={styles.cardHeaderTitle}>Mức độ tin cậy thông tin nhận diện</Text>
-                <Badge variant={initialData.isPassedThreshold !== false ? 'success' : 'warning'}>
-                  {initialData.isPassedThreshold !== false ? 'Đạt yêu cầu' : 'Cần xem lại'}
+                <Badge variant={isPassedThreshold ? 'success' : 'warning'}>
+                  {isPassedThreshold ? 'Đạt yêu cầu' : 'Cần xem lại'}
                 </Badge>
               </View>
               <View style={styles.confidenceBar}>
                 <View style={[styles.confidenceFill, {
-                  width: `${Math.min(100, Math.round((initialData.overallConfidence || 0.92) * 100))}%`,
-                  backgroundColor: initialData.isPassedThreshold !== false ? '#16A34A' : '#D97706',
+                  width: `${Math.min(100, Math.round(effectiveConfidence * 100))}%`,
+                  backgroundColor: isPassedThreshold ? '#16A34A' : '#D97706',
                 }]} />
               </View>
               <Text style={styles.confidencePct}>
-                {Math.round((initialData.overallConfidence || 0.92) * 100)}% / Ngưỡng {Math.round((initialData.appliedThreshold || 0.8) * 100)}%
+                {Math.round(effectiveConfidence * 100)}% / Ngưỡng {Math.round(dynamicThreshold * 100)}%
               </Text>
 
-              {/* 4 điểm kiểm tra */}
+              {/* Các điểm kiểm tra trường cốt lõi theo cấu hình admin */}
               <View style={styles.checkGrid}>
-                {[
-                  'Tổng tiền thanh toán',
-                  'Mã số thuế bên bán',
-                  'Số CCCD người mua',
-                  'Số hóa đơn',
-                ].map((name) => (
-                  <View key={name} style={styles.checkItem}>
+                {crucialDisplayItems.map((item) => (
+                  <View key={item.key} style={styles.checkItem}>
                     <Ionicons
-                      name={crucialCheck.hasCrucialLowConfidence ? 'alert-circle-outline' : 'checkmark-circle-outline'}
+                      name={item.isLowConfidence ? 'alert-circle-outline' : 'checkmark-circle-outline'}
                       size={14}
-                      color={crucialCheck.hasCrucialLowConfidence ? '#D97706' : '#16A34A'}
+                      color={item.isLowConfidence ? '#D97706' : '#16A34A'}
                     />
-                    <Text style={styles.checkText}>{name}</Text>
+                    <Text style={styles.checkText}>{item.label}</Text>
                   </View>
                 ))}
               </View>
@@ -897,7 +989,7 @@ export const ExpenseReviewScreen: React.FC = () => {
 };
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#F8F5EE' },
+  safeArea: { flex: 1, backgroundColor: theme.colors.background },
   // Sticky header
   stickyHeader: {
     flexDirection: 'row',
@@ -905,9 +997,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 10,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'rgba(255, 255, 255, 0.90)',
     borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
+    borderBottomColor: theme.colors.border,
   },
   stickyLeft: { flexDirection: 'row', alignItems: 'center', flex: 1 },
   stickyIconCircle: { width: 36, height: 36, borderRadius: 6, alignItems: 'center', justifyContent: 'center' },
@@ -918,9 +1010,9 @@ const styles = StyleSheet.create({
   // Tabs
   tabBar: {
     flexDirection: 'row',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'rgba(255, 255, 255, 0.90)',
     borderBottomWidth: 1,
-    borderBottomColor: '#E2E8F0',
+    borderBottomColor: theme.colors.border,
     paddingHorizontal: 16,
   },
   tabItem: {
@@ -943,7 +1035,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: theme.colors.border,
     padding: 14,
     marginBottom: 12,
     shadowOpacity: 0,

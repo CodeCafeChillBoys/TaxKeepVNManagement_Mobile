@@ -143,6 +143,21 @@ export interface TaxDocumentTypeItem {
   categoryGroup?: string;
 }
 
+export interface SystemConfigItem {
+  config_key: string;
+  config_value: string;
+  data_type: string;
+  description?: string;
+  is_active: boolean;
+  is_deleted?: boolean;
+}
+
+export interface ThresholdResolveResponse {
+  category_code?: string | null;
+  resolved_threshold: number;
+  note?: string;
+}
+
 export interface BatchUploadResponse {
   periodId: string;
   totalUploaded: number;

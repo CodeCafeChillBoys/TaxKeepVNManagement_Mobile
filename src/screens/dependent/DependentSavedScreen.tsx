@@ -43,7 +43,7 @@ export const DependentSavedScreen: React.FC = () => {
 
   return (
     <View style={styles.safe}>
-      <StatusBar style="dark" translucent backgroundColor="transparent" />
+      <StatusBar style="dark" />
       <SavedPattern />
       <ScrollView
         contentContainerStyle={styles.scroll}
@@ -146,7 +146,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8F5EE',
   },
   pattern: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
   },
   wash: {
     position: 'absolute',

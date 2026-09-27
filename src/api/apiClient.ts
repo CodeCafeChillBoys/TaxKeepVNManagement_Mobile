@@ -52,11 +52,23 @@ apiClient.interceptors.request.use(
     if (token && reqConfig.headers) {
       reqConfig.headers.Authorization = `Bearer ${token}`;
     }
-    // Khi gửi FormData, xóa Content-Type để React Native / trình duyệt tự tạo boundary
-    if (reqConfig.data && typeof FormData !== 'undefined' && reqConfig.data instanceof FormData) {
-      if (reqConfig.headers) {
-        delete reqConfig.headers['Content-Type'];
+    // Khi gửi FormData trong React Native hoặc Web, cần xóa Content-Type để runtime tự tạo multipart boundary
+    const isFormData =
+      reqConfig.data &&
+      ((typeof FormData !== 'undefined' && reqConfig.data instanceof FormData) ||
+        Boolean((reqConfig.data as any)?._parts) ||
+        (reqConfig.data as any)?.constructor?.name === 'FormData' ||
+        typeof (reqConfig.data as any)?.append === 'function');
+
+    if (isFormData && reqConfig.headers) {
+      if (typeof (reqConfig.headers as any).delete === 'function') {
+        (reqConfig.headers as any).delete('Content-Type');
+        (reqConfig.headers as any).delete('content-type');
       }
+      delete reqConfig.headers['Content-Type'];
+      delete reqConfig.headers['content-type'];
+      (reqConfig.headers as any)['Content-Type'] = undefined;
+      (reqConfig.headers as any)['content-type'] = undefined;
     }
     return reqConfig;
   },
@@ -71,6 +83,10 @@ apiClient.interceptors.response.use(
       await storageHelper.removeItem(config.storageKeys.accessToken);
       await storageHelper.removeItem(config.storageKeys.refreshToken);
       await storageHelper.removeItem(config.storageKeys.userData);
+      try {
+        const { useAuthStore } = await import('../stores/useAuthStore');
+        useAuthStore.setState({ token: null, user: null, isAuthenticated: false });
+      } catch {}
     }
     if (error.response?.status === 400) {
       console.warn(

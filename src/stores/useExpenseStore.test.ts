@@ -113,4 +113,53 @@ describe('useExpenseStore', () => {
     docs = useExpenseStore.getState().documents[currentYear];
     expect(docs).toHaveLength(0);
   });
+
+  describe('dynamic threshold resolution based on admin system configs', () => {
+    it('resolves category-specific threshold when configured by admin', () => {
+      useExpenseStore.setState({
+        systemConfigs: {
+          AI_CONFIDENCE_THRESHOLD: '0.80',
+          THRESHOLD_MEDICAL_EXPENSE_INVOICE: '0.85',
+        },
+      });
+
+      const threshold = useExpenseStore.getState().getThresholdForCategory('MEDICAL_EXPENSE_INVOICE');
+      expect(threshold).toBe(0.85);
+    });
+
+    it('falls back to general AI_CONFIDENCE_THRESHOLD when category has no specific threshold', () => {
+      useExpenseStore.setState({
+        systemConfigs: {
+          AI_CONFIDENCE_THRESHOLD: '0.80',
+          THRESHOLD_MEDICAL_EXPENSE_INVOICE: '0.85',
+        },
+      });
+
+      const threshold = useExpenseStore.getState().getThresholdForCategory('VAT_INVOICE');
+      expect(threshold).toBe(0.80);
+    });
+
+    it('falls back to safe default 0.80 when no configs are present', () => {
+      useExpenseStore.setState({ systemConfigs: {} });
+
+      const threshold = useExpenseStore.getState().getThresholdForCategory('UNKNOWN_TYPE');
+      expect(threshold).toBe(0.80);
+    });
+
+    it('resolves crucial fields dynamically from admin configs', () => {
+      useExpenseStore.setState({
+        systemConfigs: {
+          CRUCIAL_EXTRACTION_FIELDS: 'total_amount,seller_tax_code,buyer_id_card,invoice_number',
+          CRUCIAL_FIELDS_CUSTOM: 'total_amount,seller_tax_code',
+        },
+      });
+
+      const customFields = useExpenseStore.getState().getCrucialFieldsForCategory('CUSTOM');
+      expect(customFields).toEqual(['total_amount', 'seller_tax_code']);
+
+      const defaultFields = useExpenseStore.getState().getCrucialFieldsForCategory('OTHER');
+      expect(defaultFields).toEqual(['total_amount', 'seller_tax_code', 'buyer_id_card', 'invoice_number']);
+    });
+  });
 });
+

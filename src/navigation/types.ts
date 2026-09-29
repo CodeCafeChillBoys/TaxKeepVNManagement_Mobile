@@ -48,6 +48,12 @@ export type RootStackParamList = {
   ExpenseList: undefined;
   ExpenseUpload: { targetYear?: number; periodId?: string } | undefined;
   ExpenseReview: { ocrResult: import('../types/expense').ExpenseOcrResult; periodId?: string; isReadOnly?: boolean };
+  ExpertList: undefined;
+  ExpertDetail: { expertId: string };
+  ExpertBooking: { expertId: string; slotId?: string };
+  ExpertPayment: { bookingId: string };
+  ExpertConsultationDetail: { bookingId: string };
+  ExpertDashboard: undefined;
 };
 
 export type RootNavigationProp = NativeStackNavigationProp<RootStackParamList>;

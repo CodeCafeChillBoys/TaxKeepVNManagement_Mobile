@@ -9,6 +9,8 @@ export const fontAssets = {
 };
 
 export const fonts = {
+  primary: 'BeVietnamPro_400Regular',
+  bodyRegular: 'BeVietnamPro_400Regular',
   body: 'BeVietnamPro_400Regular',
   bodyMedium: 'BeVietnamPro_500Medium',
   bodySemi: 'BeVietnamPro_600SemiBold',

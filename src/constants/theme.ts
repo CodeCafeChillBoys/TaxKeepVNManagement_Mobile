@@ -22,6 +22,7 @@ export const theme = {
     textPrimary: '#1E1E1E',
     textSecondary: '#666666',
     textPlaceholder: '#9E9E9E',
+    textMuted: '#64748B',
     textOnPrimary: '#FFFFFF',
     
     // Borders & Dividers

@@ -379,7 +379,7 @@ export const HomeScreen: React.FC = () => {
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.shortcutCell, styles.shortcutBorderRight]}
+            style={[styles.shortcutCell, styles.shortcutBorderRight, styles.shortcutBorderBottom]}
             onPress={() => navigation.navigate('IncomeSourceList')}
             testID="homeIncomeSourceCard"
             accessibilityRole="button"
@@ -390,7 +390,7 @@ export const HomeScreen: React.FC = () => {
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={styles.shortcutCell}
+            style={[styles.shortcutCell, styles.shortcutBorderBottom]}
             onPress={() => navigation.navigate('ExpenseList')}
             testID="homeExpenseListCard"
             accessibilityRole="button"
@@ -398,6 +398,28 @@ export const HomeScreen: React.FC = () => {
           >
             <Ionicons name="receipt-outline" size={20} color={theme.colors.primary} />
             <Text style={styles.shortcutLabel}>Hóa đơn chi phí</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.shortcutCell, styles.shortcutBorderRight]}
+            onPress={() => navigation.navigate('ExpertList')}
+            testID="homeExpertListCard"
+            accessibilityRole="button"
+            accessibilityLabel="Tư vấn chuyên gia"
+          >
+            <Ionicons name="people-outline" size={20} color={theme.colors.primary} />
+            <Text style={styles.shortcutLabel}>Tư vấn chuyên gia</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.shortcutCell}
+            onPress={() => navigation.navigate('ExpertDashboard')}
+            testID="homeExpertDashboardCard"
+            accessibilityRole="button"
+            accessibilityLabel="Góc nhìn chuyên gia"
+          >
+            <Ionicons name="briefcase-outline" size={20} color={theme.colors.primary} />
+            <Text style={styles.shortcutLabel}>Góc nhìn chuyên gia</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>

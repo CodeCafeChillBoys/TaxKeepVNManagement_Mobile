@@ -20,6 +20,12 @@ import { ScanIdentityScreen } from '../screens/common/ScanIdentityScreen';
 import { ExpenseListScreen } from '../screens/expense/ExpenseListScreen';
 import { ExpenseUploadScreen } from '../screens/expense/ExpenseUploadScreen';
 import { ExpenseReviewScreen } from '../screens/expense/ExpenseReviewScreen';
+import { ExpertListScreen } from '../screens/expert/ExpertListScreen';
+import { ExpertDetailScreen } from '../screens/expert/ExpertDetailScreen';
+import { ExpertBookingScreen } from '../screens/expert/ExpertBookingScreen';
+import { ExpertPaymentScreen } from '../screens/expert/ExpertPaymentScreen';
+import { ExpertConsultationDetailScreen } from '../screens/expert/ExpertConsultationDetailScreen';
+import { ExpertDashboardScreen } from '../screens/expert/ExpertDashboardScreen';
 import { useAuthStore } from '../stores/useAuthStore';
 import { theme } from '../constants/theme';
 
@@ -77,6 +83,12 @@ export const RootNavigator: React.FC = () => {
         <Stack.Screen name="ExpenseList" component={ExpenseListScreen} />
         <Stack.Screen name="ExpenseUpload" component={ExpenseUploadScreen} />
         <Stack.Screen name="ExpenseReview" component={ExpenseReviewScreen} />
+        <Stack.Screen name="ExpertList" component={ExpertListScreen} />
+        <Stack.Screen name="ExpertDetail" component={ExpertDetailScreen} />
+        <Stack.Screen name="ExpertBooking" component={ExpertBookingScreen} />
+        <Stack.Screen name="ExpertPayment" component={ExpertPaymentScreen} />
+        <Stack.Screen name="ExpertConsultationDetail" component={ExpertConsultationDetailScreen} />
+        <Stack.Screen name="ExpertDashboard" component={ExpertDashboardScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

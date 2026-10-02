@@ -1,0 +1,14 @@
+﻿{
+    "success":  true,
+    "message":  "Đóng gói hồ sơ quyết toán thành công (0 chứng từ đính kèm). Đường dẫn tải có hiệu lực trong 30 phút.",
+    "data":  {
+                 "dossierId":  "5b978e1f-03d7-486c-952d-49b17960a2fc",
+                 "fileName":  "HoSoQuyetToan_TNCN_2026_5B978E1F.zip",
+                 "downloadUrl":  "/api/v1/tax-settlements/download/eyJEb3NzaWVySWQiOiI1Yjk3OGUxZi0wM2Q3LTQ4NmMtOTUyZC00OWIxNzk2MGEyZmMiLCJUYXhwYXllcklkIjoiMTk3NGEzOTAtMTc2ZC00ZjVlLTgxNzktNDA3ZTRkMDA1MzMzIiwiRmlsZVR5cGUiOiJ6aXAiLCJSZWxhdGl2ZUZpbGVQYXRoIjoiL3VwbG9hZHMvdGF4LXNldHRsZW1lbnRzLzIwMjYvSG9Tb1F1eWV0VG9hbl9UTkNOXzIwMjZfNUI5NzhFMUYuemlwIiwiRG93bmxvYWRGaWxlTmFtZSI6IkhvU29RdXlldFRvYW5fVE5DTl8yMDI2XzVCOTc4RTFGLnppcCIsIkV4cGlyZXNBdCI6IjIwMjYtMTAtMDFUMDg6NDc6MTAuMjM1MDExMVoifQ.jzUlYa0nd7yyGH31YTD7aavYs4zc65P_9kuzHOGXRPg",
+                 "expiresAt":  "2026-10-01T08:47:10.2352425Z",
+                 "fileSizeBytes":  82099,
+                 "totalDocumentsIncluded":  0,
+                 "message":  "Đóng gói hồ sơ quyết toán thành công (0 chứng từ đính kèm). Đường dẫn tải có hiệu lực trong 30 phút."
+             },
+    "errors":  null
+}

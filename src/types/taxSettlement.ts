@@ -89,6 +89,53 @@ export interface TaxSettlementListItem {
   lockedAt?: string | null;
 }
 
+/** POST …/{id}/export-pdf — body optional, BE fallback Profile */
+export interface TaxSettlementExportPdfRequest {
+  taxOfficeName?: string | null;
+  taxCode?: string | null;
+  bankAccountNumber?: string | null;
+  bankName?: string | null;
+  contactAddress?: string | null;
+  phoneNumber?: string | null;
+  email?: string | null;
+}
+
+/** POST …/{id}/export-zip — kế thừa PDF + note */
+export interface TaxSettlementExportZipRequest extends TaxSettlementExportPdfRequest {
+  note?: string | null;
+}
+
+/** Response JSON sau export-zip */
+export interface TaxSettlementPackageZipResponse {
+  dossierId: string;
+  fileName: string;
+  downloadUrl: string;
+  expiresAt: string;
+  fileSizeBytes: number;
+  totalDocumentsIncluded: number;
+  message: string;
+}
+
+export function formatFileSize(bytes: number | null | undefined): string {
+  const n = Number(bytes ?? 0);
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `~${(n / 1024).toFixed(0)} KB`;
+  return `~${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+export function formatExpiresAt(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString('vi-VN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+}
+
 export function formatVnd(amount: number | null | undefined): string {
   const n = Number(amount ?? 0);
   return `${n.toLocaleString('vi-VN')} đ`;

@@ -25,6 +25,10 @@ import { SettlementPreviewScreen } from '../screens/settlement/SettlementPreview
 import { SettlementSuccessScreen } from '../screens/settlement/SettlementSuccessScreen';
 import { SettlementListScreen } from '../screens/settlement/SettlementListScreen';
 import { SettlementDetailScreen } from '../screens/settlement/SettlementDetailScreen';
+import { SettlementExportFormScreen } from '../screens/settlement/SettlementExportFormScreen';
+import { SettlementPdfViewerScreen } from '../screens/settlement/SettlementPdfViewerScreen';
+import { SettlementZipReadyScreen } from '../screens/settlement/SettlementZipReadyScreen';
+import { SettlementDownloadExpiredScreen } from '../screens/settlement/SettlementDownloadExpiredScreen';
 import { useAuthStore } from '../stores/useAuthStore';
 import { theme } from '../constants/theme';
 
@@ -87,6 +91,10 @@ export const RootNavigator: React.FC = () => {
         <Stack.Screen name="SettlementSuccess" component={SettlementSuccessScreen} />
         <Stack.Screen name="SettlementList" component={SettlementListScreen} />
         <Stack.Screen name="SettlementDetail" component={SettlementDetailScreen} />
+        <Stack.Screen name="SettlementExportForm" component={SettlementExportFormScreen} />
+        <Stack.Screen name="SettlementPdfViewer" component={SettlementPdfViewerScreen} />
+        <Stack.Screen name="SettlementZipReady" component={SettlementZipReadyScreen} />
+        <Stack.Screen name="SettlementDownloadExpired" component={SettlementDownloadExpiredScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

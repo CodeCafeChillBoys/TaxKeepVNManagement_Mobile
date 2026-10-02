@@ -20,6 +20,11 @@ import { ScanIdentityScreen } from '../screens/common/ScanIdentityScreen';
 import { ExpenseListScreen } from '../screens/expense/ExpenseListScreen';
 import { ExpenseUploadScreen } from '../screens/expense/ExpenseUploadScreen';
 import { ExpenseReviewScreen } from '../screens/expense/ExpenseReviewScreen';
+import { SettlementStartScreen } from '../screens/settlement/SettlementStartScreen';
+import { SettlementPreviewScreen } from '../screens/settlement/SettlementPreviewScreen';
+import { SettlementSuccessScreen } from '../screens/settlement/SettlementSuccessScreen';
+import { SettlementListScreen } from '../screens/settlement/SettlementListScreen';
+import { SettlementDetailScreen } from '../screens/settlement/SettlementDetailScreen';
 import { useAuthStore } from '../stores/useAuthStore';
 import { theme } from '../constants/theme';
 
@@ -77,6 +82,11 @@ export const RootNavigator: React.FC = () => {
         <Stack.Screen name="ExpenseList" component={ExpenseListScreen} />
         <Stack.Screen name="ExpenseUpload" component={ExpenseUploadScreen} />
         <Stack.Screen name="ExpenseReview" component={ExpenseReviewScreen} />
+        <Stack.Screen name="SettlementStart" component={SettlementStartScreen} />
+        <Stack.Screen name="SettlementPreview" component={SettlementPreviewScreen} />
+        <Stack.Screen name="SettlementSuccess" component={SettlementSuccessScreen} />
+        <Stack.Screen name="SettlementList" component={SettlementListScreen} />
+        <Stack.Screen name="SettlementDetail" component={SettlementDetailScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

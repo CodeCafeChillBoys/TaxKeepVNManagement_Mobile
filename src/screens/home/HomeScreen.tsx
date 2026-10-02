@@ -379,7 +379,7 @@ export const HomeScreen: React.FC = () => {
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.shortcutCell, styles.shortcutBorderRight]}
+            style={[styles.shortcutCell, styles.shortcutBorderRight, styles.shortcutBorderBottom]}
             onPress={() => navigation.navigate('IncomeSourceList')}
             testID="homeIncomeSourceCard"
             accessibilityRole="button"
@@ -390,7 +390,7 @@ export const HomeScreen: React.FC = () => {
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={styles.shortcutCell}
+            style={[styles.shortcutCell, styles.shortcutBorderBottom]}
             onPress={() => navigation.navigate('ExpenseList')}
             testID="homeExpenseListCard"
             accessibilityRole="button"
@@ -398,6 +398,17 @@ export const HomeScreen: React.FC = () => {
           >
             <Ionicons name="receipt-outline" size={20} color={theme.colors.primary} />
             <Text style={styles.shortcutLabel}>Hóa đơn chi phí</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.shortcutCell, styles.shortcutFullWidth]}
+            onPress={() => navigation.navigate('SettlementStart')}
+            testID="homeSettlementCard"
+            accessibilityRole="button"
+            accessibilityLabel="Quyết toán thuế"
+          >
+            <Ionicons name="calculator-outline" size={20} color={theme.colors.primary} />
+            <Text style={styles.shortcutLabel}>Quyết toán thuế</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -713,6 +724,9 @@ const styles = StyleSheet.create({
   shortcutBorderBottom: {
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
+  },
+  shortcutFullWidth: {
+    width: '100%',
   },
   shortcutLabel: {
     ...theme.typography.fieldLabel,

@@ -48,6 +48,22 @@ export type RootStackParamList = {
   ExpenseList: undefined;
   ExpenseUpload: { targetYear?: number; periodId?: string } | undefined;
   ExpenseReview: { ocrResult: import('../types/expense').ExpenseOcrResult; periodId?: string; isReadOnly?: boolean };
+  SettlementStart: undefined;
+  SettlementPreview: {
+    taxYear: number;
+    cutoffDate?: string;
+    charityDeduction?: number;
+  };
+  SettlementSuccess: {
+    dossierId: string;
+    taxYear: number;
+    cutoffDate: string;
+    refundAmount: number;
+    dueAmount: number;
+    summaryMessage: string;
+  };
+  SettlementList: undefined;
+  SettlementDetail: { id: string };
 };
 
 export type RootNavigationProp = NativeStackNavigationProp<RootStackParamList>;

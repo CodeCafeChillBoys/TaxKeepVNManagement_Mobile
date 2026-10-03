@@ -67,10 +67,44 @@ export const SettlementDetailScreen: React.FC = () => {
           </TouchableOpacity>
         </View>
       ) : preview ? (
-        <ScrollView contentContainerStyle={styles.scroll} testID="settlementDetailScroll">
-          <SettlementResultBlocks preview={preview} locked />
-          <Text style={styles.idHint}>Mã nội bộ: {preview.dossierId || params.id}</Text>
-        </ScrollView>
+        <>
+          <ScrollView contentContainerStyle={styles.scroll} testID="settlementDetailScroll">
+            <SettlementResultBlocks preview={preview} locked />
+            <Text style={styles.idHint}>Mã nội bộ: {preview.dossierId || params.id}</Text>
+          </ScrollView>
+          {String(preview.status).toUpperCase() === 'LOCKED' ? (
+            <View style={styles.footer}>
+              <TouchableOpacity
+                style={styles.exportBtn}
+                testID="settlementDetailPdf"
+                onPress={() =>
+                  navigation.navigate('SettlementExportForm', {
+                    dossierId: preview.dossierId || params.id,
+                    taxYear: preview.taxYear,
+                    refundAmount: preview.refundAmount,
+                  })
+                }
+              >
+                <Ionicons name="document-text-outline" size={18} color={theme.colors.primary} />
+                <Text style={styles.exportBtnText}>Tờ khai PDF</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.exportBtn}
+                testID="settlementDetailZip"
+                onPress={() =>
+                  navigation.navigate('SettlementExportForm', {
+                    dossierId: preview.dossierId || params.id,
+                    taxYear: preview.taxYear,
+                    refundAmount: preview.refundAmount,
+                  })
+                }
+              >
+                <Ionicons name="archive-outline" size={18} color={theme.colors.primary} />
+                <Text style={styles.exportBtnText}>Hồ sơ ZIP</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+        </>
       ) : null}
     </SafeAreaView>
   );
@@ -97,4 +131,26 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#999',
   },
+  footer: {
+    flexDirection: 'row',
+    gap: 10,
+    paddingHorizontal: 20,
+    paddingBottom: 18,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#DED7CB',
+    backgroundColor: theme.colors.background,
+  },
+  exportBtn: {
+    flex: 1,
+    height: 48,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: theme.colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 6,
+  },
+  exportBtnText: { fontFamily: fonts.bodyBold, fontSize: 14, color: theme.colors.primary },
 });

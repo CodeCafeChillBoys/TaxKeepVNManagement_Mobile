@@ -64,6 +64,25 @@ export type RootStackParamList = {
   };
   SettlementList: undefined;
   SettlementDetail: { id: string };
+  SettlementExportForm: {
+    dossierId: string;
+    taxYear?: number;
+    refundAmount?: number;
+  };
+  SettlementPdfViewer: {
+    dossierId: string;
+    form: import('../types/taxSettlement').TaxSettlementExportPdfRequest;
+  };
+  SettlementZipReady: {
+    dossierId: string;
+    form: import('../types/taxSettlement').TaxSettlementExportZipRequest;
+    refundAmount?: number;
+    package?: import('../types/taxSettlement').TaxSettlementPackageZipResponse;
+  };
+  SettlementDownloadExpired: {
+    dossierId: string;
+    refundAmount?: number;
+  };
 };
 
 export type RootNavigationProp = NativeStackNavigationProp<RootStackParamList>;

@@ -41,7 +41,14 @@ export type RootStackParamList = {
         };
       }
     | undefined;
-  IncomeSourceList: undefined;
+  IncomeSourceList: { view?: 'yearly' | 'monthly' } | undefined;
+  /** Thêm / sửa thu nhập 1 tháng (bảng incomes, có OCR phiếu lương) */
+  IncomeMonthForm: {
+    year: number;
+    item?: import('../types/income').IncomeMonthItem;
+    /** Danh sách hiện có để cảnh báo trùng tổ chức + tháng (BE chưa chặn) */
+    groups?: import('../types/income').IncomeCompanyGroup[];
+  };
   ChangePassword: undefined;
   LawConditions: undefined;
   DependentList: undefined;

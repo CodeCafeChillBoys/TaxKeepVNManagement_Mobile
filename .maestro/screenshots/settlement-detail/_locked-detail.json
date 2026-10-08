@@ -1,0 +1,86 @@
+﻿{
+    "success":  true,
+    "message":  "Lấy chi tiết hồ sơ quyết toán thành công.",
+    "data":  {
+                 "dossierId":  "cb8a5cf5-2ffa-4673-a8be-86a658f7c14f",
+                 "taxYear":  2026,
+                 "cutoffDate":  "2026-12-31",
+                 "lawGroupLabel":  "Luật 109/2025/QH15 (áp dụng từ 2026) — 5 bậc thuế",
+                 "incomeItems":  [
+
+                                 ],
+                 "totalGrossIncome":  450000000.00,
+                 "totalTaxWithheld":  25000000.00,
+                 "totalInsuranceDeduction":  47250000.00,
+                 "dependentItems":  [
+
+                                    ],
+                 "personalDeductionMonthlyRate":  15500000,
+                 "personalDeductionMonths":  12,
+                 "personalDeductionAmount":  186000000.00,
+                 "dependentMonthlyRate":  6200000,
+                 "dependentDeductionPersonMonths":  12,
+                 "dependentDeductionAmount":  74400000.00,
+                 "charityDeduction":  0.00,
+                 "medicalDeduction":  1000000.00,
+                 "educationDeduction":  0.00,
+                 "totalDeductions":  308650000.00,
+                 "taxableIncomeYearly":  141350000.00,
+                 "taxableIncomeMonthly":  11779167.00,
+                 "bracketDetails":  [
+                                        {
+                                            "bracketNo":  1,
+                                            "fromMonthly":  0,
+                                            "toMonthly":  10000000,
+                                            "rate":  0.05,
+                                            "taxableMonthly":  0,
+                                            "taxMonthly":  0,
+                                            "isApplied":  false
+                                        },
+                                        {
+                                            "bracketNo":  2,
+                                            "fromMonthly":  10000000,
+                                            "toMonthly":  30000000,
+                                            "rate":  0.1,
+                                            "taxableMonthly":  11779167.00,
+                                            "taxMonthly":  677917,
+                                            "isApplied":  true
+                                        },
+                                        {
+                                            "bracketNo":  3,
+                                            "fromMonthly":  30000000,
+                                            "toMonthly":  60000000,
+                                            "rate":  0.2,
+                                            "taxableMonthly":  0,
+                                            "taxMonthly":  0,
+                                            "isApplied":  false
+                                        },
+                                        {
+                                            "bracketNo":  4,
+                                            "fromMonthly":  60000000,
+                                            "toMonthly":  100000000,
+                                            "rate":  0.3,
+                                            "taxableMonthly":  0,
+                                            "taxMonthly":  0,
+                                            "isApplied":  false
+                                        },
+                                        {
+                                            "bracketNo":  5,
+                                            "fromMonthly":  100000000,
+                                            "toMonthly":  null,
+                                            "rate":  0.35,
+                                            "taxableMonthly":  0,
+                                            "taxMonthly":  0,
+                                            "isApplied":  false
+                                        }
+                                    ],
+                 "appliedBracketNo":  2,
+                 "taxPayableMonthly":  677917,
+                 "taxPayable":  8135004.00,
+                 "refundAmount":  16864996.00,
+                 "dueAmount":  0.00,
+                 "summaryMessage":  "✅ Bạn nộp thừa 16,864,996 VNĐ — Đủ điều kiện đề nghị hoàn thuế!",
+                 "status":  "LOCKED"
+             },
+    "errors":  null
+}

@@ -125,7 +125,7 @@ export const SettlementExportFormScreen: React.FC = () => {
 
             <Section num="01" title="Thông tin thuế">
               <Field label="Cơ quan thuế" value={taxOfficeName} onChange={setTaxOfficeName} placeholder="VD: Cục Thuế TP. Hồ Chí Minh" testID="exportTaxOffice" />
-              <Field label="Mã số thuế" value={taxCode} onChange={setTaxCode} placeholder="MST của bạn" keyboardType="number-pad" testID="exportTaxCode" />
+              <Field label="Mã số thuế" value={taxCode} onChange={setTaxCode} placeholder="" keyboardType="number-pad" testID="exportTaxCode" />
             </Section>
 
             <Section num="02" title="Hoàn thuế">

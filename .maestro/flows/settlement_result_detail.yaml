@@ -1,0 +1,233 @@
+# Settlement result detail screenshots — Expo Go
+# Tài khoản: 038195123456 / @Buidang2409
+# Ảnh: .maestro/screenshots/settlement-detail/
+appId: host.exp.exponent
+name: settlement_result_detail
+tags:
+  - settlement
+  - manual
+---
+- launchApp:
+    appId: host.exp.exponent
+    clearState: false
+- openLink: exp://10.0.2.2:8081
+- extendedWaitUntil:
+    visible: ".*Đăng nhập.*|.*Quyết toán.*|.*Xin chào.*|.*Trang chủ.*|.*CCCD.*"
+    timeout: 120000
+
+# Login nếu đang ở màn đăng nhập
+- runFlow:
+    when:
+      visible: ".*Đăng nhập.*|.*CCCD.*|.*mật khẩu.*"
+    commands:
+      - tapOn:
+          text: ".*CCCD.*|.*căn cước.*|.*Email.*"
+          optional: true
+      - eraseText
+      - inputText: "038195123456"
+      - tapOn:
+          text: ".*mật khẩu.*|.*Mật khẩu.*"
+          optional: true
+      - eraseText
+      - inputText: "@Buidang2409"
+      - hideKeyboard
+      - tapOn:
+          text: "Đăng nhập"
+      - extendedWaitUntil:
+          visible: "OK|Xin chào|Quyết toán|Trang chủ"
+          timeout: 30000
+      - runFlow:
+          when:
+            visible: "OK"
+          commands:
+            - tapOn: "OK"
+
+- extendedWaitUntil:
+    visible: ".*Quyết toán.*"
+    timeout: 30000
+
+# Vào quyết toán
+- tapOn:
+    id: "homeSettlementCard"
+    optional: true
+- runFlow:
+    when:
+      notVisible:
+        id: "settlementPreviewBtn"
+    commands:
+      - tapOn:
+          text: ".*Quyết toán.*"
+- extendedWaitUntil:
+    visible:
+      id: "settlementPreviewBtn"
+    timeout: 20000
+
+# Năm 2026
+- tapOn:
+    id: "settlementYear_2026"
+- waitForAnimationToEnd
+
+# ===== Kịch bản 1: từ thiện = 0 =====
+- tapOn:
+    id: "settlementPreviewBtn"
+- extendedWaitUntil:
+    visible:
+      id: "settlementPreviewScroll"
+    timeout: 30000
+- takeScreenshot: screenshots/settlement-detail/01-hero
+
+# Mở 01 Thu nhập (đóng Kết luận nếu đang mở)
+- scrollUntilVisible:
+    element: "Thu nhập"
+    direction: DOWN
+    timeout: 8000
+- tapOn: "Thu nhập"
+- waitForAnimationToEnd
+- takeScreenshot: screenshots/settlement-detail/02-income
+- assertVisible: ".*Tổng thu nhập chịu thuế.*"
+- assertVisible: ".*Bảo hiểm bắt buộc đã trích.*"
+- assertVisible: ".*Thuế đã khấu trừ tại nguồn.*"
+- assertVisible: ".*Gồm .* nơi chi trả.*"
+- assertVisible: ".*Chỉ gồm thu nhập chịu thuế.*"
+
+# Mở công ty đầu tiên (Viettel / Quân đội) — fallback ABC
+- runFlow:
+    when:
+      visible: ".*Viễn thông.*|.*Quân đội.*|.*Công nghiệp.*"
+    commands:
+      - tapOn: ".*Viễn thông.*|.*Quân đội.*|.*Công nghiệp.*"
+- runFlow:
+    when:
+      notVisible: ".*Mã số thuế tổ chức.*"
+    commands:
+      - tapOn: ".*Dich vu So ABC.*|.*ABC.*"
+- waitForAnimationToEnd
+- takeScreenshot: screenshots/settlement-detail/03-income-company-expanded
+- assertVisible: ".*Mã số thuế tổ chức.*"
+- assertVisible: ".*Tỷ trọng.*"
+- assertVisible: ".*Bảo hiểm bắt buộc đã trích.*"
+
+# 02 Người phụ thuộc
+- scrollUntilVisible:
+    element: "Người phụ thuộc"
+    direction: DOWN
+    timeout: 8000
+- tapOn: "Người phụ thuộc"
+- waitForAnimationToEnd
+- tapOn: ".*Bảo Minh.*|.*Minh.*"
+- waitForAnimationToEnd
+- takeScreenshot: screenshots/settlement-detail/04-dependent-expanded
+- assertVisible: ".*Quan hệ.*"
+- assertVisible: ".*Thời gian được tính.*"
+- assertVisible: ".*Số tháng.*"
+- assertVisible: ".*Cách tính.*"
+
+# 03 Giảm trừ
+- scrollUntilVisible:
+    element: "Giảm trừ"
+    direction: DOWN
+    timeout: 8000
+- tapOn: "Giảm trừ"
+- waitForAnimationToEnd
+- takeScreenshot: screenshots/settlement-detail/05-deductions
+- assertVisible: ".*Bảo hiểm bắt buộc.*"
+- assertNotVisible: ".*Đóng góp từ thiện, nhân đạo.*"
+- assertVisible: ".*Y tế, giáo dục.*"
+
+# 04 Bậc thuế
+- scrollUntilVisible:
+    element: "Bậc thuế"
+    direction: DOWN
+    timeout: 8000
+- tapOn: "Bậc thuế"
+- waitForAnimationToEnd
+- takeScreenshot: screenshots/settlement-detail/06-brackets
+- scrollUntilVisible:
+    element: ".*giống tiền điện.*|.*Thuế phải nộp cả năm.*"
+    direction: DOWN
+    timeout: 10000
+- takeScreenshot: screenshots/settlement-detail/07-brackets-table
+- assertVisible: ".*TNTT cả năm.*|.*TNTT bình quân tháng.*"
+- assertVisible: ".*Thuế mỗi tháng.*"
+
+# 05 Kết luận
+- scrollUntilVisible:
+    element: "Kết luận"
+    direction: DOWN
+    timeout: 8000
+- tapOn: "Kết luận"
+- waitForAnimationToEnd
+- takeScreenshot: screenshots/settlement-detail/08-summary
+
+# 06 Ghi chú thuật ngữ
+- scrollUntilVisible:
+    element: "Ghi chú thuật ngữ"
+    direction: DOWN
+    timeout: 8000
+- tapOn: "Ghi chú thuật ngữ"
+- waitForAnimationToEnd
+- takeScreenshot: screenshots/settlement-detail/09-glossary
+
+# ===== Kịch bản 2: từ thiện 1.000.000 — không chốt =====
+- tapOn:
+    id: "settlementPreviewBack"
+- extendedWaitUntil:
+    visible:
+      id: "settlementPreviewBtn"
+    timeout: 15000
+- tapOn: "Tuỳ chọn"
+- tapOn:
+    id: "settlementCharityInput"
+- eraseText
+- inputText: "1000000"
+- hideKeyboard
+- tapOn:
+    id: "settlementPreviewBtn"
+- extendedWaitUntil:
+    visible:
+      id: "settlementPreviewScroll"
+    timeout: 30000
+- scrollUntilVisible:
+    element: "Giảm trừ"
+    direction: DOWN
+    timeout: 8000
+- tapOn: "Giảm trừ"
+- waitForAnimationToEnd
+- takeScreenshot: screenshots/settlement-detail/10-deductions-charity
+- assertVisible: ".*Đóng góp từ thiện, nhân đạo.*"
+- assertVisible: ".*chứng từ.*"
+# Không bấm settlementOpenConfirm
+
+# ===== Kịch bản 3: chi tiết bản đã chốt =====
+- tapOn:
+    id: "settlementPreviewBack"
+- extendedWaitUntil:
+    visible:
+      id: "settlementStartGoList"
+    timeout: 15000
+- tapOn:
+    id: "settlementStartGoList"
+- extendedWaitUntil:
+    visible: ".*2026.*|.*ĐÃ CHỐT.*|.*LOCKED.*|.*Hồ sơ.*"
+    timeout: 20000
+- tapOn:
+    text: ".*2026.*"
+    index: 0
+- extendedWaitUntil:
+    visible:
+      id: "settlementDetailScroll"
+    timeout: 20000
+- scrollUntilVisible:
+    element: "Bậc thuế"
+    direction: DOWN
+    timeout: 8000
+- tapOn: "Bậc thuế"
+- waitForAnimationToEnd
+- takeScreenshot: screenshots/settlement-detail/11-detail-brackets
+- scrollUntilVisible:
+    element: "Thu nhập"
+    direction: UP
+    timeout: 8000
+- tapOn: "Thu nhập"
+- waitForAnimationToEnd
+- takeScreenshot: screenshots/settlement-detail/12-detail-income

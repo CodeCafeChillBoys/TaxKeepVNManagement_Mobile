@@ -29,6 +29,11 @@ import { SettlementExportFormScreen } from '../screens/settlement/SettlementExpo
 import { SettlementPdfViewerScreen } from '../screens/settlement/SettlementPdfViewerScreen';
 import { SettlementZipReadyScreen } from '../screens/settlement/SettlementZipReadyScreen';
 import { SettlementDownloadExpiredScreen } from '../screens/settlement/SettlementDownloadExpiredScreen';
+import { ExpertListScreen } from '../screens/consultation/ExpertListScreen';
+import { ExpertDetailScreen } from '../screens/consultation/ExpertDetailScreen';
+import { BookingCreateScreen } from '../screens/consultation/BookingCreateScreen';
+import { MyBookingsScreen } from '../screens/consultation/MyBookingsScreen';
+import { BookingDetailScreen } from '../screens/consultation/BookingDetailScreen';
 import { useAuthStore } from '../stores/useAuthStore';
 import { theme } from '../constants/theme';
 
@@ -95,6 +100,11 @@ export const RootNavigator: React.FC = () => {
         <Stack.Screen name="SettlementPdfViewer" component={SettlementPdfViewerScreen} />
         <Stack.Screen name="SettlementZipReady" component={SettlementZipReadyScreen} />
         <Stack.Screen name="SettlementDownloadExpired" component={SettlementDownloadExpiredScreen} />
+        <Stack.Screen name="ExpertList" component={ExpertListScreen} />
+        <Stack.Screen name="ExpertDetail" component={ExpertDetailScreen} />
+        <Stack.Screen name="BookingCreate" component={BookingCreateScreen} />
+        <Stack.Screen name="MyBookings" component={MyBookingsScreen} />
+        <Stack.Screen name="BookingDetail" component={BookingDetailScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

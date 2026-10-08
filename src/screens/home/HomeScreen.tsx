@@ -355,6 +355,41 @@ export const HomeScreen: React.FC = () => {
           ))
         )}
 
+        {/* ── BANNER TƯ VẤN CHUYÊN GIA THUẾ ── */}
+        <View style={styles.consultBannerCard} testID="homeConsultBanner">
+          <View style={styles.consultBannerHeader}>
+            <View style={styles.consultBannerTag}>
+              <Ionicons name="ribbon" size={12} color="#FFFFFF" />
+              <Text style={styles.consultBannerTagText}>TƯ VẤN CHUYÊN GIA</Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => navigation.navigate('MyBookings', {})}
+              style={styles.myBookingsLink}
+              accessibilityRole="button"
+              accessibilityLabel="Lịch hẹn của tôi"
+            >
+              <Ionicons name="calendar-outline" size={13} color={theme.colors.primary} />
+              <Text style={styles.myBookingsLinkText}>Lịch hẹn của tôi</Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.consultBannerTitle}>Đặt lịch tư vấn thuế cùng chuyên gia</Text>
+          <Text style={styles.consultBannerSubtitle}>
+            Hỗ trợ giải đáp chuyên sâu về thuế TNCN, quyết toán & hoàn thuế với đội ngũ chuyên gia đã xác thực chứng chỉ hành nghề.
+          </Text>
+          <View style={styles.consultBannerBtnRow}>
+            <TouchableOpacity
+              style={styles.consultBannerPrimaryBtn}
+              onPress={() => navigation.navigate('ExpertList')}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="Tìm và đặt lịch ngay"
+            >
+              <Ionicons name="search" size={15} color="#FFFFFF" />
+              <Text style={styles.consultBannerPrimaryBtnText}>Tìm & Đặt lịch ngay</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
         <View style={styles.shortcutGrid} testID="homeShortcutGrid">
           <TouchableOpacity
             style={[styles.shortcutCell, styles.shortcutBorderRight, styles.shortcutBorderBottom]}
@@ -398,6 +433,28 @@ export const HomeScreen: React.FC = () => {
           >
             <Ionicons name="receipt-outline" size={20} color={theme.colors.primary} />
             <Text style={styles.shortcutLabel}>Hóa đơn chi phí</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.shortcutCell, styles.shortcutBorderRight, styles.shortcutBorderBottom]}
+            onPress={() => navigation.navigate('ExpertList')}
+            testID="homeExpertListCard"
+            accessibilityRole="button"
+            accessibilityLabel="Tư vấn chuyên gia"
+          >
+            <Ionicons name="chatbubbles-outline" size={20} color={theme.colors.primary} />
+            <Text style={styles.shortcutLabel}>Tư vấn chuyên gia</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.shortcutCell, styles.shortcutBorderBottom]}
+            onPress={() => navigation.navigate('MyBookings', {})}
+            testID="homeMyBookingsCard"
+            accessibilityRole="button"
+            accessibilityLabel="Lịch hẹn tư vấn"
+          >
+            <Ionicons name="calendar-outline" size={20} color={theme.colors.primary} />
+            <Text style={styles.shortcutLabel}>Lịch hẹn tư vấn</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -698,6 +755,80 @@ const styles = StyleSheet.create({
   todoItemSubtitle: {
     ...theme.typography.helper,
     color: theme.colors.textSecondary,
+  },
+  consultBannerCard: {
+    marginTop: 18,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1.5,
+    borderColor: '#E8D5B5',
+    ...theme.shadows.card,
+  },
+  consultBannerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  consultBannerTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: theme.colors.primary,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+    gap: 4,
+  },
+  consultBannerTagText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 10,
+    color: '#FFFFFF',
+    letterSpacing: 0.5,
+  },
+  myBookingsLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  myBookingsLinkText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 11,
+    color: theme.colors.primary,
+  },
+  consultBannerTitle: {
+    fontFamily: fonts.serifBold,
+    fontSize: 15,
+    color: theme.colors.primaryDark,
+    lineHeight: 20,
+    marginBottom: 4,
+  },
+  consultBannerSubtitle: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: '#555555',
+    lineHeight: 17,
+    marginBottom: 12,
+  },
+  consultBannerBtnRow: {
+    flexDirection: 'row',
+  },
+  consultBannerPrimaryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: theme.colors.primary,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 6,
+    gap: 6,
+    ...theme.shadows.button,
+  },
+  consultBannerPrimaryBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12,
+    color: '#FFFFFF',
   },
   shortcutGrid: {
     marginTop: 18,

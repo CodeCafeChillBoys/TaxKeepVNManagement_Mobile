@@ -83,6 +83,11 @@ export type RootStackParamList = {
     dossierId: string;
     refundAmount?: number;
   };
+  ExpertList: undefined;
+  ExpertDetail: { expertProfileId: string };
+  BookingCreate: { expertProfileId: string; initialSlotId?: string; specializationId?: number };
+  MyBookings: { initialStatus?: string } | undefined;
+  BookingDetail: { bookingId: string };
 };
 
 export type RootNavigationProp = NativeStackNavigationProp<RootStackParamList>;

@@ -49,6 +49,8 @@ export type RootStackParamList = {
     /** Danh sách hiện có để cảnh báo trùng tổ chức + tháng (BE chưa chặn) */
     groups?: import('../types/income').IncomeCompanyGroup[];
   };
+  /** Tải chứng từ khấu trừ thuế TNCN → đối chiếu với thu nhập theo tháng → lưu */
+  WithholdingVoucher: { year?: number } | undefined;
   ChangePassword: undefined;
   LawConditions: undefined;
   DependentList: undefined;

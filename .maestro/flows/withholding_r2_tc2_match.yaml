@@ -1,0 +1,26 @@
+# TC2 – Sửa khớp số liệu trên màn TC1, kỳ vọng alert Đã lưu chứng từ
+appId: host.exp.exponent
+name: withholding_r2_tc2_match
+---
+- tapOn:
+    id: voucherInput_totalIncome
+- eraseText: 40
+- inputText: "282692304"
+- tapOn:
+    id: voucherInput_taxWithheld
+- eraseText: 40
+- inputText: "2693304"
+- assertNotVisible:
+    id: voucherMismatch
+- tapOn:
+    id: voucherConfirmBtn
+- extendedWaitUntil:
+    visible: "Đã lưu chứng từ"
+    timeout: 15000
+- tapOn: "OK"
+- waitForAnimationToEnd:
+    timeout: 4000
+- tapOn:
+    id: incomeView_yearly
+- waitForAnimationToEnd:
+    timeout: 3000

@@ -20,6 +20,7 @@ import { fonts } from '../../constants/fonts';
 import { DrumHeader } from '../../components/brand/DrumHeader';
 import { DocumentViewerModal } from '../../components/common/DocumentViewerModal';
 import { incomeApi } from '../../api/incomeApi';
+import type { OcrImagePart } from '../../api/ocrApi';
 import { PayslipOcrData } from '../../types/income';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import {
@@ -57,6 +58,8 @@ export function IncomeMonthFormScreen() {
   const [formError, setFormError] = useState('');
   const [scanError, setScanError] = useState('');
   const [viewerOpen, setViewerOpen] = useState(false);
+  // Ảnh phiếu lương đã quét — BE chỉ lưu ảnh khi gửi kèm lúc tạo thu nhập
+  const [payslipFile, setPayslipFile] = useState<OcrImagePart | null>(null);
 
   const lowFields = ocr?.thresholdValidation?.lowConfidenceFields ?? [];
   const duplicate = findDuplicateMonth(params.groups ?? [], values, editing?.id);
@@ -88,16 +91,18 @@ export function IncomeMonthFormScreen() {
       if (result.canceled || !result.assets?.length) return;
 
       const asset = result.assets[0];
+      const picked: OcrImagePart = {
+        uri: asset.uri,
+        name: asset.fileName ?? `payslip_${Date.now()}.jpg`,
+        type: asset.mimeType ?? 'image/jpeg',
+      };
       setScanning(true);
       setScanError('');
       const month = Number(values.month) || undefined;
       const year = Number(values.year) || params.year;
-      const data = await incomeApi.extractPayslip(
-        { uri: asset.uri, name: asset.fileName ?? `payslip_${Date.now()}.jpg`, type: asset.mimeType ?? 'image/jpeg' },
-        month,
-        year
-      );
+      const data = await incomeApi.extractPayslip(picked, month, year);
       setOcr(data);
+      setPayslipFile(picked);
       // Ô nào AI không đọc được (rỗng) thì giữ giá trị người dùng đã nhập
       const filled = fromPayslipOcr(data, { month, year });
       setValues((prev) => {
@@ -123,7 +128,7 @@ export function IncomeMonthFormScreen() {
     try {
       const body = toIncomeRequest(values);
       if (editing) await incomeApi.update(editing.id, body);
-      else await incomeApi.create(body);
+      else await incomeApi.create(body, payslipFile ?? undefined);
       navigation.goBack();
     } catch (err) {
       setFormError(extractApiErrorMessage(err, 'Không lưu được thu nhập. Vui lòng thử lại.'));
@@ -285,14 +290,16 @@ export function IncomeMonthFormScreen() {
           {field('insuranceDeducted', 'Bảo hiểm bắt buộc đã trích (BHXH, BHYT, BHTN)', { money: true, required: true, placeholder: '0' })}
           {field('taxAlreadyDeducted', 'Thuế TNCN đã khấu trừ', { money: true, placeholder: '0' })}
 
-          {values.payslipFileUrl ? (
+          {values.payslipFileUrl || payslipFile ? (
             <TouchableOpacity
               style={styles.attach}
               onPress={() => setViewerOpen(true)}
               testID="payslipAttachment"
             >
               <Ionicons name="document-attach-outline" size={16} color={theme.colors.primary} />
-              <Text style={styles.attachText}>Đã đính kèm ảnh phiếu lương · bấm để xem</Text>
+              <Text style={styles.attachText}>
+              {values.payslipFileUrl ? 'Đã đính kèm ảnh phiếu lương · bấm để xem' : 'Ảnh phiếu lương sẽ được lưu kèm · bấm để xem'}
+            </Text>
             </TouchableOpacity>
           ) : null}
 
@@ -337,9 +344,9 @@ export function IncomeMonthFormScreen() {
         visible={viewerOpen}
         onClose={() => setViewerOpen(false)}
         document={
-          values.payslipFileUrl
+          values.payslipFileUrl || payslipFile
             ? {
-                uri: values.payslipFileUrl,
+                uri: values.payslipFileUrl || payslipFile!.uri,
                 title: 'Ảnh phiếu lương',
                 subtitle: `${values.organizationName || 'Phiếu lương'} · tháng ${values.month || '?'}/${values.year}`,
                 fileName: `Phiếu lương tháng ${values.month || '?'}/${values.year}`,

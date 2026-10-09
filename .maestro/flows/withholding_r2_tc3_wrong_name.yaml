@@ -1,0 +1,44 @@
+# TC3 – Upload KHOP.png, tên CONG TY KHONG TON TAI, kỳ vọng voucherMismatch hệ thống 0
+appId: host.exp.exponent
+name: withholding_r2_tc3_wrong_name
+---
+- tapOn:
+    id: uploadWithholdingVoucherBtn
+- extendedWaitUntil:
+    visible:
+      id: voucherYear_2025
+    timeout: 10000
+- tapOn:
+    id: voucherYear_2025
+- tapOn:
+    id: voucherPickLibrary
+- waitForAnimationToEnd:
+    timeout: 5000
+- tapOn:
+    id: voucherUploadBtn
+- extendedWaitUntil:
+    visible:
+      id: voucherExtractStatus
+    timeout: 30000
+- tapOn:
+    id: voucherInput_companyName
+- eraseText: 100
+- inputText: "CONG TY KHONG TON TAI"
+- tapOn:
+    id: voucherInput_totalIncome
+- eraseText: 40
+- inputText: "282692304"
+- tapOn:
+    id: voucherInput_taxWithheld
+- eraseText: 40
+- inputText: "2693304"
+- tapOn:
+    id: voucherInput_insuranceDeducted
+- eraseText: 40
+- inputText: "28980000"
+- tapOn:
+    id: voucherConfirmBtn
+- waitForAnimationToEnd:
+    timeout: 5000
+- assertVisible:
+    id: voucherMismatch

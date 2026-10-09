@@ -23,8 +23,30 @@ export function createIncomeApi(http: AxiosInstance) {
     return res.data?.data;
   }
 
-  async function create(body: IncomeUpsertRequest): Promise<IncomeMonthItem> {
-    const res = await http.post('/api/v1/incomes', body);
+  /**
+   * BE nhận [FromForm] (multipart) — ảnh phiếu lương gửi kèm khi lưu (OCR không còn tự lưu ảnh).
+   * Sửa (PUT) vẫn nhận JSON.
+   */
+  async function create(body: IncomeUpsertRequest, payslipFile?: OcrImagePart): Promise<IncomeMonthItem> {
+    const form = new FormData();
+    form.append('OrganizationName', body.organizationName);
+    if (body.taxIdNumber) form.append('TaxIdNumber', body.taxIdNumber);
+    form.append('Month', String(body.month));
+    form.append('Year', String(body.year));
+    form.append('TotalTaxableIncome', String(body.totalTaxableIncome));
+    form.append('InsuranceDeducted', String(body.insuranceDeducted));
+    form.append('TaxAlreadyDeducted', String(body.taxAlreadyDeducted));
+    if (payslipFile) {
+      form.append('PayslipFile', {
+        uri: payslipFile.uri,
+        name: payslipFile.name ?? 'payslip.jpg',
+        type: payslipFile.type ?? 'image/jpeg',
+      } as unknown as Blob);
+    }
+
+    const res = await http.post('/api/v1/incomes', form, {
+      headers: { 'Content-Type': undefined as unknown as string },
+    });
     return res.data?.data;
   }
 

@@ -1,0 +1,32 @@
+# TC4 – Validation form trống + thuế > thu nhập
+appId: host.exp.exponent
+name: withholding_r2_tc4_form
+---
+- tapOn:
+    id: voucherInput_companyName
+- eraseText: 100
+- tapOn:
+    id: voucherInput_totalIncome
+- eraseText: 40
+- inputText: "0"
+- tapOn:
+    id: voucherConfirmBtn
+- assertVisible:
+    id: voucherFormError
+- assertVisible: "Vui lòng kiểm tra lại các ô được đánh dấu đỏ."
+- tapOn:
+    id: voucherInput_companyName
+- eraseText: 100
+- setClipboard: "CÔNG TY CỔ PHẦN CÔNG NGHỆ FPT"
+- pasteText
+- tapOn:
+    id: voucherInput_totalIncome
+- eraseText: 40
+- inputText: "1000"
+- tapOn:
+    id: voucherInput_taxWithheld
+- eraseText: 40
+- inputText: "2000"
+- tapOn:
+    id: voucherConfirmBtn
+- assertVisible: "Thuế đã khấu trừ không được lớn hơn tổng thu nhập."

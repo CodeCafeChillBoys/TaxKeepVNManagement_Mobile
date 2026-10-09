@@ -47,9 +47,7 @@ describe('incomeApi', () => {
     await expect(createIncomeApi(http).getMyIncomes(2026)).resolves.toEqual([]);
   });
 
-  it('create POSTs body và trả bản ghi', async () => {
-    const http = createHttpMock();
-    http.post.mockResolvedValue({ data: { success: true, data: month } });
+  describe('create', () => {
     const body = {
       organizationName: 'Công ty A',
       taxIdNumber: '0100109106',
@@ -60,8 +58,41 @@ describe('incomeApi', () => {
       taxAlreadyDeducted: 1_200_000,
       payslipFileUrl: null,
     };
-    await expect(createIncomeApi(http).create(body)).resolves.toEqual(month);
-    expect(http.post).toHaveBeenCalledWith('/api/v1/incomes', body);
+
+    it('POSTs multipart/form-data (BE nhận [FromForm]) và trả bản ghi', async () => {
+      const http = createHttpMock();
+      http.post.mockResolvedValue({ data: { success: true, data: month } });
+
+      await expect(createIncomeApi(http).create(body)).resolves.toEqual(month);
+
+      const [url, form, cfg] = http.post.mock.calls[0];
+      expect(url).toBe('/api/v1/incomes');
+      expect(form).toBeInstanceOf(FormData);
+      expect(form.get('OrganizationName')).toBe('Công ty A');
+      expect(form.get('TaxIdNumber')).toBe('0100109106');
+      expect(form.get('Month')).toBe('3');
+      expect(form.get('Year')).toBe('2026');
+      expect(form.get('TotalTaxableIncome')).toBe('30000000');
+      expect(form.get('InsuranceDeducted')).toBe('3150000');
+      expect(form.get('TaxAlreadyDeducted')).toBe('1200000');
+      expect(form.has('PayslipFile')).toBe(false);
+      // Để axios/RN tự gắn boundary cho multipart
+      expect(cfg.headers['Content-Type']).toBeUndefined();
+    });
+
+    it('bỏ qua TaxIdNumber khi trống', async () => {
+      const http = createHttpMock();
+      http.post.mockResolvedValue({ data: { success: true, data: month } });
+      await createIncomeApi(http).create({ ...body, taxIdNumber: null });
+      expect(http.post.mock.calls[0][1].has('TaxIdNumber')).toBe(false);
+    });
+
+    it('gửi kèm ảnh phiếu lương khi có', async () => {
+      const http = createHttpMock();
+      http.post.mockResolvedValue({ data: { success: true, data: month } });
+      await createIncomeApi(http).create(body, { uri: 'file:///p.jpg', name: 'p.jpg', type: 'image/jpeg' });
+      expect(http.post.mock.calls[0][1].has('PayslipFile')).toBe(true);
+    });
   });
 
   it('update PUTs theo id', async () => {

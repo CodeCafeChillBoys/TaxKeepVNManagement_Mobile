@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -15,7 +15,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
+import { RouteProp, useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
@@ -112,9 +112,12 @@ export const IncomeSourceListScreen: React.FC = () => {
     [selectedYearFilter]
   );
 
-  useEffect(() => {
-    fetchIncomeSources();
-  }, [fetchIncomeSources]);
+  // Tải lại mỗi khi quay về màn (vd. sau khi lưu chứng từ khấu trừ) và khi đổi năm
+  useFocusEffect(
+    useCallback(() => {
+      fetchIncomeSources();
+    }, [fetchIncomeSources])
+  );
 
   // Mở modal thêm mới
   const handleOpenCreateModal = () => {
@@ -347,6 +350,20 @@ export const IncomeSourceListScreen: React.FC = () => {
       <Text style={styles.pageLead}>
         Cơ quan chi trả lương, dùng khi đối soát và quyết toán thuế thu nhập cá nhân.
       </Text>
+
+      <TouchableOpacity
+        style={styles.voucherBtn}
+        onPress={() =>
+          navigation.navigate('WithholdingVoucher', {
+            year: selectedYearFilter || new Date().getFullYear(),
+          })
+        }
+        accessibilityRole="button"
+        testID="uploadWithholdingVoucherBtn"
+      >
+        <Ionicons name="document-text-outline" size={18} color={theme.colors.primary} />
+        <Text style={styles.voucherBtnText}>Tải chứng từ khấu trừ</Text>
+      </TouchableOpacity>
 
       {/* 2.1 Bộ chọn năm tính thuế (Tabs TaxYear) */}
       <View style={styles.yearFilterRow}>
@@ -800,6 +817,23 @@ const styles = StyleSheet.create({
     color: '#444444',
     paddingHorizontal: 22,
     paddingTop: 8,
+  },
+  voucherBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderColor: theme.colors.primary,
+    borderRadius: 10,
+    paddingVertical: 10,
+    marginHorizontal: 22,
+    marginTop: 10,
+  },
+  voucherBtnText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 14,
+    color: theme.colors.primary,
   },
   banner: {
     flexDirection: 'row',

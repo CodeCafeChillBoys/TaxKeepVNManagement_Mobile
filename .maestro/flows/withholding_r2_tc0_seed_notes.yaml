@@ -1,0 +1,9 @@
+# TC0 notes (r2):
+# - Month 1: created via app (withholding_r2_tc0_month1.yaml / Maestro MCP)
+# - Months 2-12: POST /api/v1/incomes multipart/form-data (curl) — HTTP 201
+# - Duplicate month 1: app warning + incomeFormError DUPLICATE text
+appId: host.exp.exponent
+name: withholding_r2_tc0_seed_notes
+---
+- assertVisible:
+    id: mainTab_IncomeSourceList

@@ -11,6 +11,7 @@ import { ProfileScreen } from '../screens/profile/ProfileScreen';
 import { EditProfileScreen } from '../screens/profile/EditProfileScreen';
 import { IncomeSourceListScreen } from '../screens/incomeSource/IncomeSourceListScreen';
 import { IncomeMonthFormScreen } from '../screens/income/IncomeMonthFormScreen';
+import { WithholdingVoucherScreen } from '../screens/incomeSource/WithholdingVoucherScreen';
 import { ChangePasswordScreen } from '../screens/auth/ChangePasswordScreen';
 import { LawConditionsScreen } from '../screens/home/LawConditionsScreen';
 import { TaxRegistrationScreen } from '../screens/dependent/TaxRegistrationScreen';
@@ -78,6 +79,7 @@ export const RootNavigator: React.FC = () => {
         <Stack.Screen name="EditProfile" component={EditProfileScreen} />
         <Stack.Screen name="IncomeSourceList" component={IncomeSourceListScreen} options={tabScreenOptions} />
         <Stack.Screen name="IncomeMonthForm" component={IncomeMonthFormScreen} />
+        <Stack.Screen name="WithholdingVoucher" component={WithholdingVoucherScreen} />
         <Stack.Screen name="ChangePassword" component={ChangePasswordScreen} />
         <Stack.Screen name="LawConditions" component={LawConditionsScreen} />
         <Stack.Screen name="TaxRegistration" component={TaxRegistrationScreen} />

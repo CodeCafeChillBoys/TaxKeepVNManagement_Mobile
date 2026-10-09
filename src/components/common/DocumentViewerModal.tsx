@@ -25,6 +25,8 @@ export interface DocumentViewerItem {
   uploadedAt?: string;
   isReadable?: boolean;
   mimeType?: string;
+  /** Thay dòng trạng thái mặc định ("Đang xử lý • Ngày nộp…") khi tài liệu không thuộc luồng duyệt giấy tờ */
+  subtitle?: string;
 }
 
 interface DocumentViewerModalProps {
@@ -93,6 +95,11 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
             <Text style={styles.headerTitle} numberOfLines={1}>
               {document.title || 'Giấy tờ minh chứng'}
             </Text>
+            {document.subtitle ? (
+              <Text style={styles.headerSubtitle} numberOfLines={1}>
+                {document.subtitle}
+              </Text>
+            ) : (
             <View style={styles.headerMetaRow}>
               <Ionicons
                 name={document.isReadable ? 'checkmark-circle' : 'time-outline'}
@@ -104,6 +111,7 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
                 {document.isReadable ? 'Đã duyệt hợp lệ' : 'Đang xử lý'} • Ngày nộp: {displayDate}
               </Text>
             </View>
+            )}
           </View>
         </View>
 

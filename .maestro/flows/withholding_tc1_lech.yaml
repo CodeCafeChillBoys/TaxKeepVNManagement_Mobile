@@ -1,0 +1,113 @@
+# TC1 – Chứng từ lệch số (LECH.png)
+appId: host.exp.exponent
+name: withholding_tc1_lech
+---
+- tapOn:
+    id: mainTab_IncomeSourceList
+- waitForAnimationToEnd:
+    timeout: 3000
+- tapOn:
+    id: incomeView_yearly
+- waitForAnimationToEnd:
+    timeout: 2000
+- tapOn:
+    id: yearFilterTab_2025
+- waitForAnimationToEnd:
+    timeout: 2000
+- takeScreenshot:
+    path: screenshots/withholding-voucher/01-yearly-2025-before-tc1
+
+- addMedia:
+    - "../assets/withholding-voucher/chungtu_khautru_2025_LECH.png"
+    - "../assets/withholding-voucher/chungtu_khautru_2025_KHOP.png"
+
+- tapOn:
+    id: uploadWithholdingVoucherBtn
+- extendedWaitUntil:
+    visible:
+      id: voucherYear_2025
+    timeout: 15000
+- tapOn:
+    id: voucherYear_2025
+- waitForAnimationToEnd:
+    timeout: 1000
+- tapOn:
+    id: voucherPickLibrary
+- waitForAnimationToEnd:
+    timeout: 3000
+- extendedWaitUntil:
+    visible: "Recent|Photos|This app can only|Permission|Allow"
+    timeout: 20000
+- runFlow:
+    when:
+      visible: "Allow|WHILE USING|While using"
+    commands:
+      - tapOn: "Allow|WHILE USING|While using the app"
+- waitForAnimationToEnd:
+    timeout: 2000
+- takeScreenshot:
+    path: screenshots/withholding-voucher/01-picker-lech
+# Hàng 1: ưu tiên ảnh LECH (thường cột trái hoặc giữa sau addMedia)
+- tapOn:
+    point: "17%,25%"
+- waitForAnimationToEnd:
+    timeout: 3000
+- extendedWaitUntil:
+    visible:
+      id: voucherUploadBtn
+    timeout: 15000
+- assertVisible:
+    id: voucherSelectedFile
+- takeScreenshot:
+    path: screenshots/withholding-voucher/01-file-selected
+- tapOn:
+    id: voucherUploadBtn
+- extendedWaitUntil:
+    visible:
+      id: voucherExtractStatus
+    timeout: 120000
+- takeScreenshot:
+    path: screenshots/withholding-voucher/01-after-extract
+# Chụp giá trị OCR tự điền (trước khi nhập tay)
+- takeScreenshot:
+    path: screenshots/withholding-voucher/01-ocr-autofill
+
+# Nhập lại 3 ô tiền theo TC1
+- scrollUntilVisible:
+    element:
+      id: voucherInput_totalIncome
+    direction: DOWN
+    timeout: 10000
+    visibilityPercentage: 40
+- tapOn:
+    id: voucherInput_totalIncome
+- eraseText
+- inputText: "290000000"
+- tapOn:
+    id: voucherInput_taxWithheld
+- eraseText
+- inputText: "3100000"
+- tapOn:
+    id: voucherInput_insuranceDeducted
+- eraseText
+- inputText: "28980000"
+- hideKeyboard
+- takeScreenshot:
+    path: screenshots/withholding-voucher/01-form-before-confirm
+- scrollUntilVisible:
+    element:
+      id: voucherConfirmBtn
+    direction: DOWN
+    timeout: 10000
+    visibilityPercentage: 40
+- tapOn:
+    id: voucherConfirmBtn
+- waitForAnimationToEnd:
+    timeout: 5000
+- extendedWaitUntil:
+    visible:
+      id: voucherMismatch
+    timeout: 30000
+    optional: true
+- takeScreenshot:
+    path: screenshots/withholding-voucher/01-tc1-result

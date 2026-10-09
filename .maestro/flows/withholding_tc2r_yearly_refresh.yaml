@@ -1,0 +1,76 @@
+# TC2R – Sau lưu chứng từ, màn Nơi chi trả tự hiện card (không bấm lại chip năm)
+appId: host.exp.exponent
+name: withholding_tc2r_yearly_refresh
+---
+- tapOn:
+    id: mainTab_IncomeSourceList
+- waitForAnimationToEnd:
+    timeout: 2500
+- tapOn:
+    id: incomeView_yearly
+- waitForAnimationToEnd:
+    timeout: 2000
+- tapOn:
+    id: yearFilterTab_2024
+- waitForAnimationToEnd:
+    timeout: 2000
+- assertNotVisible: "CÔNG TY TEST HOÀN TIỀN"
+- tapOn:
+    id: uploadWithholdingVoucherBtn
+- extendedWaitUntil:
+    visible:
+      id: voucherYear_2024
+    timeout: 12000
+- tapOn:
+    id: voucherYear_2024
+- tapOn:
+    id: voucherPickLibrary
+- waitForAnimationToEnd:
+    timeout: 5000
+# Chọn chungtu_khautru_2025_KHOP.png trong picker (point tùy thiết bị)
+- tapOn:
+    point: "83%,61%"
+- waitForAnimationToEnd:
+    timeout: 4000
+- tapOn:
+    id: voucherUploadBtn
+- extendedWaitUntil:
+    visible:
+      id: voucherExtractStatus
+    timeout: 45000
+- tapOn:
+    id: voucherInput_companyName
+- eraseText: 100
+- setClipboard: "CÔNG TY TEST HOÀN TIỀN"
+- pasteText
+- tapOn:
+    id: voucherInput_companyTaxCode
+- eraseText: 100
+- inputText: "0312345678"
+- tapOn:
+    id: voucherInput_taxYear
+- eraseText: 20
+- inputText: "2024"
+- tapOn:
+    id: voucherInput_totalIncome
+- eraseText: 40
+- inputText: "10000000"
+- tapOn:
+    id: voucherInput_taxWithheld
+- eraseText: 40
+- inputText: "0"
+- tapOn:
+    id: voucherInput_insuranceDeducted
+- eraseText: 100
+- inputText: "1050000"
+- pressKey: Enter
+- tapOn:
+    id: voucherConfirmBtn
+- extendedWaitUntil:
+    visible: "Đã lưu chứng từ"
+    timeout: 20000
+- tapOn: "OK"
+- waitForAnimationToEnd:
+    timeout: 4000
+- assertVisible: "CÔNG TY TEST HOÀN TIỀN"
+- assertVisible: "10.000.000 đ"

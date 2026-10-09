@@ -1,0 +1,88 @@
+# CHUẨN BỊ – Thêm thu nhập tháng 1/2024 CÔNG TY TEST HOÀN TIỀN
+appId: host.exp.exponent
+name: withholding_tc2r_seed_month
+---
+- tapOn:
+    id: mainTab_IncomeSourceList
+- waitForAnimationToEnd:
+    timeout: 3000
+- tapOn:
+    id: incomeView_monthly
+- waitForAnimationToEnd:
+    timeout: 2500
+- runFlow:
+    when:
+      visible:
+        id: monthlyYear_2024
+    commands:
+      - tapOn:
+          id: monthlyYear_2024
+- runFlow:
+    when:
+      visible: "2024"
+    commands:
+      - tapOn: "2024"
+- waitForAnimationToEnd:
+    timeout: 1500
+- runFlow:
+    when:
+      visible:
+        id: addMonthlyIncomeBtn
+    commands:
+      - tapOn:
+          id: addMonthlyIncomeBtn
+- runFlow:
+    when:
+      visible:
+        id: addIncomeSourceBtn
+    commands:
+      - tapOn:
+          id: addIncomeSourceBtn
+- runFlow:
+    when:
+      visible: "Thêm thu nhập tháng"
+    commands:
+      - tapOn: "Thêm thu nhập tháng"
+- extendedWaitUntil:
+    visible:
+      id: incomeInput_organizationName
+    timeout: 15000
+- tapOn:
+    id: incomeInput_organizationName
+- eraseText: 100
+- setClipboard: "CÔNG TY TEST HOÀN TIỀN"
+- pasteText
+- tapOn:
+    id: incomeInput_taxIdNumber
+- eraseText: 100
+- inputText: "0312345678"
+- tapOn:
+    id: incomeInput_month
+- eraseText: 10
+- inputText: "1"
+- tapOn:
+    id: incomeInput_year
+- eraseText: 10
+- inputText: "2024"
+- tapOn:
+    id: incomeInput_totalTaxableIncome
+- eraseText: 40
+- inputText: "10000000"
+- tapOn:
+    id: incomeInput_insuranceDeducted
+- eraseText: 40
+- inputText: "1050000"
+- tapOn:
+    id: incomeInput_taxAlreadyDeducted
+- eraseText: 40
+- inputText: "0"
+- scrollUntilVisible:
+    element:
+      id: saveMonthlyIncomeBtn
+    direction: DOWN
+    timeout: 10000
+    visibilityPercentage: 40
+- tapOn:
+    id: saveMonthlyIncomeBtn
+- waitForAnimationToEnd:
+    timeout: 8000

@@ -196,6 +196,10 @@ export interface ConfirmDocumentReviewRequest {
   isIdentityValid?: boolean;
   isNotReimbursed?: boolean | null;
   items?: InvoiceLineItem[];
+  /** Chứng từ khấu trừ thuế TNCN: tổng thu nhập / thuế đã khấu trừ / bảo hiểm đã trừ */
+  totalIncome?: number | null;
+  taxWithheld?: number | null;
+  insuranceDeducted?: number | null;
 }
 
 export interface DocumentQueryParameters {
@@ -246,6 +250,9 @@ export interface DocumentReviewResponse {
   isIdentityValid?: boolean | null;
   validationErrors?: string[];
   isNotReimbursed?: boolean | null;
+  totalIncome?: number | null;
+  taxWithheld?: number | null;
+  insuranceDeducted?: number | null;
   status: 'UPLOADED' | 'EXTRACTED' | 'CONFIRMED' | 'FAILED' | string;
   createdAt: string;
   items: DocumentItemResponse[];

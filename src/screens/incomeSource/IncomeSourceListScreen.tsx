@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -15,7 +15,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { RouteProp, useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
@@ -30,12 +30,16 @@ import {
   IncomeSourceSummaryDto,
   PaginationMeta,
 } from '../../api/incomeSourceApi';
-import { RootNavigationProp } from '../../navigation/types';
+import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
+import { MonthlyIncomePanel } from '../income/MonthlyIncomePanel';
 
 const TAX_YEAR_OPTIONS = [2026, 2025, 2024];
 
 export const IncomeSourceListScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
+  const route = useRoute<RouteProp<RootStackParamList, 'IncomeSourceList'>>();
+  // "Theo năm" = nơi chi trả (quyết toán hiện dùng) · "Theo tháng" = bảng incomes mới (OCR phiếu lương)
+  const [viewMode, setViewMode] = useState<'yearly' | 'monthly'>(route.params?.view ?? 'yearly');
 
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
@@ -108,9 +112,12 @@ export const IncomeSourceListScreen: React.FC = () => {
     [selectedYearFilter]
   );
 
-  useEffect(() => {
-    fetchIncomeSources();
-  }, [fetchIncomeSources]);
+  // Tải lại mỗi khi quay về màn (vd. sau khi lưu chứng từ khấu trừ) và khi đổi năm
+  useFocusEffect(
+    useCallback(() => {
+      fetchIncomeSources();
+    }, [fetchIncomeSources])
+  );
 
   // Mở modal thêm mới
   const handleOpenCreateModal = () => {
@@ -293,7 +300,7 @@ export const IncomeSourceListScreen: React.FC = () => {
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
       <DrumHeader
-        title="Nơi chi trả"
+        title={viewMode === 'monthly' ? 'Thu nhập theo tháng' : 'Nơi chi trả'}
         onBack={() => {
           if (navigation.canGoBack()) navigation.goBack();
           else navigation.navigate('Home');
@@ -302,9 +309,13 @@ export const IncomeSourceListScreen: React.FC = () => {
         right={
           <TouchableOpacity
             style={styles.addHeaderBtn}
-            onPress={handleOpenCreateModal}
+            onPress={
+              viewMode === 'monthly'
+                ? () => navigation.navigate('IncomeMonthForm', { year: new Date().getFullYear() })
+                : handleOpenCreateModal
+            }
             accessibilityRole="button"
-            accessibilityLabel="Thêm nơi chi trả"
+            accessibilityLabel={viewMode === 'monthly' ? 'Thêm thu nhập tháng' : 'Thêm nơi chi trả'}
             testID="addIncomeSourceBtn"
           >
             <Ionicons name="add" size={26} color={theme.colors.primary} />
@@ -312,9 +323,47 @@ export const IncomeSourceListScreen: React.FC = () => {
         }
       />
 
+      {/* Chế độ xem: theo năm (nơi chi trả) / theo tháng (phiếu lương) */}
+      <View style={styles.viewToggle}>
+        {(['yearly', 'monthly'] as const).map((mode) => {
+          const on = viewMode === mode;
+          return (
+            <TouchableOpacity
+              key={mode}
+              style={[styles.viewToggleBtn, on && styles.viewToggleBtnOn]}
+              onPress={() => setViewMode(mode)}
+              accessibilityRole="button"
+              testID={`incomeView_${mode}`}
+            >
+              <Text style={[styles.viewToggleText, on && styles.viewToggleTextOn]}>
+                {mode === 'yearly' ? 'Theo năm' : 'Theo tháng'}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      {viewMode === 'monthly' ? (
+        <MonthlyIncomePanel />
+      ) : (
+        <>
       <Text style={styles.pageLead}>
         Cơ quan chi trả lương, dùng khi đối soát và quyết toán thuế thu nhập cá nhân.
       </Text>
+
+      <TouchableOpacity
+        style={styles.voucherBtn}
+        onPress={() =>
+          navigation.navigate('WithholdingVoucher', {
+            year: selectedYearFilter || new Date().getFullYear(),
+          })
+        }
+        accessibilityRole="button"
+        testID="uploadWithholdingVoucherBtn"
+      >
+        <Ionicons name="document-text-outline" size={18} color={theme.colors.primary} />
+        <Text style={styles.voucherBtnText}>Tải chứng từ khấu trừ</Text>
+      </TouchableOpacity>
 
       {/* 2.1 Bộ chọn năm tính thuế (Tabs TaxYear) */}
       <View style={styles.yearFilterRow}>
@@ -489,6 +538,8 @@ export const IncomeSourceListScreen: React.FC = () => {
             </View>
           )}
         />
+      )}
+        </>
       )}
 
       {/* 5. Modal Khai báo / Chỉnh sửa */}
@@ -732,6 +783,33 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  viewToggle: {
+    flexDirection: 'row',
+    marginHorizontal: 22,
+    marginTop: 10,
+    padding: 3,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface,
+  },
+  viewToggleBtn: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderRadius: 9,
+  },
+  viewToggleBtnOn: {
+    backgroundColor: theme.colors.primary,
+  },
+  viewToggleText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 13,
+    color: theme.colors.textSecondary,
+  },
+  viewToggleTextOn: {
+    color: '#FFFFFF',
+  },
   pageLead: {
     fontFamily: fonts.body,
     fontSize: 14,
@@ -739,6 +817,23 @@ const styles = StyleSheet.create({
     color: '#444444',
     paddingHorizontal: 22,
     paddingTop: 8,
+  },
+  voucherBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderColor: theme.colors.primary,
+    borderRadius: 10,
+    paddingVertical: 10,
+    marginHorizontal: 22,
+    marginTop: 10,
+  },
+  voucherBtnText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 14,
+    color: theme.colors.primary,
   },
   banner: {
     flexDirection: 'row',

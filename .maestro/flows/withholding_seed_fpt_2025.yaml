@@ -1,0 +1,76 @@
+# Seed 12 tháng FPT 2025 — chạy khi thiếu dữ liệu trước TC chứng từ khấu trừ
+appId: host.exp.exponent
+name: withholding_seed_fpt_2025
+---
+- tapOn:
+    id: mainTab_IncomeSourceList
+- waitForAnimationToEnd:
+    timeout: 3000
+- tapOn:
+    id: incomeView_monthly
+- waitForAnimationToEnd:
+    timeout: 2000
+- tapOn:
+    id: monthlyYear_2025
+- waitForAnimationToEnd:
+    timeout: 2000
+
+- evalScript: ${output.months = [1,2,3,4,5,6,7,8,9,10,11,12]}
+- evalScript: ${output.i = 0}
+
+- repeat:
+    times: 12
+    commands:
+      - evalScript: ${output.month = output.months[output.i]; output.i = output.i + 1}
+      - tapOn:
+          id: addMonthlyIncomeBtn
+      - extendedWaitUntil:
+          visible:
+            id: incomeInput_organizationName
+          timeout: 15000
+      - tapOn:
+          id: incomeInput_organizationName
+      - eraseText
+      - setClipboard: "CÔNG TY CỔ PHẦN CÔNG NGHỆ FPT"
+      - pasteText
+      - tapOn:
+          id: incomeInput_taxIdNumber
+      - eraseText
+      - inputText: "0101245489"
+      - tapOn:
+          id: incomeInput_month
+      - eraseText
+      - inputText: ${output.month}
+      - tapOn:
+          id: incomeInput_year
+      - eraseText
+      - inputText: "2025"
+      - tapOn:
+          id: incomeInput_totalTaxableIncome
+      - eraseText
+      - inputText: "23557692"
+      - tapOn:
+          id: incomeInput_insuranceDeducted
+      - eraseText
+      - inputText: "2415000"
+      - tapOn:
+          id: incomeInput_taxAlreadyDeducted
+      - eraseText
+      - inputText: "224442"
+      - scrollUntilVisible:
+          element:
+            id: saveMonthlyIncomeBtn
+          direction: DOWN
+          timeout: 10000
+          visibilityPercentage: 40
+      - tapOn:
+          id: saveMonthlyIncomeBtn
+      - extendedWaitUntil:
+          visible:
+            id: monthlyIncomeScroll
+          timeout: 30000
+      - waitForAnimationToEnd:
+          timeout: 1500
+
+- takeScreenshot:
+    path: screenshots/withholding-voucher/00-monthly-2025-fpt-12

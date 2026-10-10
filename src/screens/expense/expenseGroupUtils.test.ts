@@ -90,9 +90,9 @@ describe('expenseGroupUtils', () => {
       expect(charityGroup?.totalAmount).toBe(2000000);
     });
 
-    it('should return all 5 groups when includeEmptyGroups is true', () => {
+    it('should return all 6 groups when includeEmptyGroups is true', () => {
       const groups = groupExpensesByAiClassification([], true);
-      expect(groups).toHaveLength(5);
+      expect(groups).toHaveLength(6);
       expect(groups.every((g) => g.items.length === 0)).toBe(true);
     });
 

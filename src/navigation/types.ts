@@ -56,7 +56,12 @@ export type RootStackParamList = {
   DependentList: undefined;
   ExpenseList: undefined;
   ExpenseUpload: { targetYear?: number; periodId?: string } | undefined;
-  ExpenseReview: { ocrResult: import('../types/expense').ExpenseOcrResult; periodId?: string; isReadOnly?: boolean };
+  ExpenseReview: {
+    ocrResult: import('../types/expense').ExpenseOcrResult;
+    periodId?: string;
+    isReadOnly?: boolean;
+    crossCheckResult?: import('../api/incomeSourceApi').IncomeSourceCrossCheckResult | null;
+  };
   SettlementStart: undefined;
   SettlementPreview: {
     taxYear: number;

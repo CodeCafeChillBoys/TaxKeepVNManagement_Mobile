@@ -394,10 +394,10 @@ export const HomeScreen: React.FC = () => {
             onPress={() => navigation.navigate('ExpenseList')}
             testID="homeExpenseListCard"
             accessibilityRole="button"
-            accessibilityLabel="Hóa đơn chi phí"
+            accessibilityLabel="Hóa đơn chứng từ"
           >
             <Ionicons name="receipt-outline" size={20} color={theme.colors.primary} />
-            <Text style={styles.shortcutLabel}>Hóa đơn chi phí</Text>
+            <Text style={styles.shortcutLabel}>Hóa đơn chứng từ</Text>
           </TouchableOpacity>
 
           <TouchableOpacity

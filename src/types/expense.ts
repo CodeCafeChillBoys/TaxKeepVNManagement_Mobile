@@ -104,6 +104,12 @@ export interface ExpenseOcrResult {
   // Tài chính
   totalAmount?: number | null;
   totalAmountInWords?: string | null;
+
+  // Chứng từ khấu trừ thuế TNCN
+  incomeYear?: number | null;
+  totalIncome?: number | null;
+  taxWithheld?: number | null;
+  insuranceDeducted?: number | null;
   
   // Danh sách dòng mặt hàng / viện phí
   items?: InvoiceLineItem[];
@@ -122,6 +128,9 @@ export interface ExpenseOcrResult {
   
   // Cam kết thuế TNCN: Chưa được bồi hoàn từ bảo hiểm hoặc tài trợ khác
   isNotReimbursed?: boolean | null;
+
+  // Kết quả đối chiếu với thu nhập theo tháng (cho chứng từ khấu trừ thuế)
+  crossCheckResult?: import('../api/incomeSourceApi').IncomeSourceCrossCheckResult | null;
 
   status: 'UPLOADED' | 'EXTRACTED' | 'CONFIRMED' | 'FAILED' | 'REJECTED';
   createdAt?: string;
@@ -192,6 +201,7 @@ export interface ConfirmDocumentReviewRequest {
   lookupUrl?: string | null;
   lookupCode?: string | null;
   extractedYear?: number | null;
+  incomeYear?: number | null;
   isYearValid?: boolean;
   isIdentityValid?: boolean;
   isNotReimbursed?: boolean | null;
@@ -246,6 +256,7 @@ export interface DocumentReviewResponse {
   lookupUrl?: string | null;
   lookupCode?: string | null;
   extractedYear?: number | null;
+  incomeYear?: number | null;
   isYearValid?: boolean | null;
   isIdentityValid?: boolean | null;
   validationErrors?: string[];
@@ -253,6 +264,7 @@ export interface DocumentReviewResponse {
   totalIncome?: number | null;
   taxWithheld?: number | null;
   insuranceDeducted?: number | null;
+  crossCheckResult?: import('../api/incomeSourceApi').IncomeSourceCrossCheckResult | null;
   status: 'UPLOADED' | 'EXTRACTED' | 'CONFIRMED' | 'FAILED' | string;
   createdAt: string;
   items: DocumentItemResponse[];

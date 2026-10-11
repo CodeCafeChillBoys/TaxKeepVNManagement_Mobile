@@ -1,0 +1,71 @@
+# TC0 – Thêm tháng 1 FPT 2025 (kiểm tra hết lỗi 415)
+appId: host.exp.exponent
+name: withholding_r2_tc0_month1
+---
+- tapOn:
+    id: mainTab_IncomeSourceList
+- waitForAnimationToEnd:
+    timeout: 3000
+- tapOn:
+    id: incomeView_monthly
+- waitForAnimationToEnd:
+    timeout: 2500
+- runFlow:
+    when:
+      visible:
+        id: monthlyYear_2025
+    commands:
+      - tapOn:
+          id: monthlyYear_2025
+- runFlow:
+    when:
+      visible: "2025"
+    commands:
+      - tapOn: "2025"
+- waitForAnimationToEnd:
+    timeout: 2000
+- tapOn:
+    id: addMonthlyIncomeBtn
+- extendedWaitUntil:
+    visible:
+      id: incomeInput_organizationName
+    timeout: 15000
+- tapOn:
+    id: incomeInput_organizationName
+- eraseText: 100
+- setClipboard: "CÔNG TY CỔ PHẦN CÔNG NGHỆ FPT"
+- pasteText
+- tapOn:
+    id: incomeInput_taxIdNumber
+- eraseText: 100
+- inputText: "0101248141"
+- tapOn:
+    id: incomeInput_month
+- eraseText: 10
+- inputText: "1"
+- tapOn:
+    id: incomeInput_year
+- eraseText: 10
+- inputText: "2025"
+- tapOn:
+    id: incomeInput_totalTaxableIncome
+- eraseText: 40
+- inputText: "23557692"
+- tapOn:
+    id: incomeInput_insuranceDeducted
+- eraseText: 40
+- inputText: "2415000"
+- tapOn:
+    id: incomeInput_taxAlreadyDeducted
+- eraseText: 40
+- inputText: "224442"
+- scrollUntilVisible:
+    element:
+      id: saveMonthlyIncomeBtn
+    direction: DOWN
+    timeout: 10000
+    visibilityPercentage: 40
+- tapOn:
+    id: saveMonthlyIncomeBtn
+- waitForAnimationToEnd:
+    timeout: 8000

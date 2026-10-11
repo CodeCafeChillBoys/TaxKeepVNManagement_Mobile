@@ -35,6 +35,7 @@ import {
   getDocumentTypeIcon,
   getStatusLabel,
   getStatusBadgeVariant,
+  isWithholdingDocType,
 } from './expenseGroupUtils';
 import {
   Card,
@@ -42,6 +43,7 @@ import {
   Button,
   useToast,
 } from '../../components/ui';
+import { Dialog } from '../../components/common/Dialog';
 
 type StatusFilter = 'ALL' | 'CONFIRMED' | 'EXTRACTED';
 
@@ -81,6 +83,11 @@ export const ExpenseListScreen: React.FC = () => {
   const [categorySearchQuery, setCategorySearchQuery] = useState<string>('');
   const [showAddYearModal, setShowAddYearModal] = useState<boolean>(false);
   const [newYearInput, setNewYearInput] = useState<string>('');
+
+  // Action Confirm Dialog states
+  const [deleteYearTarget, setDeleteYearTarget] = useState<number | null>(null);
+  const [showSubmitPeriodConfirm, setShowSubmitPeriodConfirm] = useState<boolean>(false);
+  const [deleteDocTarget, setDeleteDocTarget] = useState<{ id: string; name?: string } | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -285,18 +292,14 @@ export const ExpenseListScreen: React.FC = () => {
       );
       return;
     }
-    if (Platform.OS === 'web') {
-      const ok = window.confirm(`Xóa toàn bộ chứng từ năm ${yr}? Hành động này không thể hoàn tác.`);
-      if (ok) removeYear(yr);
-    } else {
-      Alert.alert(
-        'Xóa kỳ tính thuế',
-        `Xóa toàn bộ chứng từ năm ${yr}? Hành động này không thể hoàn tác.`,
-        [
-          { text: 'Hủy', style: 'cancel' },
-          { text: 'Xóa', style: 'destructive', onPress: () => removeYear(yr) },
-        ]
-      );
+    setDeleteYearTarget(yr);
+  };
+
+  const executeDeleteYear = () => {
+    if (deleteYearTarget !== null) {
+      removeYear(deleteYearTarget);
+      toast.success(`Đã xóa kỳ tính thuế năm ${deleteYearTarget}.`, 'Đã xóa kỳ thuế');
+      setDeleteYearTarget(null);
     }
   };
 
@@ -320,23 +323,18 @@ export const ExpenseListScreen: React.FC = () => {
 
   const handleSubmitPeriod = () => {
     if (!selectedYear || !currentPeriod?.periodId) return;
-    const submit = async () => {
-      try {
-        await submitPeriodForYear(selectedYear);
-        toast.success('Đã nộp kỳ tính thuế và khóa hồ sơ.', 'Nộp hồ sơ thành công');
-      } catch (err: any) {
-        toast.error(err?.response?.data?.message || err?.message || 'Không thể nộp kỳ tính thuế.', 'Lỗi');
-      }
-    };
+    setShowSubmitPeriodConfirm(true);
+  };
 
-    if (Platform.OS === 'web') {
-      if (window.confirm('Nộp kỳ tính thuế này? Sau khi nộp, hồ sơ sẽ bị khóa.')) submit();
-      return;
+  const executeSubmitPeriod = async () => {
+    setShowSubmitPeriodConfirm(false);
+    if (!selectedYear || !currentPeriod?.periodId) return;
+    try {
+      await submitPeriodForYear(selectedYear);
+      toast.success(`Hồ sơ quyết toán thuế năm ${selectedYear} đã được nộp và khóa thành công.`, 'Nộp hồ sơ thành công');
+    } catch (err: any) {
+      toast.error(err?.response?.data?.message || err?.message || 'Không thể nộp kỳ tính thuế.', 'Lỗi nộp hồ sơ');
     }
-    Alert.alert('Nộp kỳ tính thuế', 'Sau khi nộp, hồ sơ sẽ bị khóa và không thể chỉnh sửa.', [
-      { text: 'Hủy', style: 'cancel' },
-      { text: 'Nộp hồ sơ', style: 'destructive', onPress: submit },
-    ]);
   };
 
   const handleViewDetail = async (doc: ExpenseOcrResult) => {
@@ -357,8 +355,16 @@ export const ExpenseListScreen: React.FC = () => {
                   const detail = await expenseApi.getDocumentById(periodId, docId);
                   if (detail.status === 'EXTRACTED') {
                     const mapped = mapDocumentReviewToOcrResult(detail, selectedYear || undefined);
+                    if (!mapped.crossCheckResult && doc.crossCheckResult) {
+                      mapped.crossCheckResult = doc.crossCheckResult;
+                    }
                     addOrUpdateDocument(selectedYear || new Date().getFullYear(), mapped);
-                    navigation.navigate('ExpenseReview', { ocrResult: mapped, periodId, isReadOnly: false });
+                    navigation.navigate('ExpenseReview', {
+                      ocrResult: mapped,
+                      periodId,
+                      isReadOnly: false,
+                      crossCheckResult: mapped.crossCheckResult || null,
+                    });
                     return;
                   }
                   Alert.alert('Thông báo', `Chứng từ vẫn đang được xử lý. Vui lòng thử lại sau.`);
@@ -392,6 +398,9 @@ export const ExpenseListScreen: React.FC = () => {
       try {
         const detail = await expenseApi.getDocumentById(periodId!, docId!);
         fullDoc = mapDocumentReviewToOcrResult(detail, selectedYear || undefined);
+        if (!fullDoc.crossCheckResult && doc.crossCheckResult) {
+          fullDoc.crossCheckResult = doc.crossCheckResult;
+        }
         addOrUpdateDocument(selectedYear || new Date().getFullYear(), fullDoc);
       } catch (err: any) {
         if (err?.response?.status === 404) {
@@ -409,6 +418,7 @@ export const ExpenseListScreen: React.FC = () => {
       ocrResult: fullDoc,
       periodId,
       isReadOnly: fullDoc.status === 'CONFIRMED',
+      crossCheckResult: fullDoc.crossCheckResult || null,
     });
   };
 
@@ -429,25 +439,21 @@ export const ExpenseListScreen: React.FC = () => {
       return;
     }
 
-    const remove = async () => {
-      try {
-        await removeDocument(selectedYear, docId);
-      } catch (err: any) {
-        toast.error(
-          err?.response?.data?.message || err?.message || 'Không thể xóa chứng từ.',
-          'Xóa chứng từ thất bại'
-        );
-      }
-    };
+    setDeleteDocTarget({ id: docId });
+  };
 
-    if (Platform.OS === 'web') {
-      const ok = window.confirm('Xóa chứng từ này khỏi hồ sơ thuế?');
-      if (ok) void remove();
-    } else {
-      Alert.alert('Xóa chứng từ', 'Xóa chứng từ này khỏi hồ sơ thuế?', [
-        { text: 'Hủy', style: 'cancel' },
-        { text: 'Xóa', style: 'destructive', onPress: () => void remove() },
-      ]);
+  const executeDeleteDoc = async () => {
+    if (!deleteDocTarget || !selectedYear) return;
+    const docId = deleteDocTarget.id;
+    setDeleteDocTarget(null);
+    try {
+      await removeDocument(selectedYear, docId);
+      toast.success('Đã xóa chứng từ khỏi hồ sơ thuế thành công.', 'Đã xóa chứng từ');
+    } catch (err: any) {
+      toast.error(
+        err?.response?.data?.message || err?.message || 'Không thể xóa chứng từ.',
+        'Xóa chứng từ thất bại'
+      );
     }
   };
 
@@ -455,7 +461,7 @@ export const ExpenseListScreen: React.FC = () => {
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <DrumPatternBackdrop variant="soft" />
-      <HeaderMotif title="HÓA ĐƠN CHI PHÍ" onBack={() => navigation.goBack()} />
+      <HeaderMotif title="HÓA ĐƠN CHỨNG TỪ" onBack={() => navigation.goBack()} />
 
       {/* CHƯA CÓ KỲ NĂM: Màn hình khởi tạo */}
       {availableYears.length === 0 || !selectedYear ? (
@@ -470,7 +476,7 @@ export const ExpenseListScreen: React.FC = () => {
             </View>
             <Text style={styles.emptyStateTitle}>Chưa có hồ sơ quyết toán thuế</Text>
             <Text style={styles.emptyStateSubtitle}>
-              Tạo kỳ kê khai thuế để bắt đầu lưu trữ và quản lý hóa đơn chi phí được giảm trừ thuế TNCN.
+              Tạo kỳ kê khai thuế để bắt đầu lưu trữ và quản lý hóa đơn & chứng từ khấu trừ thuế TNCN.
             </Text>
             {periodError ? (
               <View style={styles.periodErrorBox} testID="expensePeriodError">
@@ -581,7 +587,7 @@ export const ExpenseListScreen: React.FC = () => {
               style={styles.uploadBtn}
               icon={<Ionicons name="cloud-upload-outline" size={18} color="#fff" />}
             >
-              {allCurrentExpenses.length > 0 ? 'Tải lên hóa đơn mới' : 'Tải lên hóa đơn đầu tiên'}
+              {allCurrentExpenses.length > 0 ? 'Tải lên hóa đơn & chứng từ mới' : 'Tải lên hóa đơn & chứng từ đầu tiên'}
             </Button>
 
             {allCurrentExpenses.length > 0 && currentPeriod?.status !== 'SUBMITTED' && (
@@ -825,6 +831,7 @@ export const ExpenseListScreen: React.FC = () => {
                       const statusVariant = getStatusBadgeVariant(doc.status);
                       const statusText = getStatusLabel(doc.status);
                       const isConfirmed = doc.status === 'CONFIRMED';
+                      const isWithholdingDoc = isWithholdingDocType(doc.docTypeCode, doc.docTypeName);
                       return (
                         <Card key={doc.documentId || index} style={styles.docCard}>
                           <TouchableOpacity activeOpacity={0.7} onPress={() => handleViewDetail(doc)}>
@@ -833,7 +840,7 @@ export const ExpenseListScreen: React.FC = () => {
                               <View style={styles.docCardTopRow}>
                                 <Badge variant={statusVariant} style={styles.docStatusBadge}>{statusText}</Badge>
                                 <View style={styles.docRightMeta}>
-                                  {doc.isNotReimbursed && (
+                                  {doc.isNotReimbursed && !isWithholdingDoc && (
                                     <Ionicons name="shield-checkmark-outline" size={13} color="#0F766E" />
                                   )}
                                   {doc.overallConfidence ? (
@@ -846,7 +853,7 @@ export const ExpenseListScreen: React.FC = () => {
 
                               {/* Dòng 2: Tên đơn vị - thông tin chính */}
                               <Text style={styles.docSellerName} numberOfLines={2}>
-                                {doc.sellerName || 'Chưa có tên đơn vị phát hành'}
+                                {doc.sellerName || (isWithholdingDoc ? 'Tổ chức chi trả thu nhập' : 'Chưa có tên đơn vị phát hành')}
                               </Text>
 
                               {/* Dòng 3: Metadata */}
@@ -854,7 +861,9 @@ export const ExpenseListScreen: React.FC = () => {
                                 {doc.invoiceNumber ? (
                                   <View style={styles.docMetaItem}>
                                     <Ionicons name="receipt-outline" size={12} color="#94A3B8" />
-                                    <Text style={styles.docMetaText}>HĐ {doc.invoiceNumber}</Text>
+                                    <Text style={styles.docMetaText}>
+                                      {isWithholdingDoc ? `CT ${doc.invoiceNumber}` : `HĐ ${doc.invoiceNumber}`}
+                                    </Text>
                                   </View>
                                 ) : null}
                                 {doc.invoiceDate ? (
@@ -863,7 +872,12 @@ export const ExpenseListScreen: React.FC = () => {
                                     <Text style={styles.docMetaText}>{doc.invoiceDate}</Text>
                                   </View>
                                 ) : null}
-                                {doc.items && doc.items.length > 0 ? (
+                                {isWithholdingDoc && (doc.incomeYear || doc.extractedYear) ? (
+                                  <View style={styles.docMetaItem}>
+                                    <Ionicons name="calendar-number-outline" size={12} color="#94A3B8" />
+                                    <Text style={styles.docMetaText}>Kỳ {doc.incomeYear || doc.extractedYear}</Text>
+                                  </View>
+                                ) : doc.items && doc.items.length > 0 ? (
                                   <View style={styles.docMetaItem}>
                                     <Ionicons name="list-outline" size={12} color="#94A3B8" />
                                     <Text style={styles.docMetaText}>{doc.items.length} dòng</Text>
@@ -875,11 +889,22 @@ export const ExpenseListScreen: React.FC = () => {
                               <View style={styles.docCardFooterRow}>
                                 <View>
                                   <Text style={styles.docAmountLabel}>
-                                    {isConfirmed ? 'Đã xác nhận' : 'Số tiền'}
+                                    {isWithholdingDoc
+                                      ? 'Thuế đã khấu trừ'
+                                      : isConfirmed
+                                      ? 'Đã xác nhận'
+                                      : 'Số tiền'}
                                   </Text>
                                   <Text style={[styles.docAmount, isConfirmed && { color: '#16A34A' }]}>
-                                    {formatCurrencyVND(doc.totalAmount || 0)}
+                                    {isWithholdingDoc
+                                      ? formatCurrencyVND(doc.taxWithheld || 0)
+                                      : formatCurrencyVND(doc.totalAmount || 0)}
                                   </Text>
+                                  {isWithholdingDoc && doc.totalIncome ? (
+                                    <Text style={{ fontSize: 10, color: '#64748B', marginTop: 1 }}>
+                                      Thu nhập: {formatCurrencyVND(doc.totalIncome)}
+                                    </Text>
+                                  ) : null}
                                 </View>
                                 <View style={styles.docActions}>
                                   {doc.status !== 'CONFIRMED' && (
@@ -1155,6 +1180,45 @@ export const ExpenseListScreen: React.FC = () => {
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
+
+      {/* DIALOG XÁC NHẬN XÓA CHỨNG TỪ */}
+      <Dialog
+        visible={deleteDocTarget !== null}
+        title="Xóa chứng từ"
+        message="Xóa chứng từ này khỏi hồ sơ thuế?"
+        primaryLabel="Xóa"
+        secondaryLabel="Hủy"
+        destructive={true}
+        onPrimary={executeDeleteDoc}
+        onSecondary={() => setDeleteDocTarget(null)}
+        onRequestClose={() => setDeleteDocTarget(null)}
+      />
+
+      {/* DIALOG XÁC NHẬN NỘP VÀ KHÓA KỲ TÍNH THUẾ */}
+      <Dialog
+        visible={showSubmitPeriodConfirm}
+        title={`Nộp hồ sơ thuế năm ${selectedYear}`}
+        message="Sau khi nộp, hồ sơ sẽ được khóa và không thể chỉnh sửa."
+        detail={`${(documents[selectedYear || 0] || []).length} chứng từ`}
+        primaryLabel="Nộp hồ sơ"
+        secondaryLabel="Hủy"
+        onPrimary={executeSubmitPeriod}
+        onSecondary={() => setShowSubmitPeriodConfirm(false)}
+        onRequestClose={() => setShowSubmitPeriodConfirm(false)}
+      />
+
+      {/* DIALOG XÁC NHẬN XÓA NĂM KÊ KHAI */}
+      <Dialog
+        visible={deleteYearTarget !== null}
+        title={`Xóa kỳ thuế năm ${deleteYearTarget}`}
+        message="Xóa kỳ thuế này và toàn bộ chứng từ liên quan?"
+        primaryLabel="Xóa"
+        secondaryLabel="Hủy"
+        destructive={true}
+        onPrimary={executeDeleteYear}
+        onSecondary={() => setDeleteYearTarget(null)}
+        onRequestClose={() => setDeleteYearTarget(null)}
+      />
     </SafeAreaView>
   );
 };

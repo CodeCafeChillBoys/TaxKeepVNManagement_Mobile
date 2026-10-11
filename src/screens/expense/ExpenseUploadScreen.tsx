@@ -20,10 +20,12 @@ import { HeaderMotif } from '../../components/common/HeaderMotif';
 import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { expenseApi, mapDocumentReviewToOcrResult } from '../../api/expenseApi';
+import { incomeSourceApi, IncomeSourceCrossCheckResult } from '../../api/incomeSourceApi';
 import { useExpenseStore } from '../../stores/useExpenseStore';
 import { useAuthStore } from '../../stores/useAuthStore';
-import { getDocumentTypeIcon } from './expenseGroupUtils';
+import { getDocumentTypeIcon, isWithholdingDocType } from './expenseGroupUtils';
 import { Badge, useToast } from '../../components/ui';
+import { Dialog } from '../../components/common/Dialog';
 import { parseBackendError } from './expenseValidationUtils';
 
 // Các bước trong luồng tải lên
@@ -63,6 +65,8 @@ export const ExpenseUploadScreen: React.FC = () => {
   const [currentStep, setCurrentStep] = useState<UploadStep>(1);
   const selectedCategory = 'AUTO';
   const [showIneligibleModal, setShowIneligibleModal] = useState<boolean>(false);
+  const [showUploadConfirm, setShowUploadConfirm] = useState<boolean>(false);
+  const [showCancelFileConfirm, setShowCancelFileConfirm] = useState<boolean>(false);
   const [selectedFile, setSelectedFile] = useState<{
     uri: string;
     name: string;
@@ -250,7 +254,7 @@ export const ExpenseUploadScreen: React.FC = () => {
     }
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = () => {
     // 1. Kiểm tra trạng thái kỳ tính thuế (sau kết toán thì không cho phép up)
     if (isPeriodSubmitted) {
       toast.error(
@@ -270,6 +274,14 @@ export const ExpenseUploadScreen: React.FC = () => {
     if (!validateFile(selectedFile)) {
       return;
     }
+
+    // Mở modal xác nhận trước khi gửi tải lên
+    setShowUploadConfirm(true);
+  };
+
+  const executeUpload = async () => {
+    setShowUploadConfirm(false);
+    if (!selectedFile) return;
 
     setProcessing(true);
     setCurrentStep(3);
@@ -326,18 +338,27 @@ export const ExpenseUploadScreen: React.FC = () => {
           const firstValidationMsg = typeof firstValidationError === 'string'
             ? firstValidationError
             : (firstValidationError as any)?.message;
-          const invoiceYear = docDetail.extractedYear ||
-            (typeof docDetail.invoiceDate === 'string' && /^\d{4}/.test(docDetail.invoiceDate)
-              ? Number(docDetail.invoiceDate.slice(0, 4))
-              : undefined);
+          const isWithholding = isWithholdingDocType(docDetail.docTypeCode, docDetail.docTypeName);
+          // Đối với chứng từ khấu trừ: Năm áp dụng quyết toán là incomeYear (năm chi trả thu nhập ở mục [15]),
+          // không phải năm lập chứng từ (invoiceDate / extractedYear).
+          const effectiveDocYear = isWithholding
+            ? (docDetail.incomeYear || docDetail.extractedYear || (typeof docDetail.invoiceDate === 'string' && /^\d{4}/.test(docDetail.invoiceDate) ? Number(docDetail.invoiceDate.slice(0, 4)) : undefined))
+            : (docDetail.extractedYear || (typeof docDetail.invoiceDate === 'string' && /^\d{4}/.test(docDetail.invoiceDate) ? Number(docDetail.invoiceDate.slice(0, 4)) : undefined));
+          const numTargetYear = Number(targetYear);
           const isYearMismatch = docDetail.isYearValid === false ||
-            (invoiceYear !== undefined && invoiceYear !== targetYear);
+            (effectiveDocYear !== undefined && effectiveDocYear !== numTargetYear);
 
           const matchedDocType = (documentTypes || []).find((t) => t.code === docDetail.docTypeCode);
           const isDocTypeNonEligible = (matchedDocType && !matchedDocType.isTaxEligible) || docDetail.isTaxEligible === false;
 
           const aiErrorMessage = isYearMismatch
-            ? `Hóa đơn phát hành năm ${invoiceYear || 'không xác định'}, không khớp với kỳ tính thuế năm ${targetYear}.`
+            ? (isWithholding
+                ? (effectiveDocYear && effectiveDocYear !== numTargetYear
+                    ? `Chứng từ khấu trừ cho thu nhập năm ${effectiveDocYear}, không khớp với kỳ quyết toán thuế năm ${targetYear}. Quý khách vui lòng chọn kỳ quyết toán thuế năm ${effectiveDocYear} để tải lên.`
+                    : `Thời điểm trả thu nhập ghi trên chứng từ khấu trừ không khớp với kỳ quyết toán thuế năm ${targetYear}. Quý khách vui lòng kiểm tra mục [15] trên chứng từ và chọn đúng năm tính thuế tương ứng.`)
+                : (effectiveDocYear && effectiveDocYear !== numTargetYear
+                    ? `Hóa đơn phát hành năm ${effectiveDocYear}, không khớp với kỳ tính thuế năm ${targetYear}.`
+                    : `Năm lập trên hóa đơn không khớp với kỳ tính thuế năm ${targetYear}.`))
             : isDocTypeNonEligible
               ? (firstValidationMsg || 'Hóa đơn này không thuộc diện được giảm trừ thuế TNCN theo quy định.')
               : docDetail.docTypeCode === 'UNSUPPORTED'
@@ -403,9 +424,6 @@ export const ExpenseUploadScreen: React.FC = () => {
         setProcessingStage('Đang kiểm tra và trích xuất dữ liệu hóa đơn...');
       }
 
-      setProcessingProgress(100);
-      setProcessing(false);
-
       if (extractedDoc && extractedDoc.status === 'EXTRACTED') {
         const ocrResult = mapDocumentReviewToOcrResult(extractedDoc, targetYear, documentTypes, systemConfigs);
         ocrResult.originalFileUri = selectedFile?.uri;
@@ -417,11 +435,56 @@ export const ExpenseUploadScreen: React.FC = () => {
           }
         }
 
+        const isWithholding = isWithholdingDocType(ocrResult.docTypeCode, ocrResult.docTypeName);
+        let autoCrossCheckResult: IncomeSourceCrossCheckResult | null = null;
+
+        // Tự động đối chiếu số liệu ngay trong lúc tải lên nếu là chứng từ khấu trừ thuế TNCN
+        if (isWithholding) {
+          setProcessingStage('Đang tự động đối chiếu số liệu với hệ thống thu nhập...');
+          setProcessingProgress(98);
+
+          const compName = (ocrResult.sellerName || extractedDoc.sellerName || '').trim();
+          const certTaxYear = ocrResult.incomeYear || ocrResult.extractedYear || targetYear;
+          const certIncome = ocrResult.totalIncome ?? 0;
+          const certTax = ocrResult.taxWithheld ?? 0;
+          const certInsurance = ocrResult.insuranceDeducted ?? 0;
+
+          if (compName && certTaxYear) {
+            try {
+              autoCrossCheckResult = await incomeSourceApi.crossCheck({
+                companyName: compName,
+                taxYear: certTaxYear,
+                certificateTotalIncome: certIncome,
+                certificateTaxWithheld: certTax,
+                certificateInsuranceDeducted: certInsurance,
+              });
+            } catch (checkErr: any) {
+              console.warn('[AutoCrossCheck on Upload] warn:', checkErr?.message);
+            }
+          }
+        }
+
+        ocrResult.crossCheckResult = autoCrossCheckResult;
+
+        setProcessingProgress(100);
+        setProcessing(false);
+
         // Thêm vào danh sách xét duyệt khi hoàn tất
         addOrUpdateDocument(targetYear, ocrResult);
-        toast.success('Hóa đơn đã được đối soát thành công.', 'Hoàn tất');
-        navigation.navigate('ExpenseReview', { ocrResult, periodId: activePeriodId });
+        toast.success(
+          isWithholding
+            ? 'Chứng từ khấu trừ đã được trích xuất và đối chiếu số liệu tự động.'
+            : 'Hóa đơn đã được đối soát thành công.',
+          'Hoàn tất'
+        );
+        navigation.navigate('ExpenseReview', {
+          ocrResult,
+          periodId: activePeriodId,
+          crossCheckResult: autoCrossCheckResult,
+        });
       } else {
+        setProcessingProgress(100);
+        setProcessing(false);
         // Hết thời gian chờ
         setCurrentStep(1);
         setSelectedFile(null);
@@ -453,7 +516,7 @@ export const ExpenseUploadScreen: React.FC = () => {
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <DrumPatternBackdrop variant="soft" />
-      <HeaderMotif title="TẢI LÊN HÓA ĐƠN CHI PHÍ" onBack={() => navigation.goBack()} />
+      <HeaderMotif title="TẢI LÊN HÓA ĐƠN & CHỨNG TỪ" onBack={() => navigation.goBack()} />
 
       {/* STEP INDICATOR */}
       <View style={styles.stepRow}>
@@ -506,7 +569,7 @@ export const ExpenseUploadScreen: React.FC = () => {
           <View style={styles.yearBanner}>
             <Ionicons name="calendar-outline" size={14} color="#8B1E1E" />
             <Text style={styles.yearBannerText}>
-              Hóa đơn cho kỳ quyết toán thuế năm {targetYear}
+              Hóa đơn & chứng từ cho kỳ quyết toán thuế năm {targetYear}
             </Text>
           </View>
         )}
@@ -552,13 +615,10 @@ export const ExpenseUploadScreen: React.FC = () => {
                     <TouchableOpacity
                       style={styles.changeFileBtn}
                       disabled={isPeriodSubmitted}
-                      onPress={() => {
-                        setSelectedFile(null);
-                        setCurrentStep(1);
-                      }}
+                      onPress={() => setShowCancelFileConfirm(true)}
                     >
                       <Ionicons name="refresh-outline" size={14} color="#475569" />
-                      <Text style={styles.changeFileBtnText}>Chọn hóa đơn khác</Text>
+                      <Text style={styles.changeFileBtnText}>Chọn tệp khác</Text>
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -787,6 +847,36 @@ export const ExpenseUploadScreen: React.FC = () => {
           </View>
         </View>
       </Modal>
+
+      {/* DIALOG XÁC NHẬN TẢI LÊN */}
+      <Dialog
+        visible={showUploadConfirm}
+        title="Tải lên chứng từ"
+        message={`Thêm chứng từ này vào hồ sơ năm ${targetYear}?`}
+        detail={selectedFile?.name}
+        primaryLabel="Tải lên"
+        secondaryLabel="Hủy"
+        onPrimary={executeUpload}
+        onSecondary={() => setShowUploadConfirm(false)}
+        onRequestClose={() => setShowUploadConfirm(false)}
+      />
+
+      {/* DIALOG XÁC NHẬN CHỌN TỆP KHÁC */}
+      <Dialog
+        visible={showCancelFileConfirm}
+        title="Chọn tệp khác"
+        message="Bỏ tệp đang chọn để chọn tệp mới?"
+        primaryLabel="Đồng ý"
+        secondaryLabel="Giữ lại"
+        destructive={true}
+        onPrimary={() => {
+          setShowCancelFileConfirm(false);
+          setSelectedFile(null);
+          setCurrentStep(1);
+        }}
+        onSecondary={() => setShowCancelFileConfirm(false)}
+        onRequestClose={() => setShowCancelFileConfirm(false)}
+      />
     </SafeAreaView>
   );
 };

@@ -6,7 +6,24 @@ export type ExpenseGroupKey =
   | 'TO_GIAO_DUC'
   | 'TO_TU_THIEN'
   | 'TO_BAO_HIEM'
+  | 'TO_KHAU_TRU'
   | 'TO_KHAC';
+
+/**
+ * Kiểm tra xem loại chứng từ có phải là Chứng từ khấu trừ thuế TNCN hay không
+ * Nhận diện linh hoạt dựa trên mã hoặc tên chứng từ từ Backend, không hardcode cứng nhắc
+ */
+export function isWithholdingDocType(code?: string | null, name?: string | null): boolean {
+  if (!code && !name) return false;
+  const c = (code || '').toUpperCase();
+  const n = (name || '').toLowerCase();
+  return (
+    c === 'WITHHOLDING_VOUCHER' ||
+    c.includes('WITHHOLDING') ||
+    c.includes('KHAU_TRU') ||
+    n.includes('khấu trừ')
+  );
+}
 
 export interface ExpenseGroup {
   key: ExpenseGroupKey;
@@ -326,6 +343,14 @@ export function getGroupKeyFromDocTypeCode(docTypeCode?: string | null): Expense
     return 'TO_BAO_HIEM';
   }
 
+  if (
+    normalized === 'WITHHOLDING_VOUCHER' ||
+    normalized.includes('WITHHOLDING') ||
+    normalized.includes('KHAU_TRU')
+  ) {
+    return 'TO_KHAU_TRU';
+  }
+
   return 'TO_KHAC';
 }
 
@@ -374,10 +399,20 @@ export function getGroupMetadata(key: ExpenseGroupKey) {
         color: '#4338CA',
         badgeVariant: 'indigo' as BadgeVariant,
       };
+    case 'TO_KHAU_TRU':
+      return {
+        order: 5,
+        name: 'Chứng từ khấu trừ thuế TNCN',
+        shortName: 'Chứng từ khấu trừ',
+        description: 'Chứng từ khấu trừ thuế TNCN do cơ quan, tổ chức chi trả thu nhập cấp',
+        icon: 'document-text',
+        color: '#059669',
+        badgeVariant: 'teal' as BadgeVariant,
+      };
     case 'TO_KHAC':
     default:
       return {
-        order: 5,
+        order: 6,
         name: 'Chứng từ hợp lệ khác',
         shortName: 'Khác',
         description: 'Hóa đơn và chứng từ khấu trừ thuế hợp lệ khác',
@@ -432,6 +467,15 @@ export function groupExpensesByAiClassification(
       totalCount: 0,
       confirmedCount: 0,
     },
+    TO_KHAU_TRU: {
+      key: 'TO_KHAU_TRU',
+      ...getGroupMetadata('TO_KHAU_TRU'),
+      items: [],
+      totalAmount: 0,
+      confirmedAmount: 0,
+      totalCount: 0,
+      confirmedCount: 0,
+    },
     TO_KHAC: {
       key: 'TO_KHAC',
       ...getGroupMetadata('TO_KHAC'),
@@ -447,7 +491,10 @@ export function groupExpensesByAiClassification(
     const groupKey = getGroupKeyFromDocTypeCode(doc.docTypeCode);
     const group = groupsMap[groupKey];
     group.items.push(doc);
-    const amount = Number(doc.totalAmount) || 0;
+    const isVoucher = isWithholdingDocType(doc.docTypeCode, doc.docTypeName);
+    const amount = isVoucher
+      ? (Number(doc.taxWithheld) || 0)
+      : (Number(doc.totalAmount) || 0);
     group.totalAmount += amount;
     group.totalCount += 1;
 
@@ -462,6 +509,7 @@ export function groupExpensesByAiClassification(
     groupsMap.TO_GIAO_DUC,
     groupsMap.TO_TU_THIEN,
     groupsMap.TO_BAO_HIEM,
+    groupsMap.TO_KHAU_TRU,
     groupsMap.TO_KHAC,
   ];
 
@@ -484,7 +532,10 @@ export function calculateExpenseMetrics(expenses: ExpenseOcrResult[]) {
   let failedCount = 0;
 
   for (const doc of expenses) {
-    const amount = Number(doc.totalAmount) || 0;
+    const isVoucher = isWithholdingDocType(doc.docTypeCode, doc.docTypeName);
+    const amount = isVoucher
+      ? (Number(doc.taxWithheld) || 0)
+      : (Number(doc.totalAmount) || 0);
     totalAmount += amount;
 
     if (doc.status === 'CONFIRMED') {

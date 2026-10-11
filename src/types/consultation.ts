@@ -374,3 +374,191 @@ export function formatVietnameseDate(dateStr?: string): string {
     return dateStr;
   }
 }
+
+// ── EXPERT APPLICATION & PORTAL TYPES ──────────────────────────
+
+export type ExpertApplicationStatus =
+  | 'Draft'
+  | 'PendingReview'
+  | 'NeedSupplement'
+  | 'Rejected'
+  | 'Approved';
+
+export type CertificateVerificationStatus =
+  | 'PendingVerification'
+  | 'Verified'
+  | 'Rejected'
+  | 'Expired';
+
+export interface RejectBookingRequest {
+  reason: string;
+}
+
+export interface SpecializationDtoItem {
+  id: number;
+  code: string;
+  name: string;
+}
+
+export interface CertificateResponseDto {
+  id: string;
+  certificateType: string;
+  certificateName: string;
+  certificateNumber: string;
+  issuingAuthority: string;
+  issueDate: string;
+  hasExpiry: boolean;
+  expiryDate?: string | null;
+  fileUrl: string;
+  verificationStatus: CertificateVerificationStatus;
+  rejectionReason?: string | null;
+  verifiedAt?: string | null;
+  createdAt: string;
+}
+
+export interface FeeProposalRequestDto {
+  sessionType: SessionType;
+  durationMinutes: number;
+  proposedFee: number;
+}
+
+export interface FeeProposalResponseDto {
+  id: string;
+  sessionType: SessionType;
+  durationMinutes: number;
+  proposedFee: number;
+}
+
+export interface ExpertApplicationAuditResponseDto {
+  id: string;
+  action: string;
+  actorUserId?: string | null;
+  note?: string | null;
+  createdAt: string;
+}
+
+export interface ExpertApplicationDetailResponse {
+  id: string;
+  userId: string;
+  applicationNumber: string;
+  fullName: string;
+  avatarUrl?: string | null;
+  jobTitle: string;
+  companyName?: string | null;
+  bio?: string | null;
+  yearsOfExperience: number;
+  currentPosition?: string | null;
+  experienceDescription: string;
+  status: ExpertApplicationStatus;
+  submittedAt?: string | null;
+  reviewedBy?: string | null;
+  reviewedAt?: string | null;
+  rejectionReason?: string | null;
+  supplementRequestReason?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  specializations: SpecializationDtoItem[];
+  certificates: CertificateResponseDto[];
+  feeProposals: FeeProposalResponseDto[];
+  audits: ExpertApplicationAuditResponseDto[];
+}
+
+export interface SaveExpertApplicationDraftRequest {
+  fullName: string;
+  avatarUrl?: string | null;
+  jobTitle: string;
+  companyName?: string | null;
+  bio?: string | null;
+  yearsOfExperience: number;
+  currentPosition?: string | null;
+  experienceDescription: string;
+  specializationIds: number[];
+  feeProposals: FeeProposalRequestDto[];
+}
+
+export interface ConsultationFeeConfigDto {
+  id: number;
+  sessionType: SessionType;
+  durationMinutes: number;
+  minFee: number;
+  maxFee: number;
+  isActive: boolean;
+}
+
+export function formatExpertApplicationStatus(status?: ExpertApplicationStatus | string): {
+  label: string;
+  color: string;
+  bg: string;
+  icon: string;
+  desc: string;
+} {
+  switch (status) {
+    case 'Draft':
+      return {
+        label: 'Bản nháp',
+        color: '#6B7280',
+        bg: '#F3F4F6',
+        icon: 'create-outline',
+        desc: 'Hồ sơ đang soạn thảo, chưa nộp thẩm định.',
+      };
+    case 'PendingReview':
+      return {
+        label: 'Chờ thẩm định',
+        color: '#D97706',
+        bg: '#FEF3C7',
+        icon: 'hourglass-outline',
+        desc: 'Hồ sơ đã gửi và đang trong quá trình xét duyệt của Quản trị viên.',
+      };
+    case 'NeedSupplement':
+      return {
+        label: 'Cần bổ sung',
+        color: '#EA580C',
+        bg: '#FFEDD5',
+        icon: 'alert-circle-outline',
+        desc: 'Quản trị viên yêu cầu bổ sung thông tin hoặc giấy tờ chứng chỉ.',
+      };
+    case 'Rejected':
+      return {
+        label: 'Từ chối',
+        color: '#DC2626',
+        bg: '#FEE2E2',
+        icon: 'close-circle-outline',
+        desc: 'Hồ sơ không đáp ứng điều kiện hành nghề tư vấn thuế.',
+      };
+    case 'Approved':
+      return {
+        label: 'Đã phê duyệt',
+        color: '#059669',
+        bg: '#D1FAE5',
+        icon: 'checkmark-circle-outline',
+        desc: 'Chúc mừng! Hồ sơ đã được duyệt, bạn chính thức là Chuyên gia tư vấn thuế.',
+      };
+    default:
+      return {
+        label: String(status || 'Chưa đăng ký'),
+        color: '#6B7280',
+        bg: '#F3F4F6',
+        icon: 'help-circle-outline',
+        desc: '',
+      };
+  }
+}
+
+export function formatCertStatus(status?: CertificateVerificationStatus | string): {
+  label: string;
+  color: string;
+  bg: string;
+} {
+  switch (status) {
+    case 'Verified':
+      return { label: 'Hợp lệ', color: '#059669', bg: '#D1FAE5' };
+    case 'Rejected':
+      return { label: 'Không hợp lệ', color: '#DC2626', bg: '#FEE2E2' };
+    case 'Expired':
+      return { label: 'Hết hạn', color: '#6B7280', bg: '#F3F4F6' };
+    case 'PendingVerification':
+    default:
+      return { label: 'Chờ thẩm định', color: '#D97706', bg: '#FEF3C7' };
+  }
+}
+

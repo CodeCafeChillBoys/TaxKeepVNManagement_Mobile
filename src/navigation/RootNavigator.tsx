@@ -36,6 +36,8 @@ import { ExpertDetailScreen } from '../screens/consultation/ExpertDetailScreen';
 import { BookingCreateScreen } from '../screens/consultation/BookingCreateScreen';
 import { MyBookingsScreen } from '../screens/consultation/MyBookingsScreen';
 import { BookingDetailScreen } from '../screens/consultation/BookingDetailScreen';
+import { ExpertBookingsScreen } from '../screens/consultation/ExpertBookingsScreen';
+import { ExpertApplicationScreen } from '../screens/consultation/ExpertApplicationScreen';
 import { useAuthStore } from '../stores/useAuthStore';
 import { theme } from '../constants/theme';
 
@@ -109,6 +111,8 @@ export const RootNavigator: React.FC = () => {
         <Stack.Screen name="BookingCreate" component={BookingCreateScreen} />
         <Stack.Screen name="MyBookings" component={MyBookingsScreen} />
         <Stack.Screen name="BookingDetail" component={BookingDetailScreen} />
+        <Stack.Screen name="ExpertBookings" component={ExpertBookingsScreen} />
+        <Stack.Screen name="ExpertApplication" component={ExpertApplicationScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

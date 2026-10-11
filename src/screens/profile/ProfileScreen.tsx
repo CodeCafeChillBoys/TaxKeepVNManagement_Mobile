@@ -25,10 +25,14 @@ import { formatPersonName } from '../../utils/formatPersonName';
 export const ProfileScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
   const logout = useAuthStore((s) => s.logout);
+  const authUser = useAuthStore((s) => s.user);
   const [profile, setProfile] = useState<UserProfileResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+
+  const currentRole = (profile?.userRole || authUser?.role || '').toLowerCase();
+  const isExpert = currentRole === 'expert';
 
   const handleLogout = () => {
     Alert.alert('Đăng xuất', 'Bạn có chắc chắn muốn đăng xuất khỏi ứng dụng?', [
@@ -168,6 +172,25 @@ export const ProfileScreen: React.FC = () => {
             </TouchableOpacity>
           )}
         </View>
+
+        <Text style={styles.sectionTitle}>Tư vấn & Chuyên gia</Text>
+        <LinkRow
+          label="Lịch hẹn tư vấn của tôi"
+          onPress={() => navigation.navigate('MyBookings', {})}
+          testID="quickLinkMyBookings"
+        />
+        {isExpert && (
+          <LinkRow
+            label="Quản lý ca tư vấn (Chuyên gia)"
+            onPress={() => navigation.navigate('ExpertBookings', {})}
+            testID="quickLinkExpertBookings"
+          />
+        )}
+        <LinkRow
+          label="Đăng ký làm chuyên gia thuế"
+          onPress={() => navigation.navigate('ExpertApplication')}
+          testID="quickLinkExpertApplication"
+        />
 
         <Text style={styles.sectionTitle}>Liên kết</Text>
         <LinkRow

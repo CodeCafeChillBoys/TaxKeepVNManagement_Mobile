@@ -385,7 +385,18 @@ export const HomeScreen: React.FC = () => {
               accessibilityLabel="Tìm và đặt lịch ngay"
             >
               <Ionicons name="search" size={15} color="#FFFFFF" />
-              <Text style={styles.consultBannerPrimaryBtnText}>Tìm & Đặt lịch ngay</Text>
+              <Text style={styles.consultBannerPrimaryBtnText}>Tìm & Đặt lịch</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.consultBannerSecondaryBtn}
+              onPress={() => navigation.navigate('ExpertApplication')}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="Trở thành chuyên gia"
+            >
+              <Ionicons name="ribbon-outline" size={15} color={theme.colors.primary} />
+              <Text style={styles.consultBannerSecondaryBtnText}>Đăng ký chuyên gia</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -814,14 +825,17 @@ const styles = StyleSheet.create({
   },
   consultBannerBtnRow: {
     flexDirection: 'row',
+    gap: 10,
+    marginTop: 2,
   },
   consultBannerPrimaryBtn: {
+    flex: 1,
+    height: 40,
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: theme.colors.primary,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 6,
+    borderRadius: 8,
     gap: 6,
     ...theme.shadows.button,
   },
@@ -829,6 +843,23 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bodyBold,
     fontSize: 12,
     color: '#FFFFFF',
+  },
+  consultBannerSecondaryBtn: {
+    flex: 1,
+    height: 40,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: theme.colors.primary,
+    borderRadius: 8,
+    gap: 5,
+  },
+  consultBannerSecondaryBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12,
+    color: theme.colors.primary,
   },
   shortcutGrid: {
     marginTop: 18,

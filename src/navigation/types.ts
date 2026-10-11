@@ -102,6 +102,8 @@ export type RootStackParamList = {
   BookingCreate: { expertProfileId: string; initialSlotId?: string; specializationId?: number };
   MyBookings: { initialStatus?: string } | undefined;
   BookingDetail: { bookingId: string };
+  ExpertBookings: { initialTab?: 'pending' | 'all' } | undefined;
+  ExpertApplication: undefined;
 };
 
 export type RootNavigationProp = NativeStackNavigationProp<RootStackParamList>;

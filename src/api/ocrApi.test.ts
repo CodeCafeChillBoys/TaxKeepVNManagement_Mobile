@@ -43,7 +43,7 @@ describe('ocrApi', () => {
       const [url, formData, config] = http.post.mock.calls[0];
       expect(url).toBe('/api/v1/auth/cccd-extractions');
       expect(formData).toBeInstanceOf(FormData);
-      expect(config.timeout).toBe(30000);
+      expect(config.timeout).toBe(120000);
       expect(config.headers?.['Content-Type']).not.toBe('application/json');
     });
   });
@@ -71,7 +71,7 @@ describe('ocrApi', () => {
       const [url, formData, config] = http.post.mock.calls[0];
       expect(url).toBe('/api/v1/ocr/direct-extractions');
       expect(formData).toBeInstanceOf(FormData);
-      expect(config.timeout).toBe(30000);
+      expect(config.timeout).toBe(120000);
       expect(config.headers?.['Content-Type']).not.toBe('application/json');
     });
   });
@@ -95,7 +95,7 @@ describe('ocrApi', () => {
       expect(result).toEqual(body);
       expect(http.post.mock.calls[0][0]).toBe('/api/v1/ocr/dependents');
       expect(http.post.mock.calls[0][1]).toBeInstanceOf(FormData);
-      expect(http.post.mock.calls[0][2].timeout).toBe(30000);
+      expect(http.post.mock.calls[0][2].timeout).toBe(120000);
     });
   });
 
@@ -122,7 +122,7 @@ describe('ocrApi', () => {
       expect(result).toEqual(body);
       expect(http.get).toHaveBeenCalledWith(
         `/api/v1/ocr/tasks/${taskId}`,
-        expect.objectContaining({ timeout: 30000 })
+        expect.objectContaining({ timeout: 120000 })
       );
     });
   });

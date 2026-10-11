@@ -19,6 +19,7 @@ import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
+import { useAuthStore } from '../../stores/useAuthStore';
 import { consultationApi } from '../../api/consultationApi';
 import type { BookingDetailResponse } from '../../types/consultation';
 import {
@@ -92,6 +93,61 @@ export const BookingDetailScreen: React.FC = () => {
       setCancelling(false);
     }
   };
+
+  // Reject modal (Expert)
+  const [rejectModalVisible, setRejectModalVisible] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+  const [rejecting, setRejecting] = useState(false);
+  const [accepting, setAccepting] = useState(false);
+
+  // Handle Accept Booking (Expert)
+  const handleAcceptBooking = () => {
+    Alert.alert(
+      'Tiếp nhận ca tư vấn',
+      `Bạn có đồng ý tiếp nhận ca tư vấn ${booking?.bookingCode} của khách hàng ${booking?.userFullName}?`,
+      [
+        { text: 'Hủy', style: 'cancel' },
+        {
+          text: 'Đồng ý tiếp nhận',
+          onPress: async () => {
+            setAccepting(true);
+            try {
+              const updated = await consultationApi.acceptBooking(bookingId);
+              setBooking(updated);
+              Alert.alert('Thành công', 'Bạn đã tiếp nhận ca tư vấn. Lịch hẹn chính thức được xác nhận.');
+            } catch (err: any) {
+              const msg = err?.response?.data?.message || err?.message || 'Không thể tiếp nhận ca tư vấn.';
+              Alert.alert('Lỗi', msg);
+            } finally {
+              setAccepting(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  // Handle Reject Booking (Expert)
+  const handleConfirmReject = async () => {
+    if (!rejectReason.trim() || rejectReason.trim().length < 5) {
+      Alert.alert('Lưu ý', 'Vui lòng nhập lý do từ chối tối thiểu 5 ký tự.');
+      return;
+    }
+    setRejecting(true);
+    try {
+      const updated = await consultationApi.rejectBooking(bookingId, rejectReason.trim());
+      setBooking(updated);
+      setRejectModalVisible(false);
+      setRejectReason('');
+      Alert.alert('Đã từ chối', 'Bạn đã từ chối ca tư vấn. Hệ thống tự động hoàn tiền 100% cho khách hàng.');
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || err?.message || 'Không thể từ chối ca tư vấn.';
+      Alert.alert('Lỗi', msg);
+    } finally {
+      setRejecting(false);
+    }
+  };
+
 
   // Handle Attachment Download
   const handleDownloadAttachment = async (attachmentId: string) => {
@@ -414,6 +470,41 @@ export const BookingDetailScreen: React.FC = () => {
 
         {/* ── 6. ACTION BUTTONS ── */}
         <View style={styles.actionsWrap}>
+          {booking.status === 'AWAITING_EXPERT_APPROVAL' && (
+            <View style={styles.expertActionBlock}>
+              <Text style={styles.expertActionTitle}>Quyết định tiếp nhận (SLA 2 giờ)</Text>
+              <View style={styles.expertBtnRow}>
+                <TouchableOpacity
+                  style={styles.acceptBtn}
+                  onPress={handleAcceptBooking}
+                  disabled={accepting || rejecting}
+                  accessibilityRole="button"
+                  accessibilityLabel="Tiếp nhận ca tư vấn"
+                >
+                  {accepting ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <>
+                      <Ionicons name="checkmark-circle" size={18} color="#FFFFFF" />
+                      <Text style={styles.acceptBtnText}>Tiếp nhận</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.rejectBtn}
+                  onPress={() => setRejectModalVisible(true)}
+                  disabled={accepting || rejecting}
+                  accessibilityRole="button"
+                  accessibilityLabel="Từ chối ca tư vấn"
+                >
+                  <Ionicons name="close-circle-outline" size={18} color={theme.colors.error} />
+                  <Text style={styles.rejectBtnText}>Từ chối</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
           {canCancel && (
             <TouchableOpacity
               style={styles.cancelBookingBtn}
@@ -437,6 +528,7 @@ export const BookingDetailScreen: React.FC = () => {
           </TouchableOpacity>
         </View>
       </ScrollView>
+
 
       {/* ── MODAL XÁC NHẬN HỦY ── */}
       <Modal
@@ -487,6 +579,61 @@ export const BookingDetailScreen: React.FC = () => {
                   <ActivityIndicator size="small" color="#FFFFFF" />
                 ) : (
                   <Text style={styles.cancelModalSubmitBtnText}>Xác nhận hủy</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── MODAL TỪ CHỐI TIẾP NHẬN (EXPERT) ── */}
+      <Modal
+        visible={rejectModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setRejectModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.cancelModalBox}>
+            <View style={styles.cancelModalHeader}>
+              <Ionicons name="close-circle" size={28} color={theme.colors.error} />
+              <Text style={styles.cancelModalTitle}>Từ chối tiếp nhận ca tư vấn</Text>
+            </View>
+
+            <Text style={styles.cancelModalDesc}>
+              Hệ thống sẽ hoàn trả 100% chi phí cho khách hàng và giải phóng khung giờ. Vui lòng cho biết lý do từ chối:
+            </Text>
+
+            <Text style={styles.reasonInputLabel}>Lý do từ chối (tối thiểu 5 ký tự) *:</Text>
+            <TextInput
+              style={styles.reasonInput}
+              placeholder="VD: Trùng lịch đột xuất tại cơ quan thuế, lĩnh vực chưa phù hợp..."
+              placeholderTextColor="#999999"
+              value={rejectReason}
+              onChangeText={setRejectReason}
+              multiline
+              numberOfLines={3}
+              textAlignVertical="top"
+            />
+
+            <View style={styles.cancelModalBtnRow}>
+              <TouchableOpacity
+                style={styles.cancelModalCloseBtn}
+                onPress={() => setRejectModalVisible(false)}
+                disabled={rejecting}
+              >
+                <Text style={styles.cancelModalCloseBtnText}>Đóng</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.cancelModalSubmitBtn}
+                onPress={handleConfirmReject}
+                disabled={rejecting}
+              >
+                {rejecting ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.cancelModalSubmitBtnText}>Xác nhận từ chối</Text>
                 )}
               </TouchableOpacity>
             </View>
@@ -919,6 +1066,59 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bodyBold,
     fontSize: 13,
     color: '#FFFFFF',
+  },
+
+  // Expert Action Block
+  expertActionBlock: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#D97706',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 10,
+  },
+  expertActionTitle: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 13,
+    color: '#92400E',
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  expertBtnRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  acceptBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#059669',
+    paddingVertical: 11,
+    borderRadius: 8,
+  },
+  acceptBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 13,
+    color: '#FFFFFF',
+  },
+  rejectBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: theme.colors.error,
+    paddingVertical: 11,
+    borderRadius: 8,
+  },
+  rejectBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 13,
+    color: theme.colors.error,
   },
 
   // Cancel Modal

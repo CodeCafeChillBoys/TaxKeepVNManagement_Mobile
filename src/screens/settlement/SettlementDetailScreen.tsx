@@ -11,6 +11,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
+import { HomeHeaderButton } from '../../components/navigation/HomeHeaderButton';
 import { fonts } from '../../constants/fonts';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { taxSettlementApi } from '../../api/taxSettlementApi';
@@ -52,7 +53,7 @@ export const SettlementDetailScreen: React.FC = () => {
           <Ionicons name="arrow-back" size={24} color={theme.colors.textPrimary} />
         </TouchableOpacity>
         <Text style={styles.title}>Chi tiết hồ sơ</Text>
-        <View style={styles.side} />
+        <View style={styles.side}><HomeHeaderButton /></View>
       </View>
 
       {loading ? (

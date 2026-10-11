@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ViewStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
+import { HomeHeaderButton } from '../navigation/HomeHeaderButton';
 
 interface HeaderMotifProps {
   title: string;
@@ -34,6 +35,9 @@ export const HeaderMotif: React.FC<HeaderMotifProps> = ({
 
         <Text style={styles.title}>{title}</Text>
 
+        {/* Nút về Trang chủ bên phải, cạnh cờ */}
+        <HomeHeaderButton style={styles.homeBtn} />
+
         {showFlag ? (
           <View style={styles.flagBadge}>
             <View style={styles.flagRed}>
@@ -65,6 +69,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     minHeight: 44,
   },
+  homeBtn: { width: 36, height: 36 },
   backButton: {
     padding: 6,
     borderRadius: theme.borderRadius.full,

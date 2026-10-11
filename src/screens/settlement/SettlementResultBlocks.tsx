@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { fonts } from '../../constants/fonts';
@@ -11,6 +11,10 @@ import {
   SettlementIncomeItem,
   TaxSettlementPreview,
 } from '../../types/taxSettlement';
+import { incomeApi } from '../../api/incomeApi';
+import type { IncomeCompanyGroup, IncomeMonthItem } from '../../types/income';
+import { QuarterIncomeTable } from '../../components/income/QuarterIncomeTable';
+import { findCompanyMonths } from '../income/incomeQuarterUtils';
 import {
   clampMonthRangeToYear,
   computeBracketBreakdown,
@@ -114,6 +118,18 @@ function renderSection(key: string, p: TaxSettlementPreview) {
 
 function IncomeSection({ p }: { p: TaxSettlementPreview }) {
   const selected = p.incomeItems.filter((i) => i.isSelected);
+  // Thu nhập từng tháng (bảng incomes) để hiện bảng theo quý trong từng nơi chi trả
+  const [monthlyGroups, setMonthlyGroups] = useState<IncomeCompanyGroup[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    incomeApi
+      .getMyIncomes(p.taxYear)
+      .then((g) => alive && setMonthlyGroups(g))
+      .catch(() => alive && setMonthlyGroups([]));
+    return () => {
+      alive = false;
+    };
+  }, [p.taxYear]);
   return (
     <>
       <Row label="Tổng thu nhập chịu thuế" value={formatVnd(p.totalGrossIncome)} bold />
@@ -132,7 +148,12 @@ function IncomeSection({ p }: { p: TaxSettlementPreview }) {
         </Text>
       )}
       {p.incomeItems.map((i) => (
-        <IncomeCompanyCard key={i.incomeSourceId} item={i} total={p.totalGrossIncome} />
+        <IncomeCompanyCard
+          key={i.incomeSourceId}
+          item={i}
+          year={p.taxYear}
+          months={monthlyGroups ? findCompanyMonths(monthlyGroups, i) : null}
+        />
       ))}
 
       <Note>
@@ -143,9 +164,18 @@ function IncomeSection({ p }: { p: TaxSettlementPreview }) {
   );
 }
 
-function IncomeCompanyCard({ item, total }: { item: SettlementIncomeItem; total: number }) {
+function IncomeCompanyCard({
+  item,
+  year,
+  months,
+}: {
+  item: SettlementIncomeItem;
+  year: number;
+  /** null = đang tải thu nhập tháng */
+  months: IncomeMonthItem[] | null;
+}) {
   const [expanded, setExpanded] = useState(false);
-  const share = total > 0 && item.isSelected ? Math.round((item.grossIncome / total) * 100) : null;
+  const monthlySum = (months ?? []).reduce((s, m) => s + (Number(m.totalTaxableIncome) || 0), 0);
   return (
     <View style={[styles.card, !item.isSelected && styles.cardMuted]}>
       <TouchableOpacity style={styles.cardHead} onPress={() => setExpanded((v) => !v)} accessibilityRole="button">
@@ -160,9 +190,26 @@ function IncomeCompanyCard({ item, total }: { item: SettlementIncomeItem; total:
         <View style={styles.cardBody}>
           <Row label="Mã số thuế tổ chức" value={item.companyTaxCode || '—'} />
           <Row label="Thu nhập chịu thuế" value={formatVnd(item.grossIncome)} />
-          {share != null ? <Row label="Tỷ trọng trong tổng" value={`${share}%`} /> : null}
           <Row label="Bảo hiểm bắt buộc đã trích" value={formatVnd(item.insuranceDeduction)} />
           <Row label="Thuế đã khấu trừ" value={formatVnd(item.taxWithheld)} />
+
+          <Text style={styles.monthlyHead}>Thu nhập từng tháng</Text>
+          {months === null ? (
+            <Text style={styles.muted}>Đang tải thu nhập theo tháng...</Text>
+          ) : months.length === 0 ? (
+            <Text style={styles.muted}>Nơi chi trả này chưa khai thu nhập theo tháng.</Text>
+          ) : (
+            <>
+              <View style={styles.monthlyTable}>
+                <QuarterIncomeTable months={months} year={year} testIDPrefix={`settlement_${item.companyTaxCode || item.incomeSourceId}_`} />
+              </View>
+              {Math.abs(monthlySum - item.grossIncome) >= 1 ? (
+                <Text style={styles.monthlyWarn}>
+                  Tổng theo tháng ({formatVnd(monthlySum)}) khác số dùng để quyết toán ({formatVnd(item.grossIncome)}).
+                </Text>
+              ) : null}
+            </>
+          )}
         </View>
       ) : null}
     </View>
@@ -219,10 +266,10 @@ function DependentCard({
         <View style={styles.cardBody}>
           <Row label="Quan hệ" value={relationshipLabel(item.relationship)} />
           <Row label="Thời gian được tính" value={range ?? '—'} />
-          <Row label="Số tháng" value={`${item.validMonths}`} />
           <Row
             label="Cách tính"
-            value={`${item.validMonths} × ${formatAmount(monthlyRate)} = ${formatVnd(item.deductionAmount)}`}
+            hint={`${item.validMonths} tháng × ${formatAmount(monthlyRate)}`}
+            value={formatVnd(item.deductionAmount)}
           />
         </View>
       ) : null}
@@ -237,13 +284,12 @@ function DeductionsSection({ p }: { p: TaxSettlementPreview }) {
     <>
       <Row label="Bảo hiểm bắt buộc" value={formatVnd(p.totalInsuranceDeduction)} />
       <Row
-        label={`Bản thân (${p.personalDeductionMonths} tháng × ${formatAmount(p.personalDeductionMonthlyRate)})`}
+        label="Bản thân"
+        hint={`${p.personalDeductionMonths} tháng × ${formatAmount(p.personalDeductionMonthlyRate)}`}
         value={formatVnd(p.personalDeductionAmount)}
       />
-      <Row
-        label={`Người phụ thuộc (${p.dependentDeductionPersonMonths} người-tháng)`}
-        value={formatVnd(p.dependentDeductionAmount)}
-      />
+      {/* Chi tiết từng NPT đã có ở mục Người phụ thuộc — ở đây chỉ hiện kết quả */}
+      <Row label="Người phụ thuộc" value={formatVnd(p.dependentDeductionAmount)} />
       {p.charityDeduction > 0 ? (
         <Row label="Đóng góp từ thiện, nhân đạo" value={formatVnd(p.charityDeduction)} />
       ) : null}
@@ -313,7 +359,7 @@ function BracketsSection({ p }: { p: TaxSettlementPreview }) {
 
       <Row label={'Thuế phải nộp cả năm (× 12)'} value={formatVnd(p.taxPayable)} bold />
       <Note>
-        Thuế TNCN tính lũy tiến từng phần giống tiền điện: phần thu nhập nằm trong khoảng của bậc nào thì nhân với
+        Thuế TNCN tính lũy tiến từng phần : phần thu nhập nằm trong khoảng của bậc nào thì nhân với
         thuế suất của bậc đó, rồi cộng lại.
         {rows.length > 0 && matches
           ? ' Kết quả khớp với công thức rút gọn của cơ quan thuế (TNTT × thuế suất bậc cao nhất − số trừ nhanh).'
@@ -334,10 +380,14 @@ function formatRate(rate: number): string {
 
 // ── Thành phần dùng chung ─────────────────────────────────────────────────────
 
-function Row({ label, value, bold }: { label: string; value: string; bold?: boolean }) {
+/** Trái: tên dòng (+ cách tính nhạt trong ngoặc) · Phải: chỉ kết quả */
+function Row({ label, value, bold, hint }: { label: string; value: string; bold?: boolean; hint?: string }) {
   return (
     <View style={styles.row}>
-      <Text style={styles.rowLabel}>{label}</Text>
+      <Text style={styles.rowLabel}>
+        {label}
+        {hint ? <Text style={styles.rowHint}> ({hint})</Text> : null}
+      </Text>
       <Text style={[styles.rowValue, bold && styles.rowBold]}>{value}</Text>
     </View>
   );
@@ -431,6 +481,7 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
   rowBold: { fontFamily: fonts.bodyBold },
+  rowHint: { fontSize: 12, color: '#9A9A9A' },
   muted: { fontFamily: fonts.body, fontSize: 13, color: '#999' },
   subHead: {
     marginTop: 6,
@@ -447,6 +498,9 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.surface,
   },
   cardMuted: { opacity: 0.6 },
+  monthlyHead: { marginTop: 6, fontFamily: fonts.bodySemi, fontSize: 12, color: theme.colors.textPrimary },
+  monthlyTable: { marginHorizontal: -12, marginTop: 2 },
+  monthlyWarn: { fontFamily: fonts.body, fontSize: 11, lineHeight: 16, color: '#8A5A00' },
   cardHead: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10, paddingHorizontal: 12 },
   cardTitleWrap: { flex: 1 },
   cardTitle: { fontFamily: fonts.bodySemi, fontSize: 13, color: theme.colors.textPrimary },

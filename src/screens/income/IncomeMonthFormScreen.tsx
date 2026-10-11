@@ -10,6 +10,7 @@ import {
   Alert,
   KeyboardAvoidingView,
   Platform,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { RouteProp, useNavigation, useRoute } from '@react-navigation/native';
@@ -33,6 +34,8 @@ import {
   formatMoneyInput,
   fromIncomeItem,
   fromPayslipOcr,
+  incomeFormUi,
+  IncomeFormMode,
   isLowConfidence,
   toIncomeRequest,
   validateIncomeForm,
@@ -60,6 +63,10 @@ export function IncomeMonthFormScreen() {
   const [viewerOpen, setViewerOpen] = useState(false);
   // Ảnh phiếu lương đã quét — BE chỉ lưu ảnh khi gửi kèm lúc tạo thu nhập
   const [payslipFile, setPayslipFile] = useState<OcrImagePart | null>(null);
+
+  // Tháng có sẵn: mở ở chế độ xem, bấm Sửa mới cho chỉnh
+  const [mode, setMode] = useState<IncomeFormMode>(editing ? 'view' : 'edit');
+  const ui = incomeFormUi(mode, editing);
 
   const lowFields = ocr?.thresholdValidation?.lowConfidenceFields ?? [];
   const duplicate = findDuplicateMonth(params.groups ?? [], values, editing?.id);
@@ -160,6 +167,17 @@ export function IncomeMonthFormScreen() {
     doSave();
   };
 
+  const cancelEdit = () => {
+    if (!editing) return;
+    setValues(fromIncomeItem(editing));
+    setErrors({});
+    setOcr(null);
+    setPayslipFile(null);
+    setScanError('');
+    setFormError('');
+    setMode('view');
+  };
+
   const remove = () => {
     if (!editing) return;
     Alert.alert('Xóa thu nhập tháng này?', `Tháng ${editing.month}/${editing.year} · ${editing.organizationName}`, [
@@ -198,7 +216,7 @@ export function IncomeMonthFormScreen() {
           </Text>
           {low ? <Text style={styles.lowTag}>AI chưa chắc — kiểm tra lại</Text> : null}
         </View>
-        <View style={[styles.inputWrap, low && styles.inputLow, errors[name] && styles.inputError]}>
+        <View style={[styles.inputWrap, !ui.editable && styles.inputReadOnly, low && styles.inputLow, errors[name] && styles.inputError]}>
           <TextInput
             style={styles.input}
             value={values[name]}
@@ -206,7 +224,7 @@ export function IncomeMonthFormScreen() {
             keyboardType={opts.money || opts.numeric ? 'number-pad' : 'default'}
             placeholder={opts.placeholder}
             placeholderTextColor={theme.colors.textPlaceholder}
-            editable={!busy}
+            editable={ui.editable && !busy}
             testID={`incomeInput_${name}`}
           />
           {opts.money ? <Text style={styles.unit}>đ</Text> : null}
@@ -219,13 +237,14 @@ export function IncomeMonthFormScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right', 'bottom']}>
       <DrumHeader
-        title={editing ? `Thu nhập tháng ${editing.month}/${editing.year}` : 'Thêm thu nhập tháng'}
+        title={ui.title}
         onBack={() => navigation.goBack()}
         backTestID="incomeFormBack"
       />
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" testID="incomeFormScroll">
-          {/* Quét phiếu lương */}
+          {/* Quét phiếu lương — chỉ khi thêm mới hoặc đang sửa */}
+          {ui.showScan ? (
           <View style={styles.scanCard}>
             <Text style={styles.scanTitle}>Quét phiếu lương</Text>
             <Text style={styles.scanDesc}>
@@ -253,9 +272,10 @@ export function IncomeMonthFormScreen() {
               </View>
             ) : null}
           </View>
+          ) : null}
 
           {/* Kết quả OCR */}
-          {ocr ? (
+          {ui.showScan && ocr ? (
             <View style={[styles.ocrBox, ocr.thresholdValidation?.isPassedThreshold === false && styles.ocrBoxWarn]} testID="payslipOcrResult">
               <Text style={styles.ocrTitle}>
                 {ocr.thresholdValidation?.isPassedThreshold === false ? 'Đã đọc, nhưng độ tin cậy thấp' : 'Đã đọc phiếu lương'}
@@ -290,7 +310,19 @@ export function IncomeMonthFormScreen() {
           {field('insuranceDeducted', 'Bảo hiểm bắt buộc đã trích (BHXH, BHYT, BHTN)', { money: true, required: true, placeholder: '0' })}
           {field('taxAlreadyDeducted', 'Thuế TNCN đã khấu trừ', { money: true, placeholder: '0' })}
 
-          {values.payslipFileUrl || payslipFile ? (
+          {ui.showPayslipPreview ? (
+            <View style={styles.previewCard} testID="payslipPreview">
+              <Text style={styles.label}>Ảnh phiếu lương</Text>
+              {values.payslipFileUrl ? (
+                <TouchableOpacity onPress={() => setViewerOpen(true)} testID="payslipPreviewImage">
+                  <Image source={{ uri: values.payslipFileUrl }} style={styles.previewImage} resizeMode="contain" />
+                  <Text style={styles.previewHint}>Bấm vào ảnh để phóng to</Text>
+                </TouchableOpacity>
+              ) : (
+                <Text style={styles.previewEmpty}>Tháng này chưa đính kèm ảnh phiếu lương.</Text>
+              )}
+            </View>
+          ) : values.payslipFileUrl || payslipFile ? (
             <TouchableOpacity
               style={styles.attach}
               onPress={() => setViewerOpen(true)}
@@ -303,7 +335,7 @@ export function IncomeMonthFormScreen() {
             </TouchableOpacity>
           ) : null}
 
-          {duplicate ? (
+          {ui.editable && duplicate ? (
             <View style={styles.warnBox} testID="duplicateMonthWarning">
               <Ionicons name="warning-outline" size={16} color="#8A5A00" />
               <Text style={styles.warnText}>
@@ -313,6 +345,7 @@ export function IncomeMonthFormScreen() {
             </View>
           ) : null}
 
+          {ui.editable ? (
           <View style={styles.note}>
             <Ionicons name="information-circle-outline" size={14} color="#7A5A14" />
             <Text style={styles.noteText}>
@@ -320,6 +353,7 @@ export function IncomeMonthFormScreen() {
               phiếu lương, không tự tính.
             </Text>
           </View>
+          ) : null}
 
           {formError ? (
             <Text style={styles.formError} testID="incomeFormError">
@@ -327,11 +361,25 @@ export function IncomeMonthFormScreen() {
             </Text>
           ) : null}
 
-          <TouchableOpacity style={[styles.saveBtn, busy && styles.disabled]} onPress={save} disabled={busy} testID="saveMonthlyIncomeBtn">
-            {saving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.saveText}>{editing ? 'Lưu thay đổi' : 'Lưu thu nhập tháng'}</Text>}
-          </TouchableOpacity>
+          {ui.showEditButton ? (
+            <TouchableOpacity style={styles.saveBtn} onPress={() => setMode('edit')} disabled={busy} testID="editMonthlyIncomeBtn">
+              <Text style={styles.saveText}>Sửa</Text>
+            </TouchableOpacity>
+          ) : null}
 
-          {editing ? (
+          {ui.showSave ? (
+            <TouchableOpacity style={[styles.saveBtn, busy && styles.disabled]} onPress={save} disabled={busy} testID="saveMonthlyIncomeBtn">
+              {saving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.saveText}>{editing ? 'Lưu thay đổi' : 'Lưu thu nhập tháng'}</Text>}
+            </TouchableOpacity>
+          ) : null}
+
+          {ui.showCancelEdit ? (
+            <TouchableOpacity style={styles.deleteBtn} onPress={cancelEdit} disabled={busy} testID="cancelEditMonthlyIncomeBtn">
+              <Text style={styles.cancelText}>Hủy sửa</Text>
+            </TouchableOpacity>
+          ) : null}
+
+          {ui.showEditButton ? (
             <TouchableOpacity style={styles.deleteBtn} onPress={remove} disabled={busy} testID="deleteMonthlyIncomeBtn">
               {deleting ? <ActivityIndicator color={theme.colors.primary} /> : <Text style={styles.deleteText}>Xóa tháng này</Text>}
             </TouchableOpacity>
@@ -408,6 +456,7 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.surface,
     paddingHorizontal: 12,
   },
+  inputReadOnly: { backgroundColor: theme.colors.background },
   inputLow: { borderColor: '#E0A800', backgroundColor: '#FFF9E6' },
   inputError: { borderColor: theme.colors.primary },
   input: { flex: 1, paddingVertical: 10, fontFamily: fonts.body, fontSize: 14, color: theme.colors.textPrimary },
@@ -415,6 +464,17 @@ const styles = StyleSheet.create({
   errorText: { fontFamily: fonts.body, fontSize: 11, color: theme.colors.primary },
   row2: { flexDirection: 'row', gap: 10 },
   attach: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  previewCard: {
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: 12,
+    backgroundColor: theme.colors.surface,
+    padding: 12,
+    gap: 8,
+  },
+  previewImage: { width: '100%', height: 260, borderRadius: 8, backgroundColor: theme.colors.background },
+  previewHint: { fontFamily: fonts.body, fontSize: 11, color: theme.colors.textSecondary, textAlign: 'center', marginTop: 4 },
+  previewEmpty: { fontFamily: fonts.body, fontSize: 12, color: theme.colors.textSecondary },
   attachText: { fontFamily: fonts.bodyMedium, fontSize: 12, color: theme.colors.primary },
   warnBox: { flexDirection: 'row', gap: 6, padding: 10, borderRadius: 8, backgroundColor: '#FFF1D6' },
   warnText: { flex: 1, fontFamily: fonts.body, fontSize: 12, lineHeight: 17, color: '#6B4600' },
@@ -432,4 +492,5 @@ const styles = StyleSheet.create({
   disabled: { opacity: 0.6 },
   deleteBtn: { alignItems: 'center', paddingVertical: 10 },
   deleteText: { fontFamily: fonts.bodySemi, fontSize: 14, color: theme.colors.primary },
+  cancelText: { fontFamily: fonts.bodySemi, fontSize: 14, color: theme.colors.textSecondary },
 });

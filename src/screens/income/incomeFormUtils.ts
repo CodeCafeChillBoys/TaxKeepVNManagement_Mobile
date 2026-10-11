@@ -183,3 +183,26 @@ export function extractApiErrorMessage(err: unknown, fallback: string): string {
   }
   return e.message || fallback;
 }
+
+// ── Chế độ màn hình ───────────────────────────────────────────────────────────
+
+export type IncomeFormMode = 'view' | 'edit';
+
+/** Tháng có sẵn mở ra ở chế độ xem (ẩn quét, khóa ô); bấm Sửa mới cho chỉnh. */
+export function incomeFormUi(mode: IncomeFormMode, item: IncomeMonthItem | null | undefined) {
+  const viewing = !!item && mode === 'view';
+  return {
+    title: !item
+      ? 'Thêm thu nhập tháng'
+      : viewing
+        ? `Thu nhập tháng ${item.month}/${item.year}`
+        : `Sửa thu nhập tháng ${item.month}/${item.year}`,
+    editable: !viewing,
+    showScan: !viewing,
+    showSave: !viewing,
+    showEditButton: viewing,
+    showCancelEdit: !!item && !viewing,
+    // Chế độ xem: hiện ảnh phiếu lương ngay trên màn
+    showPayslipPreview: viewing,
+  };
+}

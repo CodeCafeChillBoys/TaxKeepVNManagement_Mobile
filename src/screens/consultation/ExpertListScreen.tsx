@@ -20,6 +20,7 @@ import { fonts } from '../../constants/fonts';
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
 import { RootNavigationProp } from '../../navigation/types';
 import { consultationApi } from '../../api/consultationApi';
+import { useAuthStore } from '../../stores/useAuthStore';
 import type {
   ExpertListItemResponse,
   SpecializationDto,
@@ -45,14 +46,155 @@ const SORT_OPTIONS: { key: ExpertSortBy; label: string }[] = [
   { key: 'CompletedSessionsDesc', label: 'Nhiều ca hoàn thành' },
 ];
 
+interface ExpertListItemCardProps {
+  item: ExpertListItemResponse;
+  onPress: () => void;
+}
+
+const ExpertListItemCard: React.FC<ExpertListItemCardProps> = ({ item, onPress }) => {
+  const [imgError, setImgError] = useState(false);
+  const isValidHttp = Boolean(
+    item.avatarUrl && (item.avatarUrl.startsWith('http://') || item.avatarUrl.startsWith('https://'))
+  );
+  const nameParts = (item.fullName || 'Chuyên gia').trim().split(/\s+/);
+  const displayInitial = (nameParts[nameParts.length - 1]?.charAt(0) || 'C').toUpperCase();
+
+  return (
+    <TouchableOpacity
+      style={styles.expertCard}
+      activeOpacity={0.88}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`Chuyên gia ${item.fullName}`}
+    >
+      {/* Top row: Avatar & Identity */}
+      <View style={styles.cardTopRow}>
+        <View style={styles.cardAvatarWrap}>
+          {isValidHttp && !imgError ? (
+            <Image
+              source={{ uri: item.avatarUrl! }}
+              style={styles.cardAvatar}
+              onError={() => setImgError(true)}
+            />
+          ) : (
+            <View style={styles.cardAvatarPlaceholder}>
+              <Text style={styles.cardAvatarLetter}>{displayInitial}</Text>
+            </View>
+          )}
+        </View>
+
+        <View style={styles.cardInfo}>
+          <View style={styles.cardNameRow}>
+            <Text style={styles.cardName} numberOfLines={1}>
+              {item.fullName}
+            </Text>
+            <Ionicons name="checkmark-circle" size={16} color="#059669" style={{ marginLeft: 4 }} />
+          </View>
+
+          <Text style={styles.cardJobTitle} numberOfLines={1}>
+            {item.jobTitle || 'Chuyên gia tư vấn thuế'}
+          </Text>
+
+          {item.companyName ? (
+            <Text style={styles.cardCompany} numberOfLines={1}>
+              <Ionicons name="business-outline" size={11} color="#777777" /> {item.companyName}
+            </Text>
+          ) : null}
+
+          {/* Highlights row */}
+          <View style={styles.cardHighlights}>
+            <View style={styles.ratingBadge}>
+              <Ionicons name="star" size={12} color="#F59E0B" />
+              <Text style={styles.ratingText}>
+                {item.rating > 0 ? item.rating.toFixed(1) : '5.0'}
+              </Text>
+              <Text style={styles.reviewCount}>({item.totalReviews})</Text>
+            </View>
+
+            {item.yearsOfExperience > 0 && (
+              <View style={styles.highlightBadge}>
+                <Text style={styles.highlightText}>
+                  {item.yearsOfExperience} năm kinh nghiệm
+                </Text>
+              </View>
+            )}
+
+            {item.completedConsultationsCount > 0 && (
+              <View style={styles.highlightBadge}>
+                <Text style={styles.highlightText}>
+                  {item.completedConsultationsCount} ca
+                </Text>
+              </View>
+            )}
+          </View>
+        </View>
+      </View>
+
+      {/* Specialization Tags */}
+      {item.specializationNames && item.specializationNames.length > 0 && (
+        <View style={styles.specTagsRow}>
+          {item.specializationNames.slice(0, 2).map((s, idx) => (
+            <View key={idx} style={styles.specTag}>
+              <Text style={styles.specTagText} numberOfLines={1} ellipsizeMode="tail">
+                {s}
+              </Text>
+            </View>
+          ))}
+          {item.specializationNames.length > 2 && (
+            <View style={styles.specTagMore}>
+              <Text style={styles.specTagMoreText}>
+                +{item.specializationNames.length - 2}
+              </Text>
+            </View>
+          )}
+        </View>
+      )}
+
+      {/* Card Footer: Fee & Booking CTA */}
+      <View style={styles.cardFooter}>
+        <View style={styles.footerLeft}>
+          <View style={styles.feeRow}>
+            <Text style={styles.feeLabel}>Mức phí từ: </Text>
+            <Text style={styles.feeValue}>{formatVnd(item.startingFee)}</Text>
+          </View>
+
+          {item.hasAvailableSlotSoon ? (
+            <View style={styles.slotAvailableBadge}>
+              <Ionicons name="calendar-outline" size={11} color="#059669" />
+              <Text style={styles.slotAvailableText} numberOfLines={1}>
+                {item.earliestAvailableDate
+                  ? `Lịch sớm: ${formatVietnameseDate(item.earliestAvailableDate)}`
+                  : 'Có lịch rảnh'}
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.slotBusyBadge}>
+              <Ionicons name="time-outline" size={11} color="#6B7280" />
+              <Text style={styles.slotBusyText}>Lịch linh hoạt</Text>
+            </View>
+          )}
+        </View>
+
+        <View style={styles.bookBtn}>
+          <Text style={styles.bookBtnText}>Xem & Đặt lịch</Text>
+          <Ionicons name="chevron-forward" size={13} color="#FFFFFF" />
+        </View>
+      </View>
+    </TouchableOpacity>
+  );
+};
+
 export const ExpertListScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
+  const currentUser = useAuthStore((s) => s.user);
 
   const [keyword, setKeyword] = useState('');
   const [selectedSpecId, setSelectedSpecId] = useState<number | null>(null);
   const [timeFilter, setTimeFilter] = useState<ExpertTimeFilter>('All');
   const [sortBy, setSortBy] = useState<ExpertSortBy>('Recommended');
   const [sortModalVisible, setSortModalVisible] = useState(false);
+  const [specModalVisible, setSpecModalVisible] = useState(false);
+  const [timeModalVisible, setTimeModalVisible] = useState(false);
 
   const [specializations, setSpecializations] = useState<SpecializationDto[]>([]);
   const [featuredExperts, setFeaturedExperts] = useState<ExpertListItemResponse[]>([]);
@@ -64,6 +206,36 @@ export const ExpertListScreen: React.FC = () => {
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+
+  // Hàm xác định xem chuyên gia có phải là chính bản thân người dùng đang đăng nhập hay không
+  const isSelfExpert = useCallback(
+    (exp: ExpertListItemResponse) => {
+      if (!currentUser) return false;
+      const myId = String(currentUser.id || '').trim().toLowerCase();
+      const myName = String(currentUser.fullName || '').trim().toLowerCase();
+      const expUserId = String(exp.userId || '').trim().toLowerCase();
+      const expProfileId = String(exp.id || '').trim().toLowerCase();
+      const expName = String(exp.fullName || '').trim().toLowerCase();
+
+      if (myId && (myId === expUserId || myId === expProfileId)) {
+        return true;
+      }
+      if (myName && expName && myName === expName) {
+        return true;
+      }
+      return false;
+    },
+    [currentUser]
+  );
+
+  // Danh sách chuyên gia đã lọc (không bao giờ hiển thị bản thân mình)
+  const displayedExperts = useMemo(() => {
+    return experts.filter((e) => !isSelfExpert(e));
+  }, [experts, isSelfExpert]);
+
+  const displayedFeatured = useMemo(() => {
+    return featuredExperts.filter((e) => !isSelfExpert(e));
+  }, [featuredExperts, isSelfExpert]);
 
   // Tải danh mục lĩnh vực & chuyên gia nổi bật ban đầu
   useEffect(() => {
@@ -148,6 +320,19 @@ export const ExpertListScreen: React.FC = () => {
     return SORT_OPTIONS.find((s) => s.key === sortBy)?.label || 'Sắp xếp';
   }, [sortBy]);
 
+  const selectedSpecName = useMemo(() => {
+    if (!selectedSpecId) return 'Tất cả lĩnh vực';
+    return specializations.find((s) => s.id === selectedSpecId)?.name || 'Lĩnh vực';
+  }, [selectedSpecId, specializations]);
+
+  const currentTimeFilterLabel = useMemo(() => {
+    return TIME_FILTERS.find((tf) => tf.key === timeFilter)?.label || 'Thời gian';
+  }, [timeFilter]);
+
+  const hasActiveFilters = Boolean(
+    selectedSpecId !== null || timeFilter !== 'All' || sortBy !== 'Recommended'
+  );
+
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
       {/* ── HEADER ── */}
@@ -179,7 +364,7 @@ export const ExpertListScreen: React.FC = () => {
 
       <GoldDoubleRule />
 
-      {/* ── SEARCH & FILTER CONTROLS ── */}
+      {/* ── SEARCH & DROPDOWN FILTER CONTROLS ── */}
       <View style={styles.searchSection}>
         <View style={styles.searchBar}>
           <Ionicons name="search" size={18} color="#888888" style={styles.searchIcon} />
@@ -199,72 +384,137 @@ export const ExpertListScreen: React.FC = () => {
           )}
         </View>
 
-        {/* Specialization Chips */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.specScrollContent}
-        >
+        {/* ── DROPDOWN FILTER ROW ── */}
+        <View style={styles.filterDropdownRow}>
+          {/* Dropdown 1: Lĩnh vực */}
           <TouchableOpacity
-            style={[styles.specChip, selectedSpecId === null && styles.specChipActive]}
-            onPress={() => setSelectedSpecId(null)}
+            style={[
+              styles.filterDropdownBtn,
+              selectedSpecId !== null && styles.filterDropdownBtnActive,
+            ]}
+            onPress={() => setSpecModalVisible(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Chọn lĩnh vực chuyên môn"
           >
+            <Ionicons
+              name="briefcase-outline"
+              size={13}
+              color={selectedSpecId !== null ? '#FFFFFF' : theme.colors.primary}
+            />
             <Text
               style={[
-                styles.specChipText,
-                selectedSpecId === null && styles.specChipTextActive,
+                styles.filterDropdownText,
+                selectedSpecId !== null && styles.filterDropdownTextActive,
               ]}
+              numberOfLines={1}
             >
-              Tất cả lĩnh vực
+              {selectedSpecName}
             </Text>
+            <Ionicons
+              name="chevron-down"
+              size={12}
+              color={selectedSpecId !== null ? '#FFFFFF' : '#6B7280'}
+            />
           </TouchableOpacity>
-          {specializations.map((spec) => {
-            const isSelected = selectedSpecId === spec.id;
-            return (
-              <TouchableOpacity
-                key={spec.id}
-                style={[styles.specChip, isSelected && styles.specChipActive]}
-                onPress={() => setSelectedSpecId(isSelected ? null : spec.id)}
-              >
-                <Text style={[styles.specChipText, isSelected && styles.specChipTextActive]}>
-                  {spec.name}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
 
-        {/* Secondary Filter Row: Time Filter & Sort Dropdown */}
-        <View style={styles.secondaryFilterRow}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.timeScroll}>
-            {TIME_FILTERS.map((tf) => {
-              const active = timeFilter === tf.key;
-              return (
-                <TouchableOpacity
-                  key={tf.key}
-                  style={[styles.timeChip, active && styles.timeChipActive]}
-                  onPress={() => setTimeFilter(tf.key)}
-                >
-                  <Text style={[styles.timeChipText, active && styles.timeChipTextActive]}>
-                    {tf.label}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-
+          {/* Dropdown 2: Thời gian có lịch */}
           <TouchableOpacity
-            style={styles.sortBtn}
+            style={[
+              styles.filterDropdownBtn,
+              timeFilter !== 'All' && styles.filterDropdownBtnActive,
+            ]}
+            onPress={() => setTimeModalVisible(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Chọn thời gian có lịch"
+          >
+            <Ionicons
+              name="calendar-outline"
+              size={13}
+              color={timeFilter !== 'All' ? '#FFFFFF' : theme.colors.primary}
+            />
+            <Text
+              style={[
+                styles.filterDropdownText,
+                timeFilter !== 'All' && styles.filterDropdownTextActive,
+              ]}
+              numberOfLines={1}
+            >
+              {currentTimeFilterLabel}
+            </Text>
+            <Ionicons
+              name="chevron-down"
+              size={12}
+              color={timeFilter !== 'All' ? '#FFFFFF' : '#6B7280'}
+            />
+          </TouchableOpacity>
+
+          {/* Dropdown 3: Sắp xếp */}
+          <TouchableOpacity
+            style={[
+              styles.filterDropdownBtn,
+              sortBy !== 'Recommended' && styles.filterDropdownBtnActive,
+            ]}
             onPress={() => setSortModalVisible(true)}
             accessibilityRole="button"
             accessibilityLabel="Chọn sắp xếp"
           >
-            <Ionicons name="swap-vertical" size={14} color={theme.colors.primary} />
-            <Text style={styles.sortBtnText} numberOfLines={1}>
+            <Ionicons
+              name="swap-vertical"
+              size={13}
+              color={sortBy !== 'Recommended' ? '#FFFFFF' : theme.colors.primary}
+            />
+            <Text
+              style={[
+                styles.filterDropdownText,
+                sortBy !== 'Recommended' && styles.filterDropdownTextActive,
+              ]}
+              numberOfLines={1}
+            >
               {currentSortLabel}
             </Text>
+            <Ionicons
+              name="chevron-down"
+              size={12}
+              color={sortBy !== 'Recommended' ? '#FFFFFF' : '#6B7280'}
+            />
           </TouchableOpacity>
         </View>
+
+        {/* Active Filters Bar */}
+        {hasActiveFilters && (
+          <View style={styles.activeFiltersRow}>
+            <Text style={styles.activeFiltersLabel}>Đang lọc:</Text>
+            {selectedSpecId !== null && (
+              <View style={styles.activeFilterPill}>
+                <Text style={styles.activeFilterPillText} numberOfLines={1}>
+                  {selectedSpecName}
+                </Text>
+                <TouchableOpacity onPress={() => setSelectedSpecId(null)}>
+                  <Ionicons name="close-circle" size={13} color="#8B1E1E" />
+                </TouchableOpacity>
+              </View>
+            )}
+            {timeFilter !== 'All' && (
+              <View style={styles.activeFilterPill}>
+                <Text style={styles.activeFilterPillText}>{currentTimeFilterLabel}</Text>
+                <TouchableOpacity onPress={() => setTimeFilter('All')}>
+                  <Ionicons name="close-circle" size={13} color="#8B1E1E" />
+                </TouchableOpacity>
+              </View>
+            )}
+            {sortBy !== 'Recommended' && (
+              <View style={styles.activeFilterPill}>
+                <Text style={styles.activeFilterPillText}>{currentSortLabel}</Text>
+                <TouchableOpacity onPress={() => setSortBy('Recommended')}>
+                  <Ionicons name="close-circle" size={13} color="#8B1E1E" />
+                </TouchableOpacity>
+              </View>
+            )}
+            <TouchableOpacity style={styles.resetFiltersBtn} onPress={resetFilters}>
+              <Text style={styles.resetFiltersBtnText}>Đặt lại</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
 
       {/* ── EXPERT LIST & FEATURED CAROUSEL ── */}
@@ -284,7 +534,7 @@ export const ExpertListScreen: React.FC = () => {
         </View>
       ) : (
         <FlatList
-          data={experts}
+          data={displayedExperts}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.listContent}
           keyboardShouldPersistTaps="handled"
@@ -300,7 +550,7 @@ export const ExpertListScreen: React.FC = () => {
           ListHeaderComponent={
             <>
               {/* Chuyên gia nổi bật (Hiển thị khi không gõ tìm kiếm và trang 1) */}
-              {featuredExperts.length > 0 && !keyword && (
+              {displayedFeatured.length > 0 && !keyword && (
                 <View style={styles.featuredContainer}>
                   <View style={styles.sectionTitleRow}>
                     <Ionicons name="ribbon" size={18} color={theme.colors.gold} />
@@ -311,7 +561,7 @@ export const ExpertListScreen: React.FC = () => {
                     showsHorizontalScrollIndicator={false}
                     contentContainerStyle={styles.featuredScroll}
                   >
-                    {featuredExperts.map((exp) => (
+                    {displayedFeatured.map((exp) => (
                       <TouchableOpacity
                         key={exp.id}
                         style={styles.featuredCard}
@@ -362,7 +612,7 @@ export const ExpertListScreen: React.FC = () => {
 
               <View style={styles.listHeaderRow}>
                 <Text style={styles.listCountText}>
-                  Tìm thấy <Text style={styles.boldText}>{experts.length}</Text> chuyên gia
+                  Tìm thấy <Text style={styles.boldText}>{displayedExperts.length}</Text> chuyên gia
                 </Text>
               </View>
             </>
@@ -380,124 +630,12 @@ export const ExpertListScreen: React.FC = () => {
             </View>
           }
           renderItem={({ item }) => (
-            <TouchableOpacity
-              style={styles.expertCard}
-              activeOpacity={0.88}
-              onPress={() => navigation.navigate('ExpertDetail', { expertProfileId: item.id })}
-            >
-              {/* Top row: Avatar & Identity */}
-              <View style={styles.cardTopRow}>
-                <View style={styles.cardAvatarWrap}>
-                  {item.avatarUrl ? (
-                    <Image source={{ uri: item.avatarUrl }} style={styles.cardAvatar} />
-                  ) : (
-                    <View style={styles.cardAvatarPlaceholder}>
-                      <Text style={styles.cardAvatarLetter}>
-                        {item.fullName.trim().charAt(item.fullName.trim().length - 1)}
-                      </Text>
-                    </View>
-                  )}
-                  <View style={styles.verifiedBadge}>
-                    <Ionicons name="shield-checkmark" size={12} color="#FFFFFF" />
-                  </View>
-                </View>
-
-                <View style={styles.cardInfo}>
-                  <View style={styles.cardNameRow}>
-                    <Text style={styles.cardName} numberOfLines={1}>
-                      {item.fullName}
-                    </Text>
-                  </View>
-                  <Text style={styles.cardJobTitle} numberOfLines={1}>
-                    {item.jobTitle || 'Chuyên gia tư vấn thuế'}
-                  </Text>
-                  {item.companyName ? (
-                    <Text style={styles.cardCompany} numberOfLines={1}>
-                      <Ionicons name="business-outline" size={12} color="#666666" />{' '}
-                      {item.companyName}
-                    </Text>
-                  ) : null}
-
-                  {/* Highlights row */}
-                  <View style={styles.cardHighlights}>
-                    <View style={styles.ratingBadge}>
-                      <Ionicons name="star" size={13} color="#F59E0B" />
-                      <Text style={styles.ratingText}>
-                        {item.rating > 0 ? item.rating.toFixed(1) : '5.0'}
-                      </Text>
-                      <Text style={styles.reviewCount}>({item.totalReviews})</Text>
-                    </View>
-
-                    {item.yearsOfExperience > 0 && (
-                      <View style={styles.highlightBadge}>
-                        <Text style={styles.highlightText}>
-                          {item.yearsOfExperience} năm kinh nghiệm
-                        </Text>
-                      </View>
-                    )}
-
-                    {item.completedConsultationsCount > 0 && (
-                      <View style={styles.highlightBadge}>
-                        <Text style={styles.highlightText}>
-                          {item.completedConsultationsCount} ca hoàn thành
-                        </Text>
-                      </View>
-                    )}
-                  </View>
-                </View>
-              </View>
-
-              {/* Specialization Tags */}
-              {item.specializationNames && item.specializationNames.length > 0 && (
-                <View style={styles.specTagsRow}>
-                  {item.specializationNames.slice(0, 3).map((s, idx) => (
-                    <View key={idx} style={styles.specTag}>
-                      <Text style={styles.specTagText}>{s}</Text>
-                    </View>
-                  ))}
-                  {item.specializationNames.length > 3 && (
-                    <View style={styles.specTagMore}>
-                      <Text style={styles.specTagMoreText}>
-                        +{item.specializationNames.length - 3}
-                      </Text>
-                    </View>
-                  )}
-                </View>
-              )}
-
-              {/* Card Footer: Fee & Availability */}
-              <View style={styles.cardFooter}>
-                <View style={styles.feeWrap}>
-                  <Text style={styles.feeLabel}>Mức phí từ</Text>
-                  <Text style={styles.feeValue}>{formatVnd(item.startingFee)}</Text>
-                </View>
-
-                {item.hasAvailableSlotSoon ? (
-                  <View style={styles.slotAvailableBadge}>
-                    <Ionicons name="time" size={12} color="#059669" />
-                    <Text style={styles.slotAvailableText}>
-                      {item.earliestAvailableDate
-                        ? `Lịch sớm: ${formatVietnameseDate(item.earliestAvailableDate)}`
-                        : 'Có lịch rảnh'}
-                    </Text>
-                  </View>
-                ) : (
-                  <View style={styles.slotBusyBadge}>
-                    <Text style={styles.slotBusyText}>Xem lịch</Text>
-                  </View>
-                )}
-
-                <TouchableOpacity
-                  style={styles.bookBtn}
-                  onPress={() =>
-                    navigation.navigate('ExpertDetail', { expertProfileId: item.id })
-                  }
-                >
-                  <Text style={styles.bookBtnText}>Xem & Đặt lịch</Text>
-                  <Ionicons name="chevron-forward" size={14} color="#FFFFFF" />
-                </TouchableOpacity>
-              </View>
-            </TouchableOpacity>
+            <ExpertListItemCard
+              item={item}
+              onPress={() =>
+                navigation.navigate('ExpertDetail', { expertProfileId: item.id })
+              }
+            />
           )}
           ListFooterComponent={
             loadingMore ? (
@@ -509,6 +647,131 @@ export const ExpertListScreen: React.FC = () => {
           }
         />
       )}
+
+      {/* ── SPECIALIZATION DROPDOWN MODAL ── */}
+      <Modal
+        visible={specModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSpecModalVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setSpecModalVisible(false)}
+        >
+          <View style={styles.sortModalBox}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalHeaderTitle}>Chọn lĩnh vực chuyên môn</Text>
+              <TouchableOpacity onPress={() => setSpecModalVisible(false)}>
+                <Ionicons name="close" size={22} color="#666666" />
+              </TouchableOpacity>
+            </View>
+            <GoldDoubleRule style={{ marginVertical: 8 }} />
+
+            <ScrollView style={{ maxHeight: 380 }} showsVerticalScrollIndicator={false}>
+              {/* Option: Tất cả lĩnh vực */}
+              <TouchableOpacity
+                style={[
+                  styles.sortOptionRow,
+                  selectedSpecId === null && styles.sortOptionSelected,
+                ]}
+                onPress={() => {
+                  setSelectedSpecId(null);
+                  setSpecModalVisible(false);
+                }}
+              >
+                <Text
+                  style={[
+                    styles.sortOptionText,
+                    selectedSpecId === null && styles.sortOptionTextActive,
+                  ]}
+                >
+                  Tất cả lĩnh vực chuyên môn
+                </Text>
+                {selectedSpecId === null && (
+                  <Ionicons name="checkmark-circle" size={18} color={theme.colors.primary} />
+                )}
+              </TouchableOpacity>
+
+              {/* Specializations list */}
+              {specializations.map((spec) => {
+                const selected = selectedSpecId === spec.id;
+                return (
+                  <TouchableOpacity
+                    key={spec.id}
+                    style={[styles.sortOptionRow, selected && styles.sortOptionSelected]}
+                    onPress={() => {
+                      setSelectedSpecId(spec.id);
+                      setSpecModalVisible(false);
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.sortOptionText,
+                        selected && styles.sortOptionTextActive,
+                        { flex: 1, marginRight: 8 },
+                      ]}
+                      numberOfLines={1}
+                      ellipsizeMode="tail"
+                    >
+                      {spec.name}
+                    </Text>
+                    {selected && (
+                      <Ionicons name="checkmark-circle" size={18} color={theme.colors.primary} />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* ── TIME FILTER DROPDOWN MODAL ── */}
+      <Modal
+        visible={timeModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setTimeModalVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setTimeModalVisible(false)}
+        >
+          <View style={styles.sortModalBox}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalHeaderTitle}>Thời gian có lịch tư vấn</Text>
+              <TouchableOpacity onPress={() => setTimeModalVisible(false)}>
+                <Ionicons name="close" size={22} color="#666666" />
+              </TouchableOpacity>
+            </View>
+            <GoldDoubleRule style={{ marginVertical: 8 }} />
+
+            {TIME_FILTERS.map((tf) => {
+              const selected = timeFilter === tf.key;
+              return (
+                <TouchableOpacity
+                  key={tf.key}
+                  style={[styles.sortOptionRow, selected && styles.sortOptionSelected]}
+                  onPress={() => {
+                    setTimeFilter(tf.key);
+                    setTimeModalVisible(false);
+                  }}
+                >
+                  <Text style={[styles.sortOptionText, selected && styles.sortOptionTextActive]}>
+                    {tf.label}
+                  </Text>
+                  {selected && (
+                    <Ionicons name="checkmark-circle" size={18} color={theme.colors.primary} />
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
       {/* ── SORT MODAL ── */}
       <Modal
@@ -642,80 +905,84 @@ const styles = StyleSheet.create({
     padding: 4,
   },
 
-  specScrollContent: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    gap: 8,
-  },
-  specChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    backgroundColor: '#F4EFE6',
-    borderWidth: 1,
-    borderColor: '#E2DCD0',
-  },
-  specChipActive: {
-    backgroundColor: theme.colors.primary,
-    borderColor: theme.colors.primary,
-  },
-  specChipText: {
-    fontFamily: fonts.bodySemi,
-    fontSize: 12,
-    color: theme.colors.textPrimary,
-  },
-  specChipTextActive: {
-    color: '#FFFFFF',
-  },
-
-  secondaryFilterRow: {
+  filterDropdownRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
+    paddingTop: 10,
     paddingBottom: 4,
     gap: 8,
   },
-  timeScroll: {
+  filterDropdownBtn: {
     flex: 1,
-  },
-  timeChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 6,
-    backgroundColor: '#F8F6F0',
-    marginRight: 6,
-    borderWidth: 1,
-    borderColor: '#E6E0D4',
-  },
-  timeChipActive: {
-    backgroundColor: '#EAE1D0',
-    borderColor: theme.colors.gold,
-  },
-  timeChipText: {
-    fontFamily: fonts.body,
-    fontSize: 11,
-    color: '#555555',
-  },
-  timeChipTextActive: {
-    fontFamily: fonts.bodyBold,
-    color: theme.colors.primaryDark,
-  },
-  sortBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    borderRadius: 6,
-    backgroundColor: '#FAF5EA',
+    justifyContent: 'space-between',
+    backgroundColor: '#FAF6EE',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: theme.colors.goldLight,
-    maxWidth: 130,
+    borderColor: '#E6DCBF',
+    gap: 4,
   },
-  sortBtnText: {
+  filterDropdownBtnActive: {
+    backgroundColor: theme.colors.primary,
+    borderColor: theme.colors.primary,
+  },
+  filterDropdownText: {
+    flex: 1,
     fontFamily: fonts.bodySemi,
+    fontSize: 11.5,
+    color: '#3A2E25',
+  },
+  filterDropdownTextActive: {
+    color: '#FFFFFF',
+    fontFamily: fonts.bodyBold,
+  },
+
+  activeFiltersRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 2,
+    gap: 6,
+  },
+  activeFiltersLabel: {
+    fontFamily: fonts.body,
     fontSize: 11,
-    color: theme.colors.primary,
+    color: '#786F66',
+  },
+  activeFilterPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FDF2F2',
+    borderWidth: 1,
+    borderColor: '#F8B4B4',
+    paddingHorizontal: 8,
+    paddingVertical: 2.5,
+    borderRadius: 14,
+    gap: 4,
+    maxWidth: '55%',
+  },
+  activeFilterPillText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 10.5,
+    color: '#8B1E1E',
+    flexShrink: 1,
+  },
+  resetFiltersBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 2.5,
+    borderRadius: 12,
+    backgroundColor: '#F3EFE6',
+  },
+  resetFiltersBtnText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 10.5,
+    color: '#6B7280',
   },
 
   listContent: {
@@ -849,53 +1116,50 @@ const styles = StyleSheet.create({
   // Expert Card
   expertCard: {
     backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 14,
+    borderRadius: 14,
+    padding: 15,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: theme.colors.border,
-    ...theme.shadows.card,
+    borderColor: '#ECE6DC',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
   },
   cardTopRow: {
     flexDirection: 'row',
+    alignItems: 'flex-start',
   },
   cardAvatarWrap: {
-    position: 'relative',
     marginRight: 12,
   },
   cardAvatar: {
     width: 60,
     height: 60,
     borderRadius: 30,
+    borderWidth: 1,
+    borderColor: '#E8DEC8',
+    backgroundColor: '#FAF5EE',
   },
   cardAvatarPlaceholder: {
     width: 60,
     height: 60,
     borderRadius: 30,
-    backgroundColor: '#8B1E1E1A',
+    backgroundColor: '#FAF5EE',
+    borderWidth: 1,
+    borderColor: '#E8DEC8',
     justifyContent: 'center',
     alignItems: 'center',
   },
   cardAvatarLetter: {
     fontFamily: fonts.serifBold,
-    fontSize: 24,
-    color: theme.colors.primary,
-  },
-  verifiedBadge: {
-    position: 'absolute',
-    right: -2,
-    bottom: -2,
-    backgroundColor: '#059669',
-    width: 18,
-    height: 18,
-    borderRadius: 9,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: '#FFFFFF',
+    fontSize: 22,
+    color: '#8B1E1E',
   },
   cardInfo: {
     flex: 1,
+    justifyContent: 'center',
   },
   cardNameRow: {
     flexDirection: 'row',
@@ -904,42 +1168,44 @@ const styles = StyleSheet.create({
   },
   cardName: {
     fontFamily: fonts.serifBold,
-    fontSize: 15,
+    fontSize: 16,
     color: theme.colors.textPrimary,
+    flexShrink: 1,
   },
   cardJobTitle: {
     fontFamily: fonts.bodySemi,
-    fontSize: 12,
-    color: theme.colors.primaryDark,
-    marginTop: 1,
+    fontSize: 12.5,
+    color: '#8B1E1E',
+    marginTop: 2,
   },
   cardCompany: {
     fontFamily: fonts.body,
     fontSize: 11,
-    color: '#666666',
-    marginTop: 1,
+    color: '#6B7280',
+    marginTop: 2,
   },
   cardHighlights: {
     flexDirection: 'row',
+    alignItems: 'center',
     flexWrap: 'wrap',
     gap: 6,
-    marginTop: 6,
+    marginTop: 7,
   },
   ratingBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFBEB',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
     borderRadius: 4,
-    gap: 2,
+    gap: 3,
     borderWidth: 0.5,
     borderColor: '#FDE68A',
   },
   ratingText: {
     fontFamily: fonts.bodyBold,
     fontSize: 11,
-    color: '#D97706',
+    color: '#B45309',
   },
   reviewCount: {
     fontFamily: fonts.body,
@@ -948,67 +1214,83 @@ const styles = StyleSheet.create({
   },
   highlightBadge: {
     backgroundColor: '#F3F4F6',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
     borderRadius: 4,
   },
   highlightText: {
-    fontFamily: fonts.body,
-    fontSize: 10,
+    fontFamily: fonts.bodySemi,
+    fontSize: 10.5,
     color: '#4B5563',
   },
 
   specTagsRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
+    alignItems: 'center',
     gap: 6,
-    marginTop: 10,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#F3EFE6',
+    marginTop: 8,
+    width: '100%',
+    overflow: 'hidden',
   },
   specTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: '#FAF5EA',
     paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 4,
+    paddingVertical: 3.5,
+    borderRadius: 6,
     borderWidth: 0.5,
     borderColor: '#E8DEC8',
+    maxWidth: '85%',
+    flexShrink: 1,
   },
   specTagText: {
     fontFamily: fonts.body,
     fontSize: 11,
     color: '#78350F',
+    flexShrink: 1,
   },
   specTagMore: {
-    paddingHorizontal: 6,
-    paddingVertical: 3,
+    backgroundColor: '#F3F4F6',
+    paddingHorizontal: 7,
+    paddingVertical: 3.5,
+    borderRadius: 6,
+    flexShrink: 0,
   },
   specTagMoreText: {
     fontFamily: fonts.bodySemi,
     fontSize: 11,
-    color: '#888888',
+    color: '#6B7280',
   },
 
   cardFooter: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: 10,
+    marginTop: 12,
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: '#F0ECE4',
+    borderTopColor: '#F3EFE6',
   },
-  feeWrap: {},
+  footerLeft: {
+    flex: 1,
+    marginRight: 10,
+  },
+  feeRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    marginBottom: 3,
+  },
   feeLabel: {
     fontFamily: fonts.body,
-    fontSize: 10,
-    color: '#888888',
+    fontSize: 11,
+    color: '#6B7280',
   },
   feeValue: {
     fontFamily: fonts.serifBold,
-    fontSize: 14,
-    color: theme.colors.primary,
+    fontSize: 15,
+    color: '#8B1E1E',
     fontVariant: ['tabular-nums'],
   },
   slotAvailableBadge: {
@@ -1016,34 +1298,45 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#ECFDF5',
     paddingHorizontal: 6,
-    paddingVertical: 3,
+    paddingVertical: 2.5,
     borderRadius: 4,
     gap: 3,
+    alignSelf: 'flex-start',
   },
   slotAvailableText: {
     fontFamily: fonts.bodySemi,
-    fontSize: 10,
+    fontSize: 10.5,
     color: '#065F46',
   },
   slotBusyBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: '#F3F4F6',
     paddingHorizontal: 6,
-    paddingVertical: 3,
+    paddingVertical: 2.5,
     borderRadius: 4,
+    gap: 3,
+    alignSelf: 'flex-start',
   },
   slotBusyText: {
     fontFamily: fonts.body,
-    fontSize: 10,
+    fontSize: 10.5,
     color: '#6B7280',
   },
   bookBtn: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: theme.colors.primary,
     paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 6,
+    height: 36,
+    borderRadius: 8,
     gap: 2,
+    shadowColor: theme.colors.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 2,
   },
   bookBtnText: {
     fontFamily: fonts.bodyBold,

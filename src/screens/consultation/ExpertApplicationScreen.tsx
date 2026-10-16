@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   TextInput,
   ActivityIndicator,
-  Alert,
   Modal,
   Platform,
 } from 'react-native';
@@ -18,9 +17,11 @@ import * as DocumentPicker from 'expo-document-picker';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
+import { Dialog } from '../../components/common/Dialog';
 import { RootNavigationProp } from '../../navigation/types';
 import { consultationApi } from '../../api/consultationApi';
 import { useAuthStore } from '../../stores/useAuthStore';
+import { toFriendlyConsultationError } from '../../utils/consultationFriendlyErrors';
 import type {
   ExpertApplicationDetailResponse,
   SpecializationDto,
@@ -34,6 +35,7 @@ import {
 export const ExpertApplicationScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
   const currentUser = useAuthStore((s) => s.user);
+  const userRole = (currentUser?.role || '').toLowerCase();
 
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -55,6 +57,17 @@ export const ExpertApplicationScreen: React.FC = () => {
   const [onlineMeetingFee, setOnlineMeetingFee] = useState('200000');
   const [chatFee, setChatFee] = useState('100000');
   const [voiceCallFee, setVoiceCallFee] = useState('150000');
+
+  // Dialog state
+  const [dialog, setDialog] = useState<{
+    title: string;
+    message: string;
+    primaryLabel?: string;
+    onPrimary?: () => void;
+    secondaryLabel?: string;
+    onSecondary?: () => void;
+    destructive?: boolean;
+  } | null>(null);
 
   // Certificate Modal State
   const [certModalVisible, setCertModalVisible] = useState(false);
@@ -103,8 +116,17 @@ export const ExpertApplicationScreen: React.FC = () => {
         setFullName(currentUser.fullName);
       }
     } catch (err: any) {
-      const msg = err?.response?.data?.message || err?.message || 'Không thể tải thông tin hồ sơ.';
-      Alert.alert('Thông báo', msg);
+      const friendly = toFriendlyConsultationError(
+        err,
+        'Thông báo',
+        'Không thể tải thông tin hồ sơ lúc này.'
+      );
+      setDialog({
+        title: friendly.title,
+        message: friendly.message,
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
     } finally {
       setLoading(false);
     }
@@ -156,7 +178,12 @@ export const ExpertApplicationScreen: React.FC = () => {
   // Lưu bản nháp
   const handleSaveDraft = async () => {
     if (!fullName.trim() || !jobTitle.trim()) {
-      Alert.alert('Lưu ý', 'Vui lòng nhập Họ tên và Chức danh nghề nghiệp.');
+      setDialog({
+        title: 'Thông tin chưa đầy đủ',
+        message: 'Vui lòng nhập Họ tên và Chức danh nghề nghiệp để lưu nháp.',
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
       return;
     }
     setSavingDraft(true);
@@ -164,10 +191,24 @@ export const ExpertApplicationScreen: React.FC = () => {
       const payload = buildDraftPayload();
       const updated = await consultationApi.saveDraftApplication(payload);
       setApplication(updated);
-      Alert.alert('Thành công', 'Đã lưu bản nháp hồ sơ chuyên gia thành công.');
+      setDialog({
+        title: 'Thành công',
+        message: 'Đã lưu bản nháp hồ sơ chuyên gia thành công.',
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
     } catch (err: any) {
-      const msg = err?.response?.data?.message || err?.message || 'Không thể lưu bản nháp.';
-      Alert.alert('Lỗi lưu nháp', msg);
+      const friendly = toFriendlyConsultationError(
+        err,
+        'Lưu nháp thất bại',
+        'Không thể lưu bản nháp hồ sơ lúc này.'
+      );
+      setDialog({
+        title: friendly.title,
+        message: friendly.message,
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
     } finally {
       setSavingDraft(false);
     }
@@ -176,15 +217,30 @@ export const ExpertApplicationScreen: React.FC = () => {
   // Nộp hồ sơ chính thức
   const handleSubmitApplication = async () => {
     if (!fullName.trim() || !jobTitle.trim() || !experienceDescription.trim()) {
-      Alert.alert('Lưu ý', 'Vui lòng hoàn thiện họ tên, chức danh và mô tả kinh nghiệm tư vấn.');
+      setDialog({
+        title: 'Thông tin chưa đầy đủ',
+        message: 'Vui lòng hoàn thiện họ tên, chức danh và mô tả kinh nghiệm tư vấn trước khi nộp hồ sơ.',
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
       return;
     }
     if (selectedSpecIds.length === 0) {
-      Alert.alert('Lưu ý', 'Vui lòng chọn ít nhất một lĩnh vực tư vấn trọng tâm.');
+      setDialog({
+        title: 'Chưa chọn lĩnh vực',
+        message: 'Vui lòng chọn ít nhất một lĩnh vực tư vấn trọng tâm.',
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
       return;
     }
     if (!application?.certificates || application.certificates.length === 0) {
-      Alert.alert('Lưu ý', 'Vui lòng đính kèm ít nhất một chứng chỉ hành nghề thuế hợp lệ.');
+      setDialog({
+        title: 'Thiếu chứng chỉ',
+        message: 'Vui lòng đính kèm ít nhất một chứng chỉ hành nghề thuế hợp lệ.',
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
       return;
     }
 
@@ -195,10 +251,24 @@ export const ExpertApplicationScreen: React.FC = () => {
       await consultationApi.saveDraftApplication(payload);
       const res = await consultationApi.submitApplication();
       setApplication(res);
-      Alert.alert('Thành công', 'Hồ sơ đã được gửi thành công. Quản trị viên sẽ tiến hành thẩm định.');
+      setDialog({
+        title: 'Nộp hồ sơ thành công',
+        message: 'Hồ sơ đã được gửi thành công. Ban quản trị sẽ tiến hành thẩm định và phản hồi đến bạn.',
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
     } catch (err: any) {
-      const msg = err?.response?.data?.message || err?.message || 'Không thể gửi hồ sơ.';
-      Alert.alert('Lỗi nộp hồ sơ', msg);
+      const friendly = toFriendlyConsultationError(
+        err,
+        'Nộp hồ sơ thất bại',
+        'Không thể gửi hồ sơ thẩm định lúc này.'
+      );
+      setDialog({
+        title: friendly.title,
+        message: friendly.message,
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
     } finally {
       setSubmitting(false);
     }
@@ -222,18 +292,33 @@ export const ExpertApplicationScreen: React.FC = () => {
         });
       }
     } catch (err: any) {
-      Alert.alert('Lỗi chọn tệp', err?.message || 'Không thể chọn tệp chứng chỉ từ thiết bị.');
+      setDialog({
+        title: 'Lỗi chọn tệp',
+        message: err?.message || 'Không thể chọn tệp chứng chỉ từ thiết bị.',
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
     }
   };
 
   // Tải lên chứng chỉ
   const handleUploadCertificate = async () => {
     if (!certFile) {
-      Alert.alert('Lưu ý', 'Vui lòng chọn tệp chứng chỉ (ảnh hoặc PDF).');
+      setDialog({
+        title: 'Chưa chọn tệp',
+        message: 'Vui lòng chọn tệp chứng chỉ (ảnh hoặc PDF).',
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
       return;
     }
     if (!certName.trim() || !certNumber.trim() || !issuingAuthority.trim()) {
-      Alert.alert('Lưu ý', 'Vui lòng nhập tên, số hiệu và cơ quan cấp chứng chỉ.');
+      setDialog({
+        title: 'Thông tin chưa đầy đủ',
+        message: 'Vui lòng nhập tên chứng chỉ, số hiệu và cơ quan cấp.',
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
       return;
     }
 
@@ -263,10 +348,24 @@ export const ExpertApplicationScreen: React.FC = () => {
       setCertName('');
       setCertNumber('');
       setIssuingAuthority('');
-      Alert.alert('Thành công', 'Đã tải lên và đính kèm chứng chỉ hành nghề.');
+      setDialog({
+        title: 'Thành công',
+        message: 'Đã tải lên và đính kèm chứng chỉ hành nghề.',
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
     } catch (err: any) {
-      const msg = err?.response?.data?.message || err?.message || 'Không thể tải lên chứng chỉ.';
-      Alert.alert('Lỗi tải chứng chỉ', msg);
+      const friendly = toFriendlyConsultationError(
+        err,
+        'Lỗi tải chứng chỉ',
+        'Không thể tải lên chứng chỉ lúc này.'
+      );
+      setDialog({
+        title: friendly.title,
+        message: friendly.message,
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
     } finally {
       setCertUploading(false);
     }
@@ -274,23 +373,34 @@ export const ExpertApplicationScreen: React.FC = () => {
 
   // Xóa chứng chỉ
   const handleDeleteCertificate = (certId: string) => {
-    Alert.alert('Xác nhận xóa', 'Bạn có chắc chắn muốn xóa chứng chỉ này khỏi hồ sơ?', [
-      { text: 'Hủy', style: 'cancel' },
-      {
-        text: 'Xóa',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await consultationApi.deleteApplicationCertificate(certId);
-            const updated = await consultationApi.getMyApplication();
-            if (updated) setApplication(updated);
-          } catch (err: any) {
-            const msg = err?.response?.data?.message || err?.message || 'Không thể xóa chứng chỉ.';
-            Alert.alert('Lỗi xóa chứng chỉ', msg);
-          }
-        },
+    setDialog({
+      title: 'Xác nhận xóa chứng chỉ',
+      message: 'Bạn có chắc chắn muốn xóa chứng chỉ này khỏi hồ sơ?',
+      primaryLabel: 'Xóa chứng chỉ',
+      destructive: true,
+      onPrimary: async () => {
+        setDialog(null);
+        try {
+          await consultationApi.deleteApplicationCertificate(certId);
+          const updated = await consultationApi.getMyApplication();
+          if (updated) setApplication(updated);
+        } catch (err: any) {
+          const friendly = toFriendlyConsultationError(
+            err,
+            'Lỗi xóa chứng chỉ',
+            'Không thể xóa chứng chỉ lúc này.'
+          );
+          setDialog({
+            title: friendly.title,
+            message: friendly.message,
+            primaryLabel: 'Đã hiểu',
+            onPrimary: () => setDialog(null),
+          });
+        }
       },
-    ]);
+      secondaryLabel: 'Hủy',
+      onSecondary: () => setDialog(null),
+    });
   };
 
   if (loading) {
@@ -308,6 +418,14 @@ export const ExpertApplicationScreen: React.FC = () => {
           <ActivityIndicator size="large" color={theme.colors.primary} />
           <Text style={styles.loadingText}>Đang tải thông tin hồ sơ...</Text>
         </View>
+        <Dialog
+          visible={Boolean(dialog)}
+          title={dialog?.title || ''}
+          message={dialog?.message || ''}
+          primaryLabel={dialog?.primaryLabel || 'Đã hiểu'}
+          onPrimary={dialog?.onPrimary || (() => setDialog(null))}
+          onRequestClose={() => setDialog(null)}
+        />
       </SafeAreaView>
     );
   }
@@ -315,6 +433,8 @@ export const ExpertApplicationScreen: React.FC = () => {
   const statusInfo = formatExpertApplicationStatus(application?.status);
   const isReadOnly =
     application?.status === 'PendingReview' || application?.status === 'Approved';
+  const isExpert =
+    userRole === 'expert' || userRole.includes('expert') || application?.status === 'Approved';
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
@@ -328,7 +448,9 @@ export const ExpertApplicationScreen: React.FC = () => {
         >
           <Ionicons name="arrow-back" size={24} color={theme.colors.textPrimary} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Đăng ký chuyên gia thuế</Text>
+        <Text style={styles.headerTitle}>
+          {isExpert ? 'Hồ sơ chuyên gia thuế' : 'Đăng ký chuyên gia thuế'}
+        </Text>
         <TouchableOpacity
           style={styles.refreshBtn}
           onPress={fetchApplicationData}
@@ -767,6 +889,18 @@ export const ExpertApplicationScreen: React.FC = () => {
           </View>
         </View>
       </Modal>
+
+      <Dialog
+        visible={Boolean(dialog)}
+        title={dialog?.title || ''}
+        message={dialog?.message || ''}
+        primaryLabel={dialog?.primaryLabel || 'Đã hiểu'}
+        onPrimary={dialog?.onPrimary || (() => setDialog(null))}
+        secondaryLabel={dialog?.secondaryLabel}
+        onSecondary={dialog?.onSecondary}
+        destructive={dialog?.destructive}
+        onRequestClose={() => setDialog(null)}
+      />
     </SafeAreaView>
   );
 };
@@ -988,6 +1122,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: 20,
+    maxWidth: '100%',
+    flexShrink: 1,
   },
   specChipActive: {
     backgroundColor: theme.colors.primary,
@@ -997,6 +1133,7 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bodySemi,
     fontSize: 12,
     color: '#4B3F35',
+    flexShrink: 1,
   },
   specChipTextActive: {
     color: '#FFFFFF',

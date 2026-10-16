@@ -32,7 +32,7 @@ export const ProfileScreen: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   const currentRole = (profile?.userRole || authUser?.role || '').toLowerCase();
-  const isExpert = currentRole === 'expert';
+  const isExpert = currentRole === 'expert' || currentRole.includes('expert');
 
   const handleLogout = () => {
     Alert.alert('Đăng xuất', 'Bạn có chắc chắn muốn đăng xuất khỏi ứng dụng?', [
@@ -58,6 +58,14 @@ export const ProfileScreen: React.FC = () => {
       setError(null);
       const data = await profileApi.getProfile();
       setProfile(data);
+      if (data?.userRole && authUser && authUser.role !== data.userRole) {
+        useAuthStore.setState({
+          user: {
+            ...authUser,
+            role: data.userRole,
+          },
+        });
+      }
     } catch (err: any) {
       const authUser = useAuthStore.getState().user;
       if (authUser) {
@@ -180,14 +188,21 @@ export const ProfileScreen: React.FC = () => {
           testID="quickLinkMyBookings"
         />
         {isExpert && (
-          <LinkRow
-            label="Quản lý ca tư vấn (Chuyên gia)"
-            onPress={() => navigation.navigate('ExpertBookings', {})}
-            testID="quickLinkExpertBookings"
-          />
+          <>
+            <LinkRow
+              label="Quản lý ca tư vấn (Chuyên gia)"
+              onPress={() => navigation.navigate('ExpertBookings', {})}
+              testID="quickLinkExpertBookings"
+            />
+            <LinkRow
+              label="Lịch làm việc của chuyên gia"
+              onPress={() => navigation.navigate('ExpertSlots')}
+              testID="quickLinkExpertSlots"
+            />
+          </>
         )}
         <LinkRow
-          label="Đăng ký làm chuyên gia thuế"
+          label={isExpert ? 'Hồ sơ chuyên gia thuế' : 'Đăng ký làm chuyên gia thuế'}
           onPress={() => navigation.navigate('ExpertApplication')}
           testID="quickLinkExpertApplication"
         />

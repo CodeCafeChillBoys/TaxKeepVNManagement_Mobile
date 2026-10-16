@@ -18,6 +18,16 @@ import type {
   SaveExpertApplicationDraftRequest,
   CertificateResponseDto,
   ConsultationFeeConfigDto,
+  PaymentLinkResponse,
+  EscrowTransactionResponse,
+  ConsultationSessionResponse,
+  JoinConsultationResponse,
+  SharedTaxDossierResponse,
+  UpcomingMeetingReminderDto,
+  CreateExpertSlotRequest,
+  UpdateExpertSlotRequest,
+  ExpertSlotFilterParameters,
+  ExpertSlotDetailResponse,
 } from '../types/consultation';
 
 function unwrap<T>(res: { data: ApiResponse<T> }, fallbackMsg: string): T {
@@ -26,6 +36,13 @@ function unwrap<T>(res: { data: ApiResponse<T> }, fallbackMsg: string): T {
     throw new Error(body?.message || body?.errorCode || fallbackMsg);
   }
   return body.data;
+}
+
+function unwrapVoid(res: { data: ApiResponse<any> }, fallbackMsg: string): void {
+  const body = res.data;
+  if (!body?.success) {
+    throw new Error(body?.message || body?.errorCode || fallbackMsg);
+  }
 }
 
 export const consultationApi = {
@@ -514,5 +531,214 @@ export const consultationApi = {
     );
     return unwrap(res, 'Không thể tải cấu hình mức phí.');
   },
+
+  // ══════════════════════════════════════════════════════════════════
+  // THANH TOÁN VNPAY / VIETQR & KÝ QUỸ ESCROW (Đặc tả 4)
+  // ══════════════════════════════════════════════════════════════════
+
+  /**
+   * Khởi tạo hoặc lấy lại link thanh toán VNPay & mã VietQR
+   * POST /api/v1/bookings/{bookingId}/payment-link
+   */
+  async createPaymentLink(
+    bookingId: string,
+    returnUrl?: string
+  ): Promise<PaymentLinkResponse> {
+    const res = await apiClient.post<ApiResponse<PaymentLinkResponse>>(
+      `/api/v1/bookings/${bookingId}/payment-link`,
+      returnUrl ? { returnUrl } : {}
+    );
+    return unwrap(res, 'Không thể tạo đường dẫn thanh toán VNPay/VietQR.');
+  },
+
+  /**
+   * Xem chi tiết giao dịch tạm giữ tiền bảo chứng (Escrow) của Booking
+   * GET /api/v1/bookings/{bookingId}/escrow
+   */
+  async getBookingEscrow(bookingId: string): Promise<EscrowTransactionResponse> {
+    const res = await apiClient.get<ApiResponse<EscrowTransactionResponse>>(
+      `/api/v1/bookings/${bookingId}/escrow`
+    );
+    return unwrap(res, 'Không thể tải thông tin ký quỹ bảo đảm.');
+  },
+
+  // ══════════════════════════════════════════════════════════════════
+  // PHIÊN TƯ VẤN TRỰC TUYẾN 1-1 (LIVE CONSULTATION - Đặc tả 5)
+  // ══════════════════════════════════════════════════════════════════
+
+  /**
+   * Điểm danh và lấy đường dẫn phòng họp trực tuyến Jitsi Meet
+   * POST /api/v1/consultations/{bookingId}/join
+   */
+  async joinConsultation(bookingId: string): Promise<JoinConsultationResponse> {
+    const res = await apiClient.post<ApiResponse<JoinConsultationResponse>>(
+      `/api/v1/consultations/${bookingId}/join`
+    );
+    return unwrap(res, 'Không thể vào phòng tư vấn trực tuyến.');
+  },
+
+  /**
+   * Lấy trạng thái chi tiết của phòng tư vấn trực tuyến
+   * GET /api/v1/consultations/{bookingId}/session
+   */
+  async getConsultationSession(bookingId: string): Promise<ConsultationSessionResponse> {
+    const res = await apiClient.get<ApiResponse<ConsultationSessionResponse>>(
+      `/api/v1/consultations/${bookingId}/session`
+    );
+    return unwrap(res, 'Không thể tải trạng thái phiên tư vấn.');
+  },
+
+  /**
+   * Xem toàn bộ hồ sơ thuế nội bộ được chia sẻ (Read-only)
+   * GET /api/v1/consultations/{bookingId}/shared-dossier
+   */
+  async getSharedTaxDossier(bookingId: string): Promise<SharedTaxDossierResponse> {
+    const res = await apiClient.get<ApiResponse<SharedTaxDossierResponse>>(
+      `/api/v1/consultations/${bookingId}/shared-dossier`
+    );
+    return unwrap(res, 'Không thể tải bộ hồ sơ thuế được chia sẻ.');
+  },
+
+  /**
+   * Chuyên gia cập nhật biên bản ghi chú tư vấn trong phòng họp
+   * PUT /api/v1/consultations/{bookingId}/notes
+   */
+  async updateConsultationNotes(
+    bookingId: string,
+    notes: string
+  ): Promise<ConsultationSessionResponse> {
+    const res = await apiClient.put<ApiResponse<ConsultationSessionResponse>>(
+      `/api/v1/consultations/${bookingId}/notes`,
+      { sharedNotes: notes.trim() }
+    );
+    return unwrap(res, 'Không thể lưu ghi chú kết luận tư vấn.');
+  },
+
+  /**
+   * Chuyên gia chốt biên bản kết luận và kết thúc phiên tư vấn (BR-5.3: tối thiểu 10 ký tự)
+   * POST /api/v1/consultations/{bookingId}/complete
+   */
+  async completeConsultation(
+    bookingId: string,
+    notes: string
+  ): Promise<ConsultationSessionResponse> {
+    const cleanNotes = notes.trim();
+    if (cleanNotes.length < 10) {
+      throw new Error('Nội dung biên bản kết luận phải có tối thiểu 10 ký tự theo quy định.');
+    }
+    const res = await apiClient.post<ApiResponse<ConsultationSessionResponse>>(
+      `/api/v1/consultations/${bookingId}/complete`,
+      { sharedNotes: cleanNotes }
+    );
+    return unwrap(res, 'Không thể hoàn tất phiên tư vấn.');
+  },
+
+  /**
+   * Báo cáo đối phương vắng mặt không phép (No-Show quá 15 phút)
+   * POST /api/v1/consultations/{bookingId}/report-no-show
+   */
+  async reportNoShow(
+    bookingId: string,
+    reason?: string
+  ): Promise<ConsultationSessionResponse> {
+    const res = await apiClient.post<ApiResponse<ConsultationSessionResponse>>(
+      `/api/v1/consultations/${bookingId}/report-no-show`,
+      { reason: reason?.trim() || null }
+    );
+    return unwrap(res, 'Không thể báo cáo vắng mặt.');
+  },
+
+  // ══════════════════════════════════════════════════════════════════
+  // NHẮC NHỞ LỊCH HẸN MEETING SẮP TỚI (DASHBOARD & BANNER)
+  // ══════════════════════════════════════════════════════════════════
+
+  /**
+   * Xem thông tin nhắc nhở lịch hẹn meeting trực tuyến sắp tới
+   * GET /api/v1/consultations/upcoming-reminder
+   */
+  async getUpcomingMeetingReminder(): Promise<UpcomingMeetingReminderDto> {
+    const res = await apiClient.get<ApiResponse<UpcomingMeetingReminderDto>>(
+      '/api/v1/consultations/upcoming-reminder'
+    );
+    return unwrap(res, 'Không thể tải thông tin nhắc nhở lịch hẹn.');
+  },
+
+  // ══════════════════════════════════════════════════════════════════
+  // QUẢN LÝ KHUNG GIỜ LÀM VIỆC CỦA CHUYÊN GIA (EXPERT SLOTS CRUD)
+  // ══════════════════════════════════════════════════════════════════
+
+  /**
+   * Lấy danh sách toàn bộ khung giờ làm việc của chuyên gia
+   * GET /api/v1/expert/slots
+   */
+  async getMySlots(filters?: ExpertSlotFilterParameters): Promise<ExpertSlotDetailResponse[]> {
+    const params = new URLSearchParams();
+    if (filters?.fromDate) params.append('fromDate', filters.fromDate);
+    if (filters?.toDate) params.append('toDate', filters.toDate);
+    if (filters?.sessionType) params.append('sessionType', filters.sessionType);
+    if (filters?.isBooked !== undefined) params.append('isBooked', String(filters.isBooked));
+    if (filters?.isActive !== undefined) params.append('isActive', String(filters.isActive));
+
+    const queryStr = params.toString();
+    const url = queryStr ? `/api/v1/expert/slots?${queryStr}` : '/api/v1/expert/slots';
+    const res = await apiClient.get<ApiResponse<ExpertSlotDetailResponse[]>>(url);
+    return unwrap(res, 'Không thể tải danh sách khung giờ làm việc.');
+  },
+
+  /**
+   * Xem thông tin chi tiết 1 khung giờ theo ID
+   * GET /api/v1/expert/slots/{id}
+   */
+  async getSlotById(id: string): Promise<ExpertSlotDetailResponse> {
+    const res = await apiClient.get<ApiResponse<ExpertSlotDetailResponse>>(
+      `/api/v1/expert/slots/${id}`
+    );
+    return unwrap(res, 'Không thể tải chi tiết khung giờ.');
+  },
+
+  /**
+   * Chuyên gia tạo mới 1 khung giờ làm việc
+   * POST /api/v1/expert/slots
+   */
+  async createSlot(request: CreateExpertSlotRequest): Promise<ExpertSlotDetailResponse> {
+    const res = await apiClient.post<ApiResponse<ExpertSlotDetailResponse>>(
+      '/api/v1/expert/slots',
+      request
+    );
+    return unwrap(res, 'Không thể tạo mới khung giờ làm việc.');
+  },
+
+  /**
+   * Cập nhật thông tin khung giờ làm việc
+   * PUT /api/v1/expert/slots/{id}
+   */
+  async updateSlot(id: string, request: UpdateExpertSlotRequest): Promise<ExpertSlotDetailResponse> {
+    const res = await apiClient.put<ApiResponse<ExpertSlotDetailResponse>>(
+      `/api/v1/expert/slots/${id}`,
+      request
+    );
+    return unwrap(res, 'Không thể cập nhật khung giờ làm việc.');
+  },
+
+  /**
+   * Bật hoặc tắt nhanh trạng thái nhận hẹn của khung giờ
+   * PATCH /api/v1/expert/slots/{id}/toggle-active
+   */
+  async toggleSlotActive(id: string): Promise<ExpertSlotDetailResponse> {
+    const res = await apiClient.patch<ApiResponse<ExpertSlotDetailResponse>>(
+      `/api/v1/expert/slots/${id}/toggle-active`
+    );
+    return unwrap(res, 'Không thể thay đổi trạng thái khung giờ.');
+  },
+
+  /**
+   * Xóa khung giờ làm việc
+   * DELETE /api/v1/expert/slots/{id}
+   */
+  async deleteSlot(id: string): Promise<void> {
+    const res = await apiClient.delete<ApiResponse<any>>(`/api/v1/expert/slots/${id}`);
+    unwrapVoid(res, 'Không thể xóa khung giờ làm việc.');
+  },
 };
+
 

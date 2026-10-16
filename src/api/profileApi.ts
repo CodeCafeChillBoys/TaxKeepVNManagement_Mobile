@@ -93,6 +93,7 @@ const saveCachedProfile = async (profile: UserProfileResponse) => {
       if (profile.address) u.address = profile.address;
       if (profile.dateOfBirth) u.dateOfBirth = profile.dateOfBirth;
       if (profile.taxIdNumber) u.taxIdNumber = profile.taxIdNumber;
+      if (profile.userRole) u.role = profile.userRole;
       await storageHelper.setItem(config.storageKeys.userData, JSON.stringify(u));
     }
   } catch {}

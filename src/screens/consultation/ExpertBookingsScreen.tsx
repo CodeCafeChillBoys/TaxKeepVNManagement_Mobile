@@ -9,7 +9,6 @@ import {
   RefreshControl,
   Modal,
   TextInput,
-  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
@@ -17,8 +16,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
+import { Dialog } from '../../components/common/Dialog';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { consultationApi } from '../../api/consultationApi';
+import { toFriendlyConsultationError } from '../../utils/consultationFriendlyErrors';
 import type { BookingListItemResponse } from '../../types/consultation';
 import {
   formatVnd,
@@ -51,7 +52,18 @@ export const ExpertBookingsScreen: React.FC = () => {
   const [rejectReason, setRejectReason] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
 
-  // Live timer for SLA 2h
+  // Dialog state
+  const [dialog, setDialog] = useState<{
+    title: string;
+    message: string;
+    primaryLabel?: string;
+    onPrimary?: () => void;
+    secondaryLabel?: string;
+    onSecondary?: () => void;
+    destructive?: boolean;
+  } | null>(null);
+
+  // Live timer for 2h approval countdown
   const [currentTimeMs, setCurrentTimeMs] = useState(Date.now());
 
   useEffect(() => {
@@ -93,34 +105,52 @@ export const ExpertBookingsScreen: React.FC = () => {
 
   // Handle Accept
   const handleAccept = (booking: BookingListItemResponse) => {
-    Alert.alert(
-      'Tiếp nhận ca tư vấn',
-      `Bạn đồng ý tiếp nhận ca tư vấn ${booking.bookingCode} của ${booking.userFullName}?`,
-      [
-        { text: 'Hủy', style: 'cancel' },
-        {
-          text: 'Tiếp nhận',
-          onPress: async () => {
-            setActionLoading(true);
-            try {
-              await consultationApi.acceptBooking(booking.id);
-              Alert.alert('Thành công', 'Lịch hẹn chính thức được xác nhận.');
-              fetchData(true);
-            } catch (err: any) {
-              Alert.alert('Lỗi', err?.message || 'Không thể tiếp nhận ca tư vấn.');
-            } finally {
-              setActionLoading(false);
-            }
-          },
-        },
-      ]
-    );
+    setDialog({
+      title: 'Tiếp nhận ca tư vấn',
+      message: `Bạn đồng ý tiếp nhận ca tư vấn của khách hàng ${booking.userFullName}?`,
+      primaryLabel: 'Đồng ý tiếp nhận',
+      secondaryLabel: 'Hủy',
+      onSecondary: () => setDialog(null),
+      onPrimary: async () => {
+        setDialog(null);
+        setActionLoading(true);
+        try {
+          await consultationApi.acceptBooking(booking.id);
+          setDialog({
+            title: 'Thành công',
+            message: 'Lịch hẹn tư vấn chính thức được xác nhận.',
+            primaryLabel: 'Đóng',
+            onPrimary: () => setDialog(null),
+          });
+          fetchData(true);
+        } catch (err: any) {
+          const friendly = toFriendlyConsultationError(
+            err,
+            'Không thể tiếp nhận',
+            'Không thể tiếp nhận ca tư vấn lúc này.'
+          );
+          setDialog({
+            title: friendly.title,
+            message: friendly.message,
+            primaryLabel: 'Đã hiểu',
+            onPrimary: () => setDialog(null),
+          });
+        } finally {
+          setActionLoading(false);
+        }
+      },
+    });
   };
 
   // Handle Reject Submit
   const handleConfirmReject = async () => {
     if (!rejectingBooking || rejectReason.trim().length < 5) {
-      Alert.alert('Lưu ý', 'Vui lòng nhập lý do từ chối tối thiểu 5 ký tự.');
+      setDialog({
+        title: 'Cần nêu rõ lý do',
+        message: 'Vui lòng nhập lý do từ chối tối thiểu 5 ký tự để khách hàng nắm thông tin.',
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
       return;
     }
     setActionLoading(true);
@@ -129,10 +159,26 @@ export const ExpertBookingsScreen: React.FC = () => {
       setRejectModalVisible(false);
       setRejectingBooking(null);
       setRejectReason('');
-      Alert.alert('Đã từ chối', 'Ca tư vấn đã được từ chối. Hệ thống hoàn trả 100% chi phí cho khách.');
+      setDialog({
+        title: 'Đã từ chối ca tư vấn',
+        message:
+          'Ca tư vấn đã được từ chối. Hệ thống tự động hoàn trả 100% chi phí cho khách hàng và mở lại khung giờ.',
+        primaryLabel: 'Đóng',
+        onPrimary: () => setDialog(null),
+      });
       fetchData(true);
     } catch (err: any) {
-      Alert.alert('Lỗi', err?.message || 'Không thể từ chối ca tư vấn.');
+      const friendly = toFriendlyConsultationError(
+        err,
+        'Không thể từ chối',
+        'Không thể từ chối ca tư vấn lúc này.'
+      );
+      setDialog({
+        title: friendly.title,
+        message: friendly.message,
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
     } finally {
       setActionLoading(false);
     }
@@ -152,10 +198,13 @@ export const ExpertBookingsScreen: React.FC = () => {
 
     return (
       <View style={styles.bookingCard}>
-        {/* Header row: Code, SLA tag, Fee */}
+        {/* Header row: Session badge, Countdown tag, Fee */}
         <View style={styles.cardHeader}>
           <View style={styles.codeWrap}>
-            <Text style={styles.bookingCode}>#{item.bookingCode}</Text>
+            <View style={[styles.sessionBadge, { backgroundColor: `${session.color}15` }]}>
+              <Ionicons name={session.icon as any} size={12} color={session.color} />
+              <Text style={[styles.sessionBadgeText, { color: session.color }]}>{session.label}</Text>
+            </View>
             <View style={[styles.slaBadge, isUrgent && styles.slaBadgeUrgent]}>
               <Ionicons
                 name={isUrgent ? 'alarm' : 'hourglass-outline'}
@@ -164,7 +213,7 @@ export const ExpertBookingsScreen: React.FC = () => {
               />
               <Text style={[styles.slaText, isUrgent && styles.slaTextUrgent]}>
                 {secondsLeft > 0
-                  ? `${hours > 0 ? `${hours}h ` : ''}${mins}m ${secs < 10 ? '0' : ''}${secs}s`
+                  ? `Chờ duyệt: ${hours > 0 ? `${hours}h ` : ''}${mins}m`
                   : 'Hết hạn'}
               </Text>
             </View>
@@ -188,10 +237,6 @@ export const ExpertBookingsScreen: React.FC = () => {
             <Ionicons name="time-outline" size={13} color="#444444" />
             <Text style={styles.pillText}>{formatTimeRange(item.startTime, item.endTime)}</Text>
           </View>
-          <View style={[styles.pill, { backgroundColor: `${session.color}15` }]}>
-            <Ionicons name={session.icon as any} size={13} color={session.color} />
-            <Text style={[styles.pillText, { color: session.color }]}>{session.label}</Text>
-          </View>
           {item.attachmentCount > 0 && (
             <View style={styles.pill}>
               <Ionicons name="attach" size={13} color="#444444" />
@@ -204,7 +249,7 @@ export const ExpertBookingsScreen: React.FC = () => {
         <View style={styles.actionBtnRow}>
           <TouchableOpacity
             style={styles.detailBtn}
-            onPress={() => navigation.navigate('BookingDetail', { bookingId: item.id })}
+            onPress={() => navigation.navigate('BookingDetail', { bookingId: item.id, isExpertView: true })}
           >
             <Text style={styles.detailBtnText}>Chi tiết</Text>
           </TouchableOpacity>
@@ -241,10 +286,13 @@ export const ExpertBookingsScreen: React.FC = () => {
       <TouchableOpacity
         style={styles.bookingCard}
         activeOpacity={0.85}
-        onPress={() => navigation.navigate('BookingDetail', { bookingId: item.id })}
+        onPress={() => navigation.navigate('BookingDetail', { bookingId: item.id, isExpertView: true })}
       >
         <View style={styles.cardHeader}>
-          <Text style={styles.bookingCode}>#{item.bookingCode}</Text>
+          <View style={[styles.sessionBadge, { backgroundColor: `${session.color}15` }]}>
+            <Ionicons name={session.icon as any} size={12} color={session.color} />
+            <Text style={[styles.sessionBadgeText, { color: session.color }]}>{session.label}</Text>
+          </View>
           <View style={[styles.statusBadge, { backgroundColor: status.bg }]}>
             <Text style={[styles.statusBadgeText, { color: status.color }]}>{status.label}</Text>
           </View>
@@ -314,7 +362,7 @@ export const ExpertBookingsScreen: React.FC = () => {
           onPress={() => setActiveTab('PENDING')}
         >
           <Text style={[styles.tabBtnText, activeTab === 'PENDING' && styles.tabBtnTextActive]}>
-            Chờ duyệt (SLA 2h)
+            Chờ duyệt
           </Text>
           {pendingBookings.length > 0 && (
             <View style={styles.tabBadge}>
@@ -428,7 +476,7 @@ export const ExpertBookingsScreen: React.FC = () => {
             </View>
 
             <Text style={styles.modalDesc}>
-              Hệ thống sẽ hoàn trả 100% chi phí cho khách hàng và mở lại slot thời gian. Vui lòng nêu rõ lý do:
+              Hệ thống sẽ hoàn trả 100% chi phí cho khách hàng và mở lại khung giờ tư vấn. Vui lòng nêu rõ lý do:
             </Text>
 
             <TextInput
@@ -466,6 +514,21 @@ export const ExpertBookingsScreen: React.FC = () => {
           </View>
         </View>
       </Modal>
+
+      {/* Thông báo Dialog chuẩn hệ thống */}
+      {dialog ? (
+        <Dialog
+          visible={Boolean(dialog)}
+          title={dialog.title}
+          message={dialog.message}
+          primaryLabel={dialog.primaryLabel || 'Đóng'}
+          secondaryLabel={dialog.secondaryLabel}
+          destructive={dialog.destructive}
+          onPrimary={dialog.onPrimary || (() => setDialog(null))}
+          onSecondary={dialog.onSecondary || (() => setDialog(null))}
+          onRequestClose={() => setDialog(null)}
+        />
+      ) : null}
     </SafeAreaView>
   );
 };
@@ -592,6 +655,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+  },
+  sessionBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  sessionBadgeText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 11,
   },
   bookingCode: {
     fontFamily: fonts.bodyBold,

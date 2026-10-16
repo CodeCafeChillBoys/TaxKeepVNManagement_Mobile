@@ -265,11 +265,13 @@ export const MyBookingsScreen: React.FC = () => {
                 activeOpacity={0.88}
                 onPress={() => navigation.navigate('BookingDetail', { bookingId: item.id })}
               >
-                {/* Header: Code & Status */}
+                {/* Header: Session Badge & Status */}
                 <View style={styles.cardHeader}>
-                  <View style={styles.codeRow}>
-                    <Ionicons name="pricetag-outline" size={13} color={theme.colors.primary} />
-                    <Text style={styles.bookingCodeText}>{item.bookingCode}</Text>
+                  <View style={[styles.sessionBadge, { backgroundColor: `${sessionInfo.color}15` }]}>
+                    <Ionicons name={sessionInfo.icon as any} size={12} color={sessionInfo.color} />
+                    <Text style={[styles.sessionBadgeText, { color: sessionInfo.color }]}>
+                      {sessionInfo.label}
+                    </Text>
                   </View>
 
                   <View style={[styles.statusBadge, { backgroundColor: statusInfo.bg }]}>

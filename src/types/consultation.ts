@@ -14,7 +14,18 @@ export type BookingStatus =
   | 'EXPIRED_NO_RESPONSE'
   | 'CANCELLED_BY_USER'
   | 'CANCELLED_BY_EXPERT'
-  | 'COMPLETED';
+  | 'IN_PROGRESS'
+  | 'COMPLETED'
+  | 'SETTLED';
+
+export type EscrowStatus =
+  | 'PendingPayment'
+  | 'HeldInEscrow'
+  | 'CoolingDown'
+  | 'Settled'
+  | 'Refunded'
+  | 'PartiallyRefunded'
+  | 'Cancelled';
 
 export type ExpertSortBy =
   | 'Recommended'
@@ -73,11 +84,16 @@ export interface ExpertListItemResponse {
 
 export interface ExpertPublicCertificateDto {
   id: string;
+  certificateType?: string;
   certificateName: string;
   issuingAuthority: string;
-  yearIssued: number;
+  issueDate?: string;
+  yearIssued?: number;
+  hasExpiry?: boolean;
+  expiryDate?: string | null;
   maskedCertificateNumber: string;
-  isVerified: boolean;
+  isVerified?: boolean;
+  fileUrl?: string | null;
 }
 
 export interface ExpertPublicFeeDto {
@@ -248,18 +264,39 @@ export function formatVnd(amount?: number | null): string {
 
 export function formatSessionType(type?: SessionType | string): {
   label: string;
+  fullLabel: string;
   icon: string;
   color: string;
 } {
   switch (type) {
     case 'ONLINE_MEETING':
-      return { label: 'Họp trực tuyến', icon: 'videocam', color: '#1565C0' };
+      return {
+        label: 'Họp trực tuyến',
+        fullLabel: 'Họp trực tuyến (Gọi video)',
+        icon: 'videocam',
+        color: '#1565C0',
+      };
     case 'VOICE_CALL':
-      return { label: 'Gọi thoại', icon: 'call', color: '#2E7D32' };
+      return {
+        label: 'Gọi thoại',
+        fullLabel: 'Gọi thoại trực tiếp',
+        icon: 'call',
+        color: '#2E7D32',
+      };
     case 'CHAT':
-      return { label: 'Nhắn tin', icon: 'chatbubbles', color: '#E65100' };
+      return {
+        label: 'Nhắn tin',
+        fullLabel: 'Nhắn tin tư vấn',
+        icon: 'chatbubbles',
+        color: '#E65100',
+      };
     default:
-      return { label: 'Tư vấn', icon: 'chatbox-ellipses', color: '#666666' };
+      return {
+        label: 'Tư vấn',
+        fullLabel: 'Tư vấn trực tuyến',
+        icon: 'chatbox-ellipses',
+        color: '#666666',
+      };
   }
 }
 
@@ -335,13 +372,29 @@ export function formatBookingStatus(status?: BookingStatus | string): {
         icon: 'close-circle-outline',
         desc: 'Chuyên gia hủy do sự cố đột xuất. Hệ thống kích hoạt hoàn tiền cho bạn.',
       };
+    case 'IN_PROGRESS':
+      return {
+        label: 'Đang tư vấn',
+        color: '#0D9488',
+        bg: '#CCFBF1',
+        icon: 'radio-outline',
+        desc: 'Phiên tư vấn trực tuyến 1-1 đang diễn ra trong phòng họp trực tuyến.',
+      };
     case 'COMPLETED':
       return {
         label: 'Đã hoàn thành',
         color: '#8B1E1E',
         bg: '#FDE8E8',
         icon: 'shield-checkmark-outline',
-        desc: 'Phiên tư vấn đã kết thúc thành công.',
+        desc: 'Phiên tư vấn đã kết thúc thành công. Tiền đang trong thời gian bảo chứng (24 giờ) trước khi quyết toán.',
+      };
+    case 'SETTLED':
+      return {
+        label: 'Đã quyết toán',
+        color: '#059669',
+        bg: '#D1FAE5',
+        icon: 'cash-outline',
+        desc: 'Khoản thù lao đã được quyết toán và giải ngân cho chuyên gia.',
       };
     default:
       return {
@@ -561,4 +614,266 @@ export function formatCertStatus(status?: CertificateVerificationStatus | string
       return { label: 'Chờ thẩm định', color: '#D97706', bg: '#FEF3C7' };
   }
 }
+
+export function formatEscrowStatus(status?: EscrowStatus | string): {
+  label: string;
+  color: string;
+  bg: string;
+} {
+  switch (status) {
+    case 'PendingPayment':
+      return { label: 'Chờ thanh toán', color: '#D97706', bg: '#FEF3C7' };
+    case 'HeldInEscrow':
+      return { label: 'Đang tạm giữ bảo đảm', color: '#059669', bg: '#D1FAE5' };
+    case 'CoolingDown':
+      return { label: 'Chờ kết toán (24h)', color: '#2563EB', bg: '#DBEAFE' };
+    case 'Settled':
+      return { label: 'Đã giải ngân', color: '#047857', bg: '#D1FAE5' };
+    case 'Refunded':
+      return { label: 'Đã hoàn tiền 100%', color: '#6B7280', bg: '#F3F4F6' };
+    case 'PartiallyRefunded':
+      return { label: 'Hoàn tiền một phần', color: '#EA580C', bg: '#FFEDD5' };
+    case 'Cancelled':
+      return { label: 'Đã hủy', color: '#DC2626', bg: '#FEE2E2' };
+    default:
+      return { label: String(status || 'Chưa xác định'), color: '#4B5563', bg: '#F3F4F6' };
+  }
+}
+
+// ── Payment & Escrow DTOs (Đặc tả 4) ───────────────────────────
+
+export interface PaymentLinkResponse {
+  bookingId: string;
+  bookingCode: string;
+  escrowTransactionId: string;
+  orderCode: number;
+  amount: number;
+  commissionRate: number;
+  commissionAmount: number;
+  expertReceivable: number;
+  escrowStatus: EscrowStatus;
+  paymentGateway: string;
+  paymentLinkId?: string | null;
+  checkoutUrl?: string | null;
+  qrCode?: string | null;
+  holdExpiresAt: string;
+  holdCountdownSeconds: number;
+}
+
+export interface EscrowTransactionResponse {
+  id: string;
+  bookingId: string;
+  bookingCode: string;
+  bookingStatus: BookingStatus;
+  orderCode: number;
+  amount: number;
+  commissionRate: number;
+  commissionAmount: number;
+  expertReceivable: number;
+  escrowStatus: EscrowStatus;
+  paymentGateway: string;
+  paymentReference?: string | null;
+  paymentLinkId?: string | null;
+  checkoutUrl?: string | null;
+  qrCode?: string | null;
+  refundAmount: number;
+  refundReason?: string | null;
+  paidAt?: string | null;
+  settledAt?: string | null;
+  refundedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ── Live Consultation Session DTOs (Đặc tả 5) ─────────────────
+
+export interface ConsultationSessionResponse {
+  id: string;
+  bookingId: string;
+  bookingCode: string;
+  topicTitle: string;
+  problemDescription?: string | null;
+  sessionType: SessionType;
+  scheduledDurationMinutes: number;
+  slotDate: string;
+  startTime: string;
+  endTime: string;
+  roomName: string;
+  roomUrl: string;
+  userCheckInAt?: string | null;
+  expertCheckInAt?: string | null;
+  startedAt?: string | null;
+  endedAt?: string | null;
+  actualDurationMinutes?: number | null;
+  remainingMinutes: number;
+  status: BookingStatus;
+  sharedNotes?: string | null;
+  noShowType: string;
+  isRoomOpen: boolean;
+  isUserPresent: boolean;
+  isExpertPresent: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface JoinConsultationResponse {
+  sessionId: string;
+  bookingId: string;
+  bookingCode: string;
+  roomName: string;
+  roomUrl: string;
+  checkedInAt: string;
+  participantRole: string;
+  bothPresent: boolean;
+  bookingStatus: BookingStatus;
+  message: string;
+}
+
+export interface SharedIncomeSourceDto {
+  id: string;
+  companyName: string;
+  companyTaxCode: string;
+  taxYear: number;
+  totalIncome: number;
+  taxWithheld: number;
+  insuranceDeducted: number;
+}
+
+export interface SharedMonthlyIncomeDto {
+  id: string;
+  month: number;
+  year: number;
+  organizationName: string;
+  taxIdNumber?: string | null;
+  totalTaxableIncome: number;
+  insuranceDeducted: number;
+  taxAlreadyDeducted: number;
+  payslipFileUrl?: string | null;
+}
+
+export interface SharedDependentDto {
+  id: string;
+  fullName: string;
+  relationship: string;
+  currentGroup: string;
+  citizenId?: string | null;
+  birthCertNumber?: string | null;
+  status: string;
+  isProfileComplete: boolean;
+}
+
+export interface SharedDocumentDto {
+  id: string;
+  docTypeCode?: string | null;
+  invoiceSeries?: string | null;
+  invoiceNumber?: string | null;
+  invoiceDate?: string | null;
+  sellerName?: string | null;
+  sellerTaxCode?: string | null;
+  fileUrl: string;
+}
+
+export interface SharedDraftSettlementDto {
+  dossierId: string;
+  taxYear: number;
+  totalGrossIncome: number;
+  totalTaxWithheld: number;
+  totalInsuranceDeduction: number;
+  personalDeductionAmount: number;
+}
+
+export interface SharedAttachmentDto {
+  id: string;
+  fileName: string;
+  fileUrl: string;
+  contentType: string;
+  fileSize: number;
+}
+
+export interface SharedTaxDossierResponse {
+  bookingId: string;
+  bookingCode: string;
+  taxYear: number;
+  taxpayerFullName: string;
+  taxpayerEmail: string;
+  taxpayerPhone?: string | null;
+  taxpayerCitizenId?: string | null;
+  taxpayerTaxId?: string | null;
+  incomeSources: SharedIncomeSourceDto[];
+  monthlyIncomes: SharedMonthlyIncomeDto[];
+  totalAnnualIncome: number;
+  totalTaxWithheld: number;
+  dependents: SharedDependentDto[];
+  totalDependentsCount: number;
+  deductibleDocuments: SharedDocumentDto[];
+  totalMedicalEducationExpenses: number;
+  draftSettlement?: SharedDraftSettlementDto | null;
+  bookingAttachments: SharedAttachmentDto[];
+}
+
+// ══════════════════════════════════════════════════════════════════
+// THÔNG BÁO NHẮC NHỞ LỊCH HẸN SẮP TỚI (DASHBOARD & BANNER)
+// ══════════════════════════════════════════════════════════════════
+
+export interface UpcomingMeetingReminderDto {
+  hasUpcomingMeeting: boolean;
+  bookingId?: string | null;
+  bookingCode?: string | null;
+  topicTitle?: string | null;
+  partnerName?: string | null;
+  partnerRole?: string | null;
+  slotDate?: string | null;
+  startTime?: string | null;
+  endTime?: string | null;
+  minutesRemaining?: number | null;
+  isRoomOpen: boolean;
+  canJoinRoom: boolean;
+  roomUrl?: string | null;
+  urgencyLevel?: 'NORMAL' | 'SOON' | 'OPENED' | 'IN_PROGRESS' | null;
+  reminderMessage?: string | null;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// QUẢN LÝ KHUNG GIỜ LÀM VIỆC CỦA CHUYÊN GIA (EXPERT SLOTS CRUD)
+// ══════════════════════════════════════════════════════════════════
+
+export interface CreateExpertSlotRequest {
+  slotDate: string; // YYYY-MM-DD
+  startTime: string; // HH:mm
+  endTime: string; // HH:mm
+  sessionType: SessionType;
+}
+
+export interface UpdateExpertSlotRequest {
+  slotDate: string;
+  startTime: string;
+  endTime: string;
+  sessionType: SessionType;
+  isActive: boolean;
+}
+
+export interface ExpertSlotFilterParameters {
+  fromDate?: string;
+  toDate?: string;
+  sessionType?: SessionType;
+  isBooked?: boolean;
+  isActive?: boolean;
+}
+
+export interface ExpertSlotDetailResponse {
+  id: string;
+  expertProfileId: string;
+  slotDate: string;
+  startTime: string;
+  endTime: string;
+  durationMinutes: number;
+  sessionType: SessionType;
+  isBooked: boolean;
+  isActive: boolean;
+  holdExpiresAt?: string | null;
+  isHolding: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 

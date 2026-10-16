@@ -9,6 +9,8 @@ jest.mock('./apiClient', () => ({
   apiClient: {
     get: jest.fn(),
     post: jest.fn(),
+    put: jest.fn(),
+    patch: jest.fn(),
     delete: jest.fn(),
   },
   storageHelper: {
@@ -24,6 +26,8 @@ import { apiClient } from './apiClient';
 describe('consultationApi', () => {
   const mockGet = apiClient.get as jest.Mock;
   const mockPost = apiClient.post as jest.Mock;
+  const mockPut = apiClient.put as jest.Mock;
+  const mockPatch = apiClient.patch as jest.Mock;
   const mockDelete = apiClient.delete as jest.Mock;
 
   beforeEach(() => {
@@ -274,4 +278,229 @@ describe('consultationApi', () => {
       expect(res).toEqual(mockConfigs);
     });
   });
+
+  describe('Payment, Escrow and Live Consultation Flow (Đặc tả 4 & 5)', () => {
+    it('createPaymentLink calls POST /api/v1/bookings/{id}/payment-link', async () => {
+      const mockPayment = {
+        bookingId: 'b-1',
+        checkoutUrl: 'https://sandbox.vnpayment.vn/payment',
+        qrCode: 'https://img.vietqr.io/image/970405-5402205457446.png',
+        amount: 200000,
+        escrowStatus: 'PendingPayment',
+      };
+      mockPost.mockResolvedValueOnce({
+        data: { success: true, data: mockPayment },
+      });
+
+      const res = await consultationApi.createPaymentLink('b-1', 'taxkeep://return');
+      expect(mockPost).toHaveBeenCalledWith('/api/v1/bookings/b-1/payment-link', {
+        returnUrl: 'taxkeep://return',
+      });
+      expect(res).toEqual(mockPayment);
+    });
+
+    it('getBookingEscrow calls GET /api/v1/bookings/{id}/escrow', async () => {
+      const mockEscrow = {
+        id: 'escrow-1',
+        bookingId: 'b-1',
+        amount: 200000,
+        escrowStatus: 'HeldInEscrow',
+        commissionRate: 10,
+      };
+      mockGet.mockResolvedValueOnce({
+        data: { success: true, data: mockEscrow },
+      });
+
+      const res = await consultationApi.getBookingEscrow('b-1');
+      expect(mockGet).toHaveBeenCalledWith('/api/v1/bookings/b-1/escrow');
+      expect(res).toEqual(mockEscrow);
+    });
+
+    it('joinConsultation calls POST /api/v1/consultations/{id}/join', async () => {
+      const mockJoin = {
+        sessionId: 's-1',
+        bookingId: 'b-1',
+        roomUrl: 'https://meet.jit.si/TaxKeepVN_BK123',
+        bothPresent: true,
+        bookingStatus: 'IN_PROGRESS',
+      };
+      mockPost.mockResolvedValueOnce({
+        data: { success: true, data: mockJoin },
+      });
+
+      const res = await consultationApi.joinConsultation('b-1');
+      expect(mockPost).toHaveBeenCalledWith('/api/v1/consultations/b-1/join');
+      expect(res).toEqual(mockJoin);
+    });
+
+    it('getConsultationSession calls GET /api/v1/consultations/{id}/session', async () => {
+      const mockSession = {
+        id: 's-1',
+        bookingId: 'b-1',
+        status: 'IN_PROGRESS',
+        remainingMinutes: 45,
+      };
+      mockGet.mockResolvedValueOnce({
+        data: { success: true, data: mockSession },
+      });
+
+      const res = await consultationApi.getConsultationSession('b-1');
+      expect(mockGet).toHaveBeenCalledWith('/api/v1/consultations/b-1/session');
+      expect(res).toEqual(mockSession);
+    });
+
+    it('getSharedTaxDossier calls GET /api/v1/consultations/{id}/shared-dossier', async () => {
+      const mockDossier = {
+        bookingId: 'b-1',
+        taxYear: 2026,
+        taxpayerFullName: 'Tran Van C',
+        incomeSources: [],
+        dependents: [],
+      };
+      mockGet.mockResolvedValueOnce({
+        data: { success: true, data: mockDossier },
+      });
+
+      const res = await consultationApi.getSharedTaxDossier('b-1');
+      expect(mockGet).toHaveBeenCalledWith('/api/v1/consultations/b-1/shared-dossier');
+      expect(res).toEqual(mockDossier);
+    });
+
+    it('updateConsultationNotes calls PUT /api/v1/consultations/{id}/notes', async () => {
+      const mockSession = { id: 's-1', sharedNotes: 'Nội dung tư vấn giảm trừ gia cảnh' };
+      apiClient.put = jest.fn().mockResolvedValueOnce({
+        data: { success: true, data: mockSession },
+      });
+
+      const res = await consultationApi.updateConsultationNotes('b-1', 'Nội dung tư vấn giảm trừ gia cảnh');
+      expect(apiClient.put).toHaveBeenCalledWith('/api/v1/consultations/b-1/notes', {
+        sharedNotes: 'Nội dung tư vấn giảm trừ gia cảnh',
+      });
+      expect(res).toEqual(mockSession);
+    });
+
+    it('completeConsultation validates >= 10 chars and calls POST /api/v1/consultations/{id}/complete', async () => {
+      await expect(consultationApi.completeConsultation('b-1', 'ngắn')).rejects.toThrow(
+        'Nội dung biên bản kết luận phải có tối thiểu 10 ký tự'
+      );
+
+      const mockCompleted = { id: 's-1', status: 'COMPLETED' };
+      mockPost.mockResolvedValueOnce({
+        data: { success: true, data: mockCompleted },
+      });
+
+      const res = await consultationApi.completeConsultation('b-1', 'Đã tư vấn giải pháp quyết toán thuế thành công');
+      expect(mockPost).toHaveBeenCalledWith('/api/v1/consultations/b-1/complete', {
+        sharedNotes: 'Đã tư vấn giải pháp quyết toán thuế thành công',
+      });
+      expect(res).toEqual(mockCompleted);
+    });
+
+    it('reportNoShow calls POST /api/v1/consultations/{id}/report-no-show', async () => {
+      const mockNoShow = { id: 's-1', noShowType: 'EXPERT_NO_SHOW' };
+      mockPost.mockResolvedValueOnce({
+        data: { success: true, data: mockNoShow },
+      });
+
+      const res = await consultationApi.reportNoShow('b-1', 'Quá 15 phút không vào');
+      expect(mockPost).toHaveBeenCalledWith('/api/v1/consultations/b-1/report-no-show', {
+        reason: 'Quá 15 phút không vào',
+      });
+      expect(res).toEqual(mockNoShow);
+    });
+
+    it('getUpcomingMeetingReminder calls GET /api/v1/consultations/upcoming-reminder', async () => {
+      const mockReminder = {
+        hasUpcomingMeeting: true,
+        bookingId: 'b-100',
+        topicTitle: 'Họp quyết toán thuế',
+        partnerName: 'Nguyễn Văn A',
+        partnerRole: 'TAXPAYER',
+        isRoomOpen: true,
+        canJoinRoom: true,
+        urgencyLevel: 'OPENED',
+      };
+      mockGet.mockResolvedValueOnce({
+        data: { success: true, data: mockReminder },
+      });
+
+      const res = await consultationApi.getUpcomingMeetingReminder();
+      expect(mockGet).toHaveBeenCalledWith('/api/v1/consultations/upcoming-reminder');
+      expect(res).toEqual(mockReminder);
+    });
+  });
+
+  describe('Expert Slot Management (CRUD)', () => {
+    it('getMySlots calls GET /api/v1/expert/slots with query params', async () => {
+      const mockPagedSlots = {
+        items: [{ id: 'slot-1', slotDate: '2026-10-20', startTime: '09:00', endTime: '10:00' }],
+        pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 },
+      };
+      mockGet.mockResolvedValueOnce({
+        data: { success: true, data: mockPagedSlots },
+      });
+
+      const res = await consultationApi.getMySlots({ isBooked: false, isActive: true });
+      expect(mockGet).toHaveBeenCalledWith(
+        expect.stringContaining('/api/v1/expert/slots?isBooked=false&isActive=true')
+      );
+      expect(res).toEqual(mockPagedSlots);
+    });
+
+    it('createSlot calls POST /api/v1/expert/slots', async () => {
+      const req = {
+        slotDate: '2026-10-20',
+        startTime: '09:00',
+        endTime: '10:00',
+        sessionType: 'ONLINE_MEETING' as const,
+      };
+      const mockCreated = { id: 'slot-new', ...req, isActive: true };
+      mockPost.mockResolvedValueOnce({
+        data: { success: true, data: mockCreated },
+      });
+
+      const res = await consultationApi.createSlot(req);
+      expect(mockPost).toHaveBeenCalledWith('/api/v1/expert/slots', req);
+      expect(res).toEqual(mockCreated);
+    });
+
+    it('updateSlot calls PUT /api/v1/expert/slots/{id}', async () => {
+      const req = {
+        slotDate: '2026-10-20',
+        startTime: '10:00',
+        endTime: '11:00',
+        sessionType: 'ONLINE_MEETING' as const,
+        isActive: true,
+      };
+      const mockUpdated = { id: 'slot-1', ...req };
+      (apiClient.put as jest.Mock).mockResolvedValueOnce({
+        data: { success: true, data: mockUpdated },
+      });
+
+      const res = await consultationApi.updateSlot('slot-1', req);
+      expect(apiClient.put).toHaveBeenCalledWith('/api/v1/expert/slots/slot-1', req);
+      expect(res).toEqual(mockUpdated);
+    });
+
+    it('toggleSlotActive calls PATCH /api/v1/expert/slots/{id}/toggle-active', async () => {
+      const mockToggled = { id: 'slot-1', isActive: false };
+      (apiClient.patch as jest.Mock).mockResolvedValueOnce({
+        data: { success: true, data: mockToggled },
+      });
+
+      const res = await consultationApi.toggleSlotActive('slot-1');
+      expect(apiClient.patch).toHaveBeenCalledWith('/api/v1/expert/slots/slot-1/toggle-active');
+      expect(res).toEqual(mockToggled);
+    });
+
+    it('deleteSlot calls DELETE /api/v1/expert/slots/{id}', async () => {
+      (apiClient.delete as jest.Mock).mockResolvedValueOnce({
+        data: { success: true, message: 'Đã xóa' },
+      });
+
+      await consultationApi.deleteSlot('slot-1');
+      expect(apiClient.delete).toHaveBeenCalledWith('/api/v1/expert/slots/slot-1');
+    });
+  });
 });
+

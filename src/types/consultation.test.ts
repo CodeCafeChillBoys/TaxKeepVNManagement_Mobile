@@ -6,6 +6,7 @@ import {
   formatTimeRange,
   formatExpertApplicationStatus,
   formatCertStatus,
+  formatEscrowStatus,
 } from './consultation';
 
 describe('consultation domain formatters', () => {
@@ -27,7 +28,7 @@ describe('consultation domain formatters', () => {
   });
 
   describe('formatBookingStatus', () => {
-    it('handles all 9 booking status states correctly', () => {
+    it('handles all 11 booking status states correctly', () => {
       expect(formatBookingStatus('PENDING_PAYMENT').label).toBe('Chờ thanh toán');
       expect(formatBookingStatus('EXPIRED_UNPAID').label).toBe('Hết hạn giữ chỗ');
       expect(formatBookingStatus('AWAITING_EXPERT_APPROVAL').label).toBe('Chờ chuyên gia duyệt');
@@ -36,7 +37,21 @@ describe('consultation domain formatters', () => {
       expect(formatBookingStatus('EXPIRED_NO_RESPONSE').label).toBe('Quá hạn phản hồi');
       expect(formatBookingStatus('CANCELLED_BY_USER').label).toBe('Bạn đã hủy');
       expect(formatBookingStatus('CANCELLED_BY_EXPERT').label).toBe('Chuyên gia hủy');
+      expect(formatBookingStatus('IN_PROGRESS').label).toBe('Đang tư vấn');
       expect(formatBookingStatus('COMPLETED').label).toBe('Đã hoàn thành');
+      expect(formatBookingStatus('SETTLED').label).toBe('Đã quyết toán');
+    });
+  });
+
+  describe('formatEscrowStatus', () => {
+    it('maps all escrow status states correctly', () => {
+      expect(formatEscrowStatus('PendingPayment').label).toBe('Chờ thanh toán');
+      expect(formatEscrowStatus('HeldInEscrow').label).toBe('Đang tạm giữ bảo đảm');
+      expect(formatEscrowStatus('CoolingDown').label).toBe('Chờ kết toán (24h)');
+      expect(formatEscrowStatus('Settled').label).toBe('Đã giải ngân');
+      expect(formatEscrowStatus('Refunded').label).toBe('Đã hoàn tiền 100%');
+      expect(formatEscrowStatus('PartiallyRefunded').label).toBe('Hoàn tiền một phần');
+      expect(formatEscrowStatus('Cancelled').label).toBe('Đã hủy');
     });
   });
 

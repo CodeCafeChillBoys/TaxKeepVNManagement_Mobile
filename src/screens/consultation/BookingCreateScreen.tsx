@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   TextInput,
   ActivityIndicator,
-  Alert,
   Image,
   Platform,
 } from 'react-native';
@@ -19,13 +18,16 @@ import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
+import { Dialog } from '../../components/common/Dialog';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { consultationApi } from '../../api/consultationApi';
+import { toFriendlyConsultationError } from '../../utils/consultationFriendlyErrors';
 import type {
   ExpertDetailResponse,
   ExpertAvailableSlotDto,
   SpecializationDto,
   BookingPreviewResponse,
+  SessionType,
 } from '../../types/consultation';
 import {
   formatVnd,
@@ -36,6 +38,32 @@ import {
 
 const MAX_ATTACHMENTS = 5;
 const MAX_TOTAL_SIZE_MB = 25;
+
+const SERVICE_OPTIONS: {
+  key: SessionType;
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  desc: string;
+}[] = [
+  {
+    key: 'ONLINE_MEETING',
+    label: 'Họp trực tuyến (Video)',
+    icon: 'videocam-outline',
+    desc: 'Gọi video tương tác trực tiếp',
+  },
+  {
+    key: 'CHAT',
+    label: 'Nhắn tin tư vấn',
+    icon: 'chatbubbles-outline',
+    desc: 'Hỏi đáp & gửi chứng từ qua chat',
+  },
+  {
+    key: 'VOICE_CALL',
+    label: 'Gọi thoại trực tiếp',
+    icon: 'call-outline',
+    desc: 'Tư vấn nhanh qua đường thoại',
+  },
+];
 
 interface SelectedFile {
   uri: string;
@@ -55,6 +83,8 @@ export const BookingCreateScreen: React.FC = () => {
   const [specializations, setSpecializations] = useState<SpecializationDto[]>([]);
 
   // Form states
+  const [selectedSessionType, setSelectedSessionType] = useState<SessionType>('ONLINE_MEETING');
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [selectedSlotId, setSelectedSlotId] = useState<string>(initialSlotId || '');
   const [selectedSpecId, setSelectedSpecId] = useState<number>(initialSpecId || 0);
   const [topicTitle, setTopicTitle] = useState('');
@@ -67,6 +97,17 @@ export const BookingCreateScreen: React.FC = () => {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // Dialog state
+  const [dialog, setDialog] = useState<{
+    title: string;
+    message: string;
+    primaryLabel?: string;
+    onPrimary?: () => void;
+    secondaryLabel?: string;
+    onSecondary?: () => void;
+    destructive?: boolean;
+  } | null>(null);
 
   // Load initial expert, slots & specializations
   useEffect(() => {
@@ -89,13 +130,39 @@ export const BookingCreateScreen: React.FC = () => {
           if (!initialSpecId && specs.length > 0) {
             setSelectedSpecId(specs[0].id);
           }
-          // Default slot if specified or pick first
-          if (!initialSlotId && slots.length > 0) {
-            setSelectedSlotId(slots[0].id);
+          // Default session type & slot
+          if (initialSlotId) {
+            const initSlot = slots.find((s) => s.id === initialSlotId);
+            if (initSlot) {
+              setSelectedSlotId(initialSlotId);
+              setSelectedSessionType(initSlot.sessionType);
+              setSelectedDate(initSlot.slotDate);
+            }
+          } else if (slots.length > 0) {
+            const firstTypeWithSlots =
+              (['ONLINE_MEETING', 'CHAT', 'VOICE_CALL'] as SessionType[]).find((t) =>
+                slots.some((s) => s.sessionType === t)
+              ) || 'ONLINE_MEETING';
+            setSelectedSessionType(firstTypeWithSlots);
+            const slotsForType = slots.filter((s) => s.sessionType === firstTypeWithSlots);
+            if (slotsForType.length > 0) {
+              setSelectedDate(slotsForType[0].slotDate);
+              setSelectedSlotId(slotsForType[0].id);
+            }
           }
         }
       } catch (err: any) {
-        Alert.alert('Lỗi', err?.message || 'Không thể tải thông tin đặt lịch.');
+        const friendly = toFriendlyConsultationError(
+          err,
+          'Lỗi tải thông tin',
+          'Không thể tải thông tin đặt lịch tư vấn lúc này.'
+        );
+        setDialog({
+          title: friendly.title,
+          message: friendly.message,
+          primaryLabel: 'Đã hiểu',
+          onPrimary: () => setDialog(null),
+        });
       } finally {
         if (mounted) setLoadingInitial(false);
       }
@@ -105,6 +172,49 @@ export const BookingCreateScreen: React.FC = () => {
       mounted = false;
     };
   }, [expertProfileId, initialSlotId, initialSpecId]);
+
+  // Switch session type: reset slot and update date
+  const handleSelectSessionType = (type: SessionType) => {
+    setSelectedSessionType(type);
+    const slotsForType = availableSlots.filter((s) => s.sessionType === type);
+    const datesForType = Array.from(new Set(slotsForType.map((s) => s.slotDate))).sort();
+    if (datesForType.length > 0) {
+      const nextDate =
+        selectedDate && datesForType.includes(selectedDate) ? selectedDate : datesForType[0];
+      setSelectedDate(nextDate);
+      const slotOnDate = slotsForType.find((s) => s.slotDate === nextDate);
+      setSelectedSlotId(slotOnDate ? slotOnDate.id : (slotsForType[0]?.id || ''));
+    } else {
+      setSelectedDate(null);
+      setSelectedSlotId('');
+    }
+  };
+
+  // Switch date: auto-select first slot on that date
+  const handleSelectDate = (dateStr: string) => {
+    setSelectedDate(dateStr);
+    const slotsOnDate = availableSlots.filter(
+      (s) => s.sessionType === selectedSessionType && s.slotDate === dateStr
+    );
+    if (!slotsOnDate.some((s) => s.id === selectedSlotId)) {
+      setSelectedSlotId(slotsOnDate[0]?.id || '');
+    }
+  };
+
+  // Filtered slots & dates for chosen session type
+  const slotsForSelectedSession = useMemo(() => {
+    return availableSlots.filter((s) => s.sessionType === selectedSessionType);
+  }, [availableSlots, selectedSessionType]);
+
+  const uniqueDatesForSession = useMemo(() => {
+    const dates = Array.from(new Set(slotsForSelectedSession.map((s) => s.slotDate)));
+    return dates.sort();
+  }, [slotsForSelectedSession]);
+
+  const slotsForSelectedDate = useMemo(() => {
+    if (!selectedDate) return [];
+    return slotsForSelectedSession.filter((s) => s.slotDate === selectedDate);
+  }, [slotsForSelectedSession, selectedDate]);
 
   // Dry-run preview calculation triggered when slot or specialization changes
   const runPreview = useCallback(async () => {
@@ -122,8 +232,12 @@ export const BookingCreateScreen: React.FC = () => {
         setPreviewError(res.validationMessage);
       }
     } catch (err: any) {
-      const msg = err?.response?.data?.message || err?.message || 'Không thể tính phí xem trước.';
-      setPreviewError(msg);
+      const friendly = toFriendlyConsultationError(
+        err,
+        'Lỗi tạm tính',
+        'Không thể tính toán chi phí tư vấn dự kiến lúc này.'
+      );
+      setPreviewError(friendly.message);
       setPreviewData(null);
     } finally {
       setPreviewLoading(false);
@@ -139,7 +253,12 @@ export const BookingCreateScreen: React.FC = () => {
   // Pick Document (PDF, Word, Images)
   const handlePickDocument = async () => {
     if (attachments.length >= MAX_ATTACHMENTS) {
-      Alert.alert('Giới hạn tệp', `Chỉ được đính kèm tối đa ${MAX_ATTACHMENTS} tệp tin.`);
+      setDialog({
+        title: 'Giới hạn tệp đính kèm',
+        message: `Bạn chỉ được đính kèm tối đa ${MAX_ATTACHMENTS} tệp tin cho một buổi tư vấn.`,
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
       return;
     }
 
@@ -156,13 +275,23 @@ export const BookingCreateScreen: React.FC = () => {
 
         for (const asset of res.assets) {
           if (attachments.length + newFiles.length >= MAX_ATTACHMENTS) {
-            Alert.alert('Giới hạn tệp', `Đã đạt số lượng tối đa ${MAX_ATTACHMENTS} tệp.`);
+            setDialog({
+              title: 'Giới hạn tệp đính kèm',
+              message: `Đã đạt giới hạn tối đa ${MAX_ATTACHMENTS} tệp tin.`,
+              primaryLabel: 'Đã hiểu',
+              onPrimary: () => setDialog(null),
+            });
             break;
           }
 
           const fileSize = asset.size || 0;
           if ((currentTotalBytes + fileSize) / (1024 * 1024) > MAX_TOTAL_SIZE_MB) {
-            Alert.alert('Vượt dung lượng', `Tổng dung lượng tài liệu không được vượt quá ${MAX_TOTAL_SIZE_MB}MB.`);
+            setDialog({
+              title: 'Vượt dung lượng cho phép',
+              message: `Tổng dung lượng tài liệu không được vượt quá ${MAX_TOTAL_SIZE_MB}MB.`,
+              primaryLabel: 'Đã hiểu',
+              onPrimary: () => setDialog(null),
+            });
             break;
           }
 
@@ -186,14 +315,24 @@ export const BookingCreateScreen: React.FC = () => {
   // Pick Image from photo library
   const handlePickImage = async () => {
     if (attachments.length >= MAX_ATTACHMENTS) {
-      Alert.alert('Giới hạn tệp', `Chỉ được đính kèm tối đa ${MAX_ATTACHMENTS} tệp tin.`);
+      setDialog({
+        title: 'Giới hạn tệp đính kèm',
+        message: `Bạn chỉ được đính kèm tối đa ${MAX_ATTACHMENTS} tệp tin.`,
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
       return;
     }
 
     try {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) {
-        Alert.alert('Quyền truy cập', 'Vui lòng cấp quyền truy cập thư viện ảnh để đính kèm chứng từ.');
+        setDialog({
+          title: 'Yêu cầu quyền truy cập',
+          message: 'Vui lòng cho phép ứng dụng truy cập thư viện ảnh để đính kèm chứng từ.',
+          primaryLabel: 'Đã hiểu',
+          onPrimary: () => setDialog(null),
+        });
         return;
       }
 
@@ -212,7 +351,12 @@ export const BookingCreateScreen: React.FC = () => {
 
           const fileSize = asset.fileSize || 500 * 1024; // fallback approx
           if ((currentTotalBytes + fileSize) / (1024 * 1024) > MAX_TOTAL_SIZE_MB) {
-            Alert.alert('Vượt dung lượng', `Tổng dung lượng tài liệu không được vượt quá ${MAX_TOTAL_SIZE_MB}MB.`);
+            setDialog({
+              title: 'Vượt dung lượng cho phép',
+              message: `Tổng dung lượng tài liệu không được vượt quá ${MAX_TOTAL_SIZE_MB}MB.`,
+              primaryLabel: 'Đã hiểu',
+              onPrimary: () => setDialog(null),
+            });
             break;
           }
 
@@ -240,26 +384,48 @@ export const BookingCreateScreen: React.FC = () => {
   // Submit Booking
   const handleSubmitBooking = async () => {
     if (!selectedSlotId) {
-      Alert.alert('Thiếu thông tin', 'Vui lòng chọn một khung giờ tư vấn khả dụng.');
+      setDialog({
+        title: 'Thông tin chưa đầy đủ',
+        message: 'Vui lòng chọn một khung giờ tư vấn khả dụng.',
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
       return;
     }
     if (!selectedSpecId) {
-      Alert.alert('Thiếu thông tin', 'Vui lòng chọn lĩnh vực cần tư vấn.');
+      setDialog({
+        title: 'Thông tin chưa đầy đủ',
+        message: 'Vui lòng chọn lĩnh vực cần tư vấn.',
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
       return;
     }
     if (!topicTitle.trim()) {
-      Alert.alert('Thiếu thông tin', 'Vui lòng nhập tiêu đề tóm tắt buổi tư vấn.');
+      setDialog({
+        title: 'Thông tin chưa đầy đủ',
+        message: 'Vui lòng nhập tiêu đề tóm tắt buổi tư vấn.',
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
       return;
     }
     if (!problemDescription.trim()) {
-      Alert.alert('Thiếu thông tin', 'Vui lòng mô tả chi tiết vấn đề / câu hỏi trọng tâm để chuyên gia chuẩn bị.');
+      setDialog({
+        title: 'Thông tin chưa đầy đủ',
+        message: 'Vui lòng mô tả chi tiết vấn đề hoặc câu hỏi trọng tâm để chuyên gia chuẩn bị.',
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
       return;
     }
     if (previewError || (previewData && !previewData.isValid)) {
-      Alert.alert(
-        'Không thể đặt lịch',
-        previewError || previewData?.validationMessage || 'Khung giờ này không khả dụng.'
-      );
+      setDialog({
+        title: 'Không thể đặt lịch',
+        message: previewError || previewData?.validationMessage || 'Khung giờ này không khả dụng.',
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
       return;
     }
 
@@ -273,21 +439,27 @@ export const BookingCreateScreen: React.FC = () => {
         attachments,
       });
 
-      Alert.alert(
-        'Đặt lịch thành công!',
-        `Mã lịch hẹn: ${result.bookingCode}\nKhung giờ đã được tạm giữ 10 phút chờ thanh toán.`,
-        [
-          {
-            text: 'Xem chi tiết lịch hẹn',
-            onPress: () => {
-              navigation.replace('BookingDetail', { bookingId: result.id });
-            },
-          },
-        ]
-      );
+      setDialog({
+        title: 'Đặt lịch hẹn thành công!',
+        message: 'Khung giờ đã được tạm giữ trong 10 phút. Vui lòng hoàn tất thanh toán để lịch hẹn được xác nhận.',
+        primaryLabel: 'Xem chi tiết lịch hẹn',
+        onPrimary: () => {
+          setDialog(null);
+          navigation.replace('BookingDetail', { bookingId: result.id });
+        },
+      });
     } catch (err: any) {
-      const msg = err?.response?.data?.message || err?.message || 'Không thể khởi tạo lịch hẹn.';
-      Alert.alert('Đặt lịch thất bại', msg);
+      const friendly = toFriendlyConsultationError(
+        err,
+        'Đặt lịch thất bại',
+        'Không thể khởi tạo lịch hẹn lúc này.'
+      );
+      setDialog({
+        title: friendly.title,
+        message: friendly.message,
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
     } finally {
       setSubmitting(false);
     }
@@ -317,6 +489,14 @@ export const BookingCreateScreen: React.FC = () => {
           <ActivityIndicator size="large" color={theme.colors.primary} />
           <Text style={styles.loadingText}>Đang chuẩn bị biểu mẫu đặt lịch...</Text>
         </View>
+        <Dialog
+          visible={Boolean(dialog)}
+          title={dialog?.title || ''}
+          message={dialog?.message || ''}
+          primaryLabel={dialog?.primaryLabel || 'Đã hiểu'}
+          onPrimary={dialog?.onPrimary || (() => setDialog(null))}
+          onRequestClose={() => setDialog(null)}
+        />
       </SafeAreaView>
     );
   }
@@ -367,80 +547,214 @@ export const BookingCreateScreen: React.FC = () => {
           </View>
         )}
 
-        {/* ── 2. CHỌN KHUNG GIỜ LÀM VIỆC ── */}
+        {/* ── 2. CHỌN HÌNH THỨC DỊCH VỤ ── */}
         <View style={styles.formSection}>
           <View style={styles.sectionTitleRow}>
-            <Ionicons name="time" size={18} color={theme.colors.primary} />
-            <Text style={styles.sectionTitle}>Khung giờ tư vấn</Text>
+            <Ionicons name="apps-outline" size={18} color={theme.colors.primary} />
+            <Text style={styles.sectionTitle}>1. Hình thức dịch vụ tư vấn</Text>
             <Text style={styles.requiredMark}>*</Text>
           </View>
           <Text style={styles.sectionHint}>
-            Khung giờ tuân thủ quy định đặt trước tối thiểu 4 tiếng (Lead-time)
+            Chọn hình thức bạn mong muốn để xem lịch và khung giờ tương ứng
           </Text>
 
-          {availableSlots.length === 0 ? (
+          <View style={styles.serviceTypesList}>
+            {SERVICE_OPTIONS.map((srv) => {
+              const isSelected = selectedSessionType === srv.key;
+              const feePkg = expert?.feePackages?.find((p) => p.sessionType === srv.key);
+              const feeVal = feePkg ? feePkg.fee : 0;
+              const slotCount = availableSlots.filter((s) => s.sessionType === srv.key).length;
+
+              return (
+                <TouchableOpacity
+                  key={srv.key}
+                  style={[
+                    styles.serviceCardItem,
+                    isSelected && styles.serviceCardItemActive,
+                  ]}
+                  onPress={() => handleSelectSessionType(srv.key)}
+                  activeOpacity={0.85}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Chọn hình thức ${srv.label}`}
+                >
+                  <View style={styles.serviceCardLeft}>
+                    <View
+                      style={[
+                        styles.serviceIconWrap,
+                        isSelected && styles.serviceIconWrapActive,
+                      ]}
+                    >
+                      <Ionicons
+                        name={srv.icon}
+                        size={20}
+                        color={isSelected ? '#FFFFFF' : theme.colors.primary}
+                      />
+                    </View>
+                    <View style={styles.serviceInfoCol}>
+                      <Text
+                        style={[
+                          styles.serviceName,
+                          isSelected && styles.serviceNameActive,
+                        ]}
+                      >
+                        {srv.label}
+                      </Text>
+                      <Text style={styles.serviceDesc}>{srv.desc}</Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.serviceCardRight}>
+                    <View style={styles.servicePriceRow}>
+                      <Text style={styles.servicePrice}>
+                        {feeVal > 0 ? formatVnd(feeVal) : 'Liên hệ'}
+                      </Text>
+                      <Ionicons
+                        name={isSelected ? 'checkmark-circle' : 'ellipse-outline'}
+                        size={20}
+                        color={isSelected ? theme.colors.primary : '#C4B5A5'}
+                        style={{ marginLeft: 6 }}
+                      />
+                    </View>
+                    <View
+                      style={[
+                        styles.serviceSlotBadge,
+                        slotCount === 0 && styles.serviceSlotBadgeEmpty,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.serviceSlotBadgeText,
+                          slotCount === 0 && styles.serviceSlotBadgeTextEmpty,
+                        ]}
+                      >
+                        {slotCount > 0 ? `${slotCount} khung giờ` : 'Tạm hết lịch'}
+                      </Text>
+                    </View>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+
+        {/* ── 3. LỊCH & KHUNG GIỜ CỦA HÌNH THỨC ĐÃ CHỌN ── */}
+        <View style={styles.formSection}>
+          <View style={styles.sectionTitleRow}>
+            <Ionicons name="calendar-outline" size={18} color={theme.colors.primary} />
+            <Text style={styles.sectionTitle}>
+              2. Lịch & Khung giờ:{' '}
+              {SERVICE_OPTIONS.find((s) => s.key === selectedSessionType)?.label}
+            </Text>
+            <Text style={styles.requiredMark}>*</Text>
+          </View>
+          <Text style={styles.sectionHint}>
+            Chọn ngày và khung giờ thuận tiện (tuân thủ lead-time tối thiểu 4 tiếng)
+          </Text>
+
+          {uniqueDatesForSession.length === 0 ? (
             <View style={styles.emptySlotWarning}>
               <Ionicons name="alert-circle" size={18} color="#D97706" />
               <Text style={styles.emptySlotWarningText}>
-                Chuyên gia hiện không có khung giờ nào khả dụng. Vui lòng chọn chuyên gia khác.
+                Chưa có khung giờ khả dụng cho hình thức này. Vui lòng chọn hình thức khác hoặc quay lại sau.
               </Text>
             </View>
           ) : (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.slotScrollWrap}
-            >
-              {availableSlots.map((slot) => {
-                const isSelected = selectedSlotId === slot.id;
-                const sInfo = formatSessionType(slot.sessionType);
+            <>
+              {/* Date Ribbon */}
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.dateRibbon}
+              >
+                {uniqueDatesForSession.map((dateStr) => {
+                  const isSelected = selectedDate === dateStr;
+                  const dateObj = new Date(dateStr);
+                  const dayName = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'][dateObj.getDay()];
+                  const dayNum = dateObj.getDate();
+                  const monthNum = dateObj.getMonth() + 1;
 
-                return (
-                  <TouchableOpacity
-                    key={slot.id}
-                    style={[styles.slotItemCard, isSelected && styles.slotItemCardSelected]}
-                    onPress={() => setSelectedSlotId(slot.id)}
-                  >
-                    <View style={styles.slotItemHeader}>
-                      <Ionicons
-                        name={sInfo.icon as any}
-                        size={12}
-                        color={isSelected ? '#FFFFFF' : sInfo.color}
-                      />
-                      <Text
-                        style={[
-                          styles.slotItemSessionName,
-                          isSelected && styles.slotItemTextActive,
-                        ]}
-                      >
-                        {sInfo.label}
+                  return (
+                    <TouchableOpacity
+                      key={dateStr}
+                      style={[styles.dateCard, isSelected && styles.dateCardSelected]}
+                      onPress={() => handleSelectDate(dateStr)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.dateDayName, isSelected && styles.dateTextActive]}>
+                        {dayName}
                       </Text>
-                    </View>
-                    <Text
-                      style={[styles.slotItemDateText, isSelected && styles.slotItemTextActive]}
-                    >
-                      {formatVietnameseDate(slot.slotDate)}
-                    </Text>
-                    <Text
-                      style={[styles.slotItemTimeText, isSelected && styles.slotItemTextActive]}
-                    >
-                      {formatTimeRange(slot.startTime, slot.endTime)}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
+                      <Text style={[styles.dateDayNum, isSelected && styles.dateTextActive]}>
+                        {dayNum}
+                      </Text>
+                      <Text style={[styles.dateMonth, isSelected && styles.dateTextActive]}>
+                        T.{monthNum}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+
+              {/* Slot chips for selected date */}
+              <View style={styles.slotGridWrap}>
+                <Text style={styles.slotGridTitle}>
+                  Khung giờ ngày {formatVietnameseDate(selectedDate || '')}
+                </Text>
+
+                {slotsForSelectedDate.length === 0 ? (
+                  <Text style={styles.noSlotText}>Không có khung giờ rảnh vào ngày này.</Text>
+                ) : (
+                  <View style={styles.slotGrid}>
+                    {slotsForSelectedDate.map((slot) => {
+                      const isSelected = selectedSlotId === slot.id;
+                      const sInfo = formatSessionType(slot.sessionType);
+
+                      return (
+                        <TouchableOpacity
+                          key={slot.id}
+                          style={[styles.slotChip, isSelected && styles.slotChipSelected]}
+                          onPress={() => setSelectedSlotId(slot.id)}
+                          activeOpacity={0.8}
+                        >
+                          <View style={styles.slotTopRow}>
+                            <Ionicons
+                              name={sInfo.icon as any}
+                              size={13}
+                              color={isSelected ? '#FFFFFF' : sInfo.color}
+                            />
+                            <Text
+                              style={[
+                                styles.slotSessionText,
+                                isSelected && styles.slotTextActive,
+                              ]}
+                            >
+                              {sInfo.label}
+                            </Text>
+                          </View>
+                          <Text
+                            style={[styles.slotTimeText, isSelected && styles.slotTextActive]}
+                          >
+                            {formatTimeRange(slot.startTime, slot.endTime)}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                )}
+              </View>
+            </>
           )}
         </View>
 
-        {/* ── 3. CHỌN CHỦ ĐỀ CHUYÊN MÔN ── */}
+        {/* ── 4. CHỌN CHỦ ĐỀ CHUYÊN MÔN ── */}
         <View style={styles.formSection}>
           <View style={styles.sectionTitleRow}>
             <Ionicons name="bookmark" size={18} color={theme.colors.primary} />
-            <Text style={styles.sectionTitle}>Chủ đề cần tư vấn</Text>
+            <Text style={styles.sectionTitle}>3. Lĩnh vực chuyên môn cần tư vấn</Text>
             <Text style={styles.requiredMark}>*</Text>
           </View>
-          <Text style={styles.sectionHint}>Chọn đúng lĩnh vực để chuyên gia nghiên cứu trọng tâm</Text>
+          <Text style={styles.sectionHint}>
+            Chọn lĩnh vực để chuyên gia chuẩn bị tài liệu và giải đáp trọng tâm
+          </Text>
 
           <View style={styles.specChipsContainer}>
             {specializations.map((spec) => {
@@ -450,9 +764,12 @@ export const BookingCreateScreen: React.FC = () => {
                   key={spec.id}
                   style={[styles.specPickChip, isSelected && styles.specPickChipActive]}
                   onPress={() => setSelectedSpecId(spec.id)}
+                  activeOpacity={0.8}
                 >
                   <Text
                     style={[styles.specPickChipText, isSelected && styles.specPickChipTextActive]}
+                    numberOfLines={2}
+                    ellipsizeMode="tail"
                   >
                     {spec.name}
                   </Text>
@@ -595,7 +912,9 @@ export const BookingCreateScreen: React.FC = () => {
               <View style={styles.previewRow}>
                 <Text style={styles.previewLabel}>Hình thức:</Text>
                 <Text style={styles.previewValue}>
-                  {formatSessionType(previewData.sessionType).label} ({previewData.durationMinutes} phút)
+                  {formatSessionType(previewData.sessionType).fullLabel ||
+                    formatSessionType(previewData.sessionType).label}{' '}
+                  ({previewData.durationMinutes} phút)
                 </Text>
               </View>
 
@@ -643,6 +962,18 @@ export const BookingCreateScreen: React.FC = () => {
           )}
         </TouchableOpacity>
       </ScrollView>
+
+      <Dialog
+        visible={Boolean(dialog)}
+        title={dialog?.title || ''}
+        message={dialog?.message || ''}
+        primaryLabel={dialog?.primaryLabel || 'Đã hiểu'}
+        onPrimary={dialog?.onPrimary || (() => setDialog(null))}
+        secondaryLabel={dialog?.secondaryLabel}
+        onSecondary={dialog?.onSecondary}
+        destructive={dialog?.destructive}
+        onRequestClose={() => setDialog(null)}
+      />
     </SafeAreaView>
   );
 };
@@ -797,46 +1128,191 @@ const styles = StyleSheet.create({
     color: '#B45309',
   },
 
-  slotScrollWrap: {
+  // Service Types List (Full-width vertical cards)
+  serviceTypesList: {
     gap: 8,
-    paddingVertical: 4,
+    marginTop: 4,
+    marginBottom: 6,
   },
-  slotItemCard: {
-    width: 130,
-    backgroundColor: '#FAF7F0',
-    borderRadius: 8,
-    padding: 10,
+  serviceCardItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FAF8F3',
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1.5,
+    borderColor: '#EFE8DB',
+  },
+  serviceCardItemActive: {
+    borderColor: theme.colors.primary,
+    backgroundColor: '#FDF7F7',
+  },
+  serviceCardLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+    marginRight: 8,
+  },
+  serviceIconWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#FAF5EE',
     borderWidth: 1,
-    borderColor: '#E6DECE',
+    borderColor: '#E8DEC8',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  slotItemCardSelected: {
+  serviceIconWrapActive: {
     backgroundColor: theme.colors.primary,
     borderColor: theme.colors.primary,
   },
-  slotItemHeader: {
+  serviceInfoCol: {
+    flex: 1,
+  },
+  serviceName: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 13,
+    color: '#3A2E25',
+  },
+  serviceNameActive: {
+    color: theme.colors.primary,
+  },
+  serviceDesc: {
+    fontFamily: fonts.body,
+    fontSize: 11,
+    color: '#786F66',
+    marginTop: 2,
+  },
+  serviceCardRight: {
+    alignItems: 'flex-end',
+    gap: 4,
+  },
+  servicePriceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  servicePrice: {
+    fontFamily: fonts.serifBold,
+    fontSize: 13,
+    color: theme.colors.primaryDark,
+    fontVariant: ['tabular-nums'],
+  },
+  serviceSlotBadge: {
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 4,
+    alignSelf: 'flex-end',
+  },
+  serviceSlotBadgeEmpty: {
+    backgroundColor: '#F3F4F6',
+  },
+  serviceSlotBadgeText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 10,
+    color: '#065F46',
+  },
+  serviceSlotBadgeTextEmpty: {
+    color: '#9CA3AF',
+  },
+
+  // Date Ribbon & Slot Grid
+  dateRibbon: {
+    gap: 8,
+    paddingVertical: 6,
+  },
+  dateCard: {
+    width: 68,
+    paddingVertical: 8,
+    alignItems: 'center',
+    backgroundColor: '#FAF7F0',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E6DECE',
+  },
+  dateCardSelected: {
+    backgroundColor: theme.colors.primary,
+    borderColor: theme.colors.primary,
+  },
+  dateDayName: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 11,
+    color: '#666666',
+  },
+  dateDayNum: {
+    fontFamily: fonts.serifBold,
+    fontSize: 18,
+    color: theme.colors.textPrimary,
+    marginVertical: 1,
+  },
+  dateMonth: {
+    fontFamily: fonts.body,
+    fontSize: 10,
+    color: '#888888',
+  },
+  dateTextActive: {
+    color: '#FFFFFF',
+  },
+
+  slotGridWrap: {
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#F3EFE6',
+  },
+  slotGridTitle: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12,
+    color: theme.colors.textPrimary,
+    marginBottom: 8,
+  },
+  noSlotText: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: theme.colors.textSecondary,
+    textAlign: 'center',
+    paddingVertical: 10,
+  },
+  slotGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  slotChip: {
+    backgroundColor: '#FAF7F0',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: '#E6DECE',
+    minWidth: '47%',
+    flex: 1,
+  },
+  slotChipSelected: {
+    backgroundColor: theme.colors.primary,
+    borderColor: theme.colors.primary,
+  },
+  slotTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    marginBottom: 4,
+    marginBottom: 2,
   },
-  slotItemSessionName: {
+  slotSessionText: {
     fontFamily: fonts.bodySemi,
     fontSize: 10,
     color: '#555555',
   },
-  slotItemDateText: {
-    fontFamily: fonts.body,
-    fontSize: 11,
-    color: '#666666',
-  },
-  slotItemTimeText: {
+  slotTimeText: {
     fontFamily: fonts.serifBold,
     fontSize: 13,
     color: theme.colors.textPrimary,
-    marginTop: 2,
     fontVariant: ['tabular-nums'],
   },
-  slotItemTextActive: {
+  slotTextActive: {
     color: '#FFFFFF',
   },
 
@@ -848,11 +1324,13 @@ const styles = StyleSheet.create({
   },
   specPickChip: {
     paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 6,
-    backgroundColor: '#F5EFE4',
+    paddingVertical: 7,
+    borderRadius: 8,
+    backgroundColor: '#FAF5EE',
     borderWidth: 1,
-    borderColor: '#E4DAC7',
+    borderColor: '#E8DEC8',
+    maxWidth: '100%',
+    flexShrink: 1,
   },
   specPickChipActive: {
     backgroundColor: theme.colors.primary,
@@ -862,6 +1340,7 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bodySemi,
     fontSize: 12,
     color: theme.colors.textPrimary,
+    flexShrink: 1,
   },
   specPickChipTextActive: {
     color: '#FFFFFF',
@@ -1017,21 +1496,30 @@ const styles = StyleSheet.create({
   previewRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 8,
   },
   previewLabel: {
     fontFamily: fonts.body,
     fontSize: 12,
     color: '#666666',
+    flexShrink: 0,
   },
   previewValue: {
     fontFamily: fonts.bodySemi,
     fontSize: 12,
     color: theme.colors.textPrimary,
+    flex: 1,
+    textAlign: 'right',
+    flexWrap: 'wrap',
   },
   previewValueBold: {
     fontFamily: fonts.bodyBold,
     fontSize: 12,
     color: theme.colors.primary,
+    flex: 1,
+    textAlign: 'right',
+    flexWrap: 'wrap',
   },
   previewDivider: {
     height: 1,

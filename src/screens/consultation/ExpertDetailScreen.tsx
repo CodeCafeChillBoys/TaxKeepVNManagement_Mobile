@@ -8,6 +8,8 @@ import {
   Image,
   ActivityIndicator,
   FlatList,
+  Modal,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
@@ -15,12 +17,16 @@ import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
+import { Dialog } from '../../components/common/Dialog';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { consultationApi } from '../../api/consultationApi';
+import { getLocalApiBaseUrl } from '../../constants/config';
 import type {
   ExpertDetailResponse,
   ExpertAvailableSlotDto,
   ExpertPublicReviewDto,
+  ExpertPublicCertificateDto,
+  SessionType,
 } from '../../types/consultation';
 import {
   formatVnd,
@@ -28,6 +34,32 @@ import {
   formatVietnameseDate,
   formatTimeRange,
 } from '../../types/consultation';
+
+const SERVICE_OPTIONS: {
+  key: SessionType;
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  desc: string;
+}[] = [
+  {
+    key: 'ONLINE_MEETING',
+    label: 'Họp trực tuyến (Video)',
+    icon: 'videocam-outline',
+    desc: 'Gọi video tương tác trực tiếp',
+  },
+  {
+    key: 'CHAT',
+    label: 'Nhắn tin tư vấn',
+    icon: 'chatbubbles-outline',
+    desc: 'Hỏi đáp & gửi chứng từ qua chat',
+  },
+  {
+    key: 'VOICE_CALL',
+    label: 'Gọi thoại trực tiếp',
+    icon: 'call-outline',
+    desc: 'Tư vấn nhanh qua đường thoại',
+  },
+];
 
 export const ExpertDetailScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
@@ -40,6 +72,7 @@ export const ExpertDetailScreen: React.FC = () => {
 
   // Slots & booking state
   const [availableSlots, setAvailableSlots] = useState<ExpertAvailableSlotDto[]>([]);
+  const [selectedSessionType, setSelectedSessionType] = useState<SessionType>('ONLINE_MEETING');
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<ExpertAvailableSlotDto | null>(null);
 
@@ -50,6 +83,41 @@ export const ExpertDetailScreen: React.FC = () => {
 
   // Active sub-tab: 'INFO' | 'SCHEDULE' | 'REVIEWS'
   const [activeTab, setActiveTab] = useState<'INFO' | 'SCHEDULE' | 'REVIEWS'>('INFO');
+
+  // Certificate viewer modal state
+  const [selectedCert, setSelectedCert] = useState<ExpertPublicCertificateDto | null>(null);
+  const [certModalVisible, setCertModalVisible] = useState(false);
+  const [dialog, setDialog] = useState<{
+    title: string;
+    message: string;
+    primaryLabel?: string;
+    onPrimary?: () => void;
+  } | null>(null);
+
+  const resolveFileUrl = (url?: string | null) => {
+    if (!url) return '';
+    if (url.startsWith('http://') || url.startsWith('https://')) return url;
+    const baseUrl = getLocalApiBaseUrl();
+    const cleanPath = url.startsWith('/') ? url : `/${url}`;
+    return `${baseUrl}${cleanPath}`;
+  };
+
+  const isImageFile = (url?: string | null) => {
+    if (!url) return false;
+    const clean = url.split('?')[0].toLowerCase();
+    return (
+      clean.endsWith('.jpg') ||
+      clean.endsWith('.jpeg') ||
+      clean.endsWith('.png') ||
+      clean.endsWith('.webp') ||
+      clean.endsWith('.gif')
+    );
+  };
+
+  const handleOpenCertificate = (cert: ExpertPublicCertificateDto) => {
+    setSelectedCert(cert);
+    setCertModalVisible(true);
+  };
 
   const fetchDetail = useCallback(async () => {
     setLoading(true);
@@ -63,9 +131,15 @@ export const ExpertDetailScreen: React.FC = () => {
       setAvailableSlots(slots);
       setReviews(detail.recentReviews || []);
 
-      // Auto-select first date with available slots
-      if (slots.length > 0) {
-        setSelectedDate(slots[0].slotDate);
+      // Auto-select session type that has available slots
+      const order: SessionType[] = ['ONLINE_MEETING', 'CHAT', 'VOICE_CALL'];
+      const firstWithSlots =
+        order.find((t) => slots.some((s) => s.sessionType === t)) || 'ONLINE_MEETING';
+      setSelectedSessionType(firstWithSlots);
+
+      const slotsForType = slots.filter((s) => s.sessionType === firstWithSlots);
+      if (slotsForType.length > 0) {
+        setSelectedDate(slotsForType[0].slotDate);
       }
     } catch (err: any) {
       setError(err?.response?.data?.message || err?.message || 'Không thể tải hồ sơ chuyên gia.');
@@ -96,17 +170,37 @@ export const ExpertDetailScreen: React.FC = () => {
     }
   };
 
-  // Group slots by date
-  const uniqueDates = useMemo(() => {
-    const dates = Array.from(new Set(availableSlots.map((s) => s.slotDate)));
-    return dates.sort();
-  }, [availableSlots]);
+  // Switch session type: reset selected slot and update date
+  const handleSelectSessionType = (type: SessionType) => {
+    setSelectedSessionType(type);
+    setSelectedSlot(null);
+    const slotsForType = availableSlots.filter((s) => s.sessionType === type);
+    const datesForType = Array.from(new Set(slotsForType.map((s) => s.slotDate))).sort();
+    if (datesForType.length > 0) {
+      if (!selectedDate || !datesForType.includes(selectedDate)) {
+        setSelectedDate(datesForType[0]);
+      }
+    } else {
+      setSelectedDate(null);
+    }
+  };
 
-  // Filter slots for currently selected date
+  // Slots filtered by chosen service type
+  const slotsForSelectedSession = useMemo(() => {
+    return availableSlots.filter((s) => s.sessionType === selectedSessionType);
+  }, [availableSlots, selectedSessionType]);
+
+  // Unique dates for this service type
+  const uniqueDatesForSession = useMemo(() => {
+    const dates = Array.from(new Set(slotsForSelectedSession.map((s) => s.slotDate)));
+    return dates.sort();
+  }, [slotsForSelectedSession]);
+
+  // Filter slots for currently selected date & service type
   const slotsForSelectedDate = useMemo(() => {
     if (!selectedDate) return [];
-    return availableSlots.filter((s) => s.slotDate === selectedDate);
-  }, [availableSlots, selectedDate]);
+    return slotsForSelectedSession.filter((s) => s.slotDate === selectedDate);
+  }, [slotsForSelectedSession, selectedDate]);
 
   // Proceed to booking screen
   const handleProceedToBooking = () => {
@@ -256,10 +350,13 @@ export const ExpertDetailScreen: React.FC = () => {
           <TouchableOpacity
             style={[styles.segmentTab, activeTab === 'INFO' && styles.segmentTabActive]}
             onPress={() => setActiveTab('INFO')}
+            activeOpacity={0.8}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: activeTab === 'INFO' }}
           >
             <Ionicons
               name="person-outline"
-              size={16}
+              size={13.5}
               color={activeTab === 'INFO' ? theme.colors.primary : '#666666'}
             />
             <Text
@@ -267,6 +364,7 @@ export const ExpertDetailScreen: React.FC = () => {
                 styles.segmentTabText,
                 activeTab === 'INFO' && styles.segmentTabTextActive,
               ]}
+              numberOfLines={1}
             >
               Giới thiệu
             </Text>
@@ -275,10 +373,13 @@ export const ExpertDetailScreen: React.FC = () => {
           <TouchableOpacity
             style={[styles.segmentTab, activeTab === 'SCHEDULE' && styles.segmentTabActive]}
             onPress={() => setActiveTab('SCHEDULE')}
+            activeOpacity={0.8}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: activeTab === 'SCHEDULE' }}
           >
             <Ionicons
               name="calendar-outline"
-              size={16}
+              size={13.5}
               color={activeTab === 'SCHEDULE' ? theme.colors.primary : '#666666'}
             />
             <Text
@@ -286,18 +387,22 @@ export const ExpertDetailScreen: React.FC = () => {
                 styles.segmentTabText,
                 activeTab === 'SCHEDULE' && styles.segmentTabTextActive,
               ]}
+              numberOfLines={1}
             >
-              Lịch làm việc ({availableSlots.length})
+              Lịch hẹn ({availableSlots.length})
             </Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             style={[styles.segmentTab, activeTab === 'REVIEWS' && styles.segmentTabActive]}
             onPress={() => setActiveTab('REVIEWS')}
+            activeOpacity={0.8}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: activeTab === 'REVIEWS' }}
           >
             <Ionicons
               name="star-outline"
-              size={16}
+              size={13.5}
               color={activeTab === 'REVIEWS' ? theme.colors.primary : '#666666'}
             />
             <Text
@@ -305,6 +410,7 @@ export const ExpertDetailScreen: React.FC = () => {
                 styles.segmentTabText,
                 activeTab === 'REVIEWS' && styles.segmentTabTextActive,
               ]}
+              numberOfLines={1}
             >
               Đánh giá ({expert.totalReviews})
             </Text>
@@ -330,7 +436,9 @@ export const ExpertDetailScreen: React.FC = () => {
                   {expert.specializationNames.map((s, idx) => (
                     <View key={idx} style={styles.detailSpecChip}>
                       <Ionicons name="checkmark-circle" size={14} color={theme.colors.gold} />
-                      <Text style={styles.detailSpecText}>{s}</Text>
+                      <Text style={styles.detailSpecText} numberOfLines={2}>
+                        {s}
+                      </Text>
                     </View>
                   ))}
                 </View>
@@ -349,24 +457,40 @@ export const ExpertDetailScreen: React.FC = () => {
                 </Text>
 
                 {expert.verifiedCertificates.map((cert) => (
-                  <View key={cert.id} style={styles.certCard}>
+                  <TouchableOpacity
+                    key={cert.id}
+                    style={styles.certCard}
+                    activeOpacity={0.82}
+                    onPress={() => handleOpenCertificate(cert)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Xem chứng chỉ ${cert.certificateName}`}
+                  >
                     <View style={styles.certIconWrap}>
                       <Ionicons name="document-text" size={20} color={theme.colors.primary} />
                     </View>
                     <View style={styles.certInfo}>
-                      <Text style={styles.certName}>{cert.certificateName}</Text>
+                      <Text style={styles.certName} numberOfLines={2}>
+                        {cert.certificateName}
+                      </Text>
                       <Text style={styles.certAuthority}>
-                        Cơ quan cấp: {cert.issuingAuthority} ({cert.yearIssued})
+                        Cơ quan cấp: {cert.issuingAuthority}
+                        {cert.yearIssued ? ` (${cert.yearIssued})` : ''}
                       </Text>
                       <Text style={styles.certNumber}>
                         Mã hiệu: <Text style={styles.certNumberCode}>{cert.maskedCertificateNumber}</Text>
                       </Text>
                     </View>
-                    <View style={styles.certVerifiedTag}>
-                      <Ionicons name="checkmark-done" size={12} color="#059669" />
-                      <Text style={styles.certVerifiedText}>Hợp lệ</Text>
+                    <View style={styles.certActionCol}>
+                      <View style={styles.certVerifiedTag}>
+                        <Ionicons name="checkmark-done" size={11} color="#059669" />
+                        <Text style={styles.certVerifiedText}>Hợp lệ</Text>
+                      </View>
+                      <View style={styles.viewFileBadge}>
+                        <Ionicons name="eye-outline" size={12} color={theme.colors.primary} />
+                        <Text style={styles.viewFileBadgeText}>Xem tệp</Text>
+                      </View>
                     </View>
-                  </View>
+                  </TouchableOpacity>
                 ))}
               </View>
             )}
@@ -410,21 +534,115 @@ export const ExpertDetailScreen: React.FC = () => {
         {/* ── TAB 2: LỊCH LÀM VIỆC & CHỌN KHUNG GIỜ ── */}
         {activeTab === 'SCHEDULE' && (
           <View style={styles.tabSection}>
+            {/* 1. CHỌN HÌNH THỨC DỊCH VỤ */}
             <View style={styles.cardSection}>
               <View style={styles.sectionHeaderRow}>
-                <Ionicons name="calendar" size={18} color={theme.colors.primary} />
-                <Text style={styles.sectionHeaderTitle}>Chọn ngày tư vấn</Text>
+                <Ionicons name="apps-outline" size={18} color={theme.colors.primary} />
+                <Text style={styles.sectionHeaderTitle}>1. Chọn hình thức dịch vụ</Text>
+              </View>
+              <Text style={styles.sectionSubtitle}>
+                Vui lòng chọn hình thức bạn muốn tư vấn trước khi chọn lịch làm việc
+              </Text>
+
+              <View style={styles.serviceTypesList}>
+                {SERVICE_OPTIONS.map((srv) => {
+                  const isSelected = selectedSessionType === srv.key;
+                  const feePkg = expert.feePackages?.find((p) => p.sessionType === srv.key);
+                  const feeVal = feePkg ? feePkg.fee : 0;
+                  const slotCount = availableSlots.filter((s) => s.sessionType === srv.key).length;
+
+                  return (
+                    <TouchableOpacity
+                      key={srv.key}
+                      style={[
+                        styles.serviceCardItem,
+                        isSelected && styles.serviceCardItemActive,
+                      ]}
+                      onPress={() => handleSelectSessionType(srv.key)}
+                      activeOpacity={0.85}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Chọn hình thức ${srv.label}`}
+                    >
+                      <View style={styles.serviceCardLeft}>
+                        <View
+                          style={[
+                            styles.serviceIconWrap,
+                            isSelected && styles.serviceIconWrapActive,
+                          ]}
+                        >
+                          <Ionicons
+                            name={srv.icon}
+                            size={20}
+                            color={isSelected ? '#FFFFFF' : theme.colors.primary}
+                          />
+                        </View>
+                        <View style={styles.serviceInfoCol}>
+                          <Text
+                            style={[
+                              styles.serviceName,
+                              isSelected && styles.serviceNameActive,
+                            ]}
+                          >
+                            {srv.label}
+                          </Text>
+                          <Text style={styles.serviceDesc}>{srv.desc}</Text>
+                        </View>
+                      </View>
+
+                      <View style={styles.serviceCardRight}>
+                        <View style={styles.servicePriceRow}>
+                          <Text style={styles.servicePrice}>
+                            {feeVal > 0 ? formatVnd(feeVal) : 'Liên hệ'}
+                          </Text>
+                          <Ionicons
+                            name={isSelected ? 'checkmark-circle' : 'ellipse-outline'}
+                            size={20}
+                            color={isSelected ? theme.colors.primary : '#C4B5A5'}
+                            style={{ marginLeft: 6 }}
+                          />
+                        </View>
+                        <View
+                          style={[
+                            styles.serviceSlotBadge,
+                            slotCount === 0 && styles.serviceSlotBadgeEmpty,
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.serviceSlotBadgeText,
+                              slotCount === 0 && styles.serviceSlotBadgeTextEmpty,
+                            ]}
+                          >
+                            {slotCount > 0 ? `${slotCount} khung giờ` : 'Tạm hết lịch'}
+                          </Text>
+                        </View>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+
+            {/* 2. CHỌN NGÀY VÀ KHUNG GIỜ CỦA HÌNH THỨC ĐÃ CHỌN */}
+            <View style={styles.cardSection}>
+              <View style={styles.sectionHeaderRow}>
+                <Ionicons name="calendar-outline" size={18} color={theme.colors.primary} />
+                <Text style={styles.sectionHeaderTitle}>
+                  2. Lịch tư vấn: {SERVICE_OPTIONS.find((s) => s.key === selectedSessionType)?.label}
+                </Text>
               </View>
               <Text style={styles.sectionSubtitle}>
                 Chỉ hiển thị các khung giờ còn trống và thỏa mãn quy định đặt trước tối thiểu 4 giờ
               </Text>
 
-              {uniqueDates.length === 0 ? (
+              {uniqueDatesForSession.length === 0 ? (
                 <View style={styles.emptySlotBox}>
                   <Ionicons name="calendar-outline" size={36} color="#CCCCCC" />
-                  <Text style={styles.emptySlotTitle}>Chuyên gia tạm thời chưa có lịch trống</Text>
+                  <Text style={styles.emptySlotTitle}>
+                    Chưa có lịch cho {SERVICE_OPTIONS.find((s) => s.key === selectedSessionType)?.label}
+                  </Text>
                   <Text style={styles.emptySlotDesc}>
-                    Vui lòng quay lại sau hoặc chọn chuyên gia khác đang có khung giờ khả dụng.
+                    Chuyên gia hiện chưa mở khung giờ cho hình thức này. Bạn có thể chọn hình thức dịch vụ khác ở bước 1.
                   </Text>
                 </View>
               ) : (
@@ -435,7 +653,7 @@ export const ExpertDetailScreen: React.FC = () => {
                     showsHorizontalScrollIndicator={false}
                     contentContainerStyle={styles.dateRibbon}
                   >
-                    {uniqueDates.map((dateStr) => {
+                    {uniqueDatesForSession.map((dateStr) => {
                       const isSelected = selectedDate === dateStr;
                       const dateObj = new Date(dateStr);
                       const dayName = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'][dateObj.getDay()];
@@ -468,7 +686,7 @@ export const ExpertDetailScreen: React.FC = () => {
                   {/* Slot chips for the chosen date */}
                   <View style={styles.slotGridWrap}>
                     <Text style={styles.slotGridTitle}>
-                      Khung giờ khả dụng ngày {formatVietnameseDate(selectedDate || '')}
+                      Khung giờ ngày {formatVietnameseDate(selectedDate || '')}
                     </Text>
 
                     {slotsForSelectedDate.length === 0 ? (
@@ -665,6 +883,135 @@ export const ExpertDetailScreen: React.FC = () => {
           </Text>
         </TouchableOpacity>
       </View>
+
+      {/* ── MODAL XEM CHI TIẾT & TỆP CHỨNG CHỈ HÀNH NGHỀ ── */}
+      <Modal
+        visible={certModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setCertModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.certModalBox}>
+            <View style={styles.certModalHeader}>
+              <View style={styles.certModalHeaderLeft}>
+                <Ionicons name="ribbon" size={22} color={theme.colors.gold} />
+                <Text style={styles.certModalTitle} numberOfLines={1}>
+                  Chứng chỉ hành nghề
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setCertModalVisible(false)}
+                style={styles.modalCloseBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Đóng"
+              >
+                <Ionicons name="close" size={22} color="#666666" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.certModalBody} showsVerticalScrollIndicator={false}>
+              {selectedCert && (
+                <>
+                  <Text style={styles.certModalCertName}>{selectedCert.certificateName}</Text>
+
+                  <View style={styles.certDetailRow}>
+                    <Text style={styles.certDetailLabel}>Cơ quan cấp:</Text>
+                    <Text style={styles.certDetailValue}>{selectedCert.issuingAuthority}</Text>
+                  </View>
+
+                  {selectedCert.yearIssued ? (
+                    <View style={styles.certDetailRow}>
+                      <Text style={styles.certDetailLabel}>Năm cấp:</Text>
+                      <Text style={styles.certDetailValue}>{selectedCert.yearIssued}</Text>
+                    </View>
+                  ) : null}
+
+                  <View style={styles.certDetailRow}>
+                    <Text style={styles.certDetailLabel}>Mã số hiệu:</Text>
+                    <Text style={styles.certDetailValueBold}>{selectedCert.maskedCertificateNumber}</Text>
+                  </View>
+
+                  <View style={styles.certVerifiedBanner}>
+                    <Ionicons name="checkmark-circle" size={16} color="#059669" />
+                    <Text style={styles.certVerifiedBannerText}>
+                      Đã được TaxKeep kiểm tra & xác minh tính hợp pháp
+                    </Text>
+                  </View>
+
+                  {/* Tệp tin chứng chỉ preview / action */}
+                  {selectedCert.fileUrl ? (
+                    <View style={styles.certFileSection}>
+                      <Text style={styles.certFileSectionTitle}>Tệp hồ sơ chứng chỉ:</Text>
+
+                      {isImageFile(selectedCert.fileUrl) ? (
+                        <View style={styles.certImageWrap}>
+                          <Image
+                            source={{ uri: resolveFileUrl(selectedCert.fileUrl) }}
+                            style={styles.certImagePreview}
+                            resizeMode="contain"
+                          />
+                        </View>
+                      ) : (
+                        <View style={styles.certDocWrap}>
+                          <Ionicons name="document-text" size={48} color={theme.colors.primary} />
+                          <Text style={styles.certDocText}>Tệp tin văn bản đính kèm</Text>
+                        </View>
+                      )}
+
+                      <TouchableOpacity
+                        style={styles.openExternalBtn}
+                        onPress={() => {
+                          const fullUrl = resolveFileUrl(selectedCert.fileUrl);
+                          if (fullUrl) {
+                            Linking.openURL(fullUrl).catch(() => {
+                              setDialog({
+                                title: 'Thông báo',
+                                message: 'Không thể mở liên kết tệp tin trên thiết bị.',
+                                primaryLabel: 'Đã hiểu',
+                                onPrimary: () => setDialog(null),
+                              });
+                            });
+                          }
+                        }}
+                        activeOpacity={0.85}
+                      >
+                        <Ionicons name="open-outline" size={16} color="#FFFFFF" />
+                        <Text style={styles.openExternalBtnText}>Mở tệp gốc / Xem toàn màn hình</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <View style={styles.noFileNotice}>
+                      <Ionicons name="shield-checkmark-outline" size={26} color="#059669" />
+                      <Text style={styles.noFileNoticeText}>
+                        Chứng chỉ đã được ban quản trị TaxKeep kiểm tra trực tiếp và xác thực từ hồ sơ gốc của chuyên gia.
+                      </Text>
+                    </View>
+                  )}
+                </>
+              )}
+            </ScrollView>
+
+            <View style={styles.certModalFooter}>
+              <TouchableOpacity
+                style={styles.certModalCloseBtn}
+                onPress={() => setCertModalVisible(false)}
+              >
+                <Text style={styles.certModalCloseBtnText}>Đóng</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Dialog
+        visible={Boolean(dialog)}
+        title={dialog?.title || ''}
+        message={dialog?.message || ''}
+        primaryLabel={dialog?.primaryLabel || 'Đã hiểu'}
+        onPrimary={dialog?.onPrimary || (() => setDialog(null))}
+        onRequestClose={() => setDialog(null)}
+      />
     </SafeAreaView>
   );
 };
@@ -851,35 +1198,41 @@ const styles = StyleSheet.create({
   // Segment Bar
   segmentBar: {
     flexDirection: 'row',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F5F1EA',
     borderRadius: 10,
-    padding: 4,
+    padding: 3,
     marginBottom: 14,
     borderWidth: 1,
-    borderColor: '#E8E1D3',
+    borderColor: '#E6DECF',
   },
   segmentTab: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 9,
+    paddingVertical: 8,
+    paddingHorizontal: 2,
     borderRadius: 8,
-    gap: 4,
+    gap: 3.5,
   },
   segmentTabActive: {
-    backgroundColor: '#FAF5EE',
+    backgroundColor: '#FFFFFF',
     borderWidth: 1,
-    borderColor: theme.colors.goldLight,
+    borderColor: '#E5D8C3',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 2,
   },
   segmentTabText: {
-    fontFamily: fonts.body,
-    fontSize: 12,
-    color: '#666666',
+    fontFamily: fonts.bodySemi,
+    fontSize: 11.5,
+    color: '#6B7280',
   },
   segmentTabTextActive: {
     fontFamily: fonts.bodyBold,
-    color: theme.colors.primary,
+    color: '#8B1E1E',
   },
 
   tabSection: {
@@ -934,11 +1287,14 @@ const styles = StyleSheet.create({
     borderWidth: 0.5,
     borderColor: '#E4D6BE',
     gap: 5,
+    maxWidth: '100%',
+    flexShrink: 1,
   },
   detailSpecText: {
     fontFamily: fonts.bodySemi,
     fontSize: 12,
     color: '#78350F',
+    flexShrink: 1,
   },
 
   // Certificates
@@ -946,16 +1302,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FAF8F3',
-    padding: 10,
-    borderRadius: 8,
-    marginBottom: 8,
+    padding: 12,
+    borderRadius: 10,
+    marginBottom: 10,
     borderWidth: 1,
     borderColor: '#EFE8DB',
   },
   certIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     backgroundColor: '#8B1E1E14',
     justifyContent: 'center',
     alignItems: 'center',
@@ -968,28 +1324,34 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bodyBold,
     fontSize: 13,
     color: theme.colors.textPrimary,
+    lineHeight: 18,
   },
   certAuthority: {
     fontFamily: fonts.body,
     fontSize: 11,
     color: '#666666',
-    marginTop: 1,
+    marginTop: 2,
   },
   certNumber: {
     fontFamily: fonts.body,
     fontSize: 11,
     color: '#888888',
-    marginTop: 1,
+    marginTop: 2,
   },
   certNumberCode: {
     fontFamily: fonts.bodySemi,
     color: '#444444',
   },
+  certActionCol: {
+    alignItems: 'flex-end',
+    gap: 6,
+    marginLeft: 8,
+  },
   certVerifiedTag: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#ECFDF5',
-    paddingHorizontal: 6,
+    paddingHorizontal: 7,
     paddingVertical: 3,
     borderRadius: 4,
     gap: 3,
@@ -998,6 +1360,199 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bodyBold,
     fontSize: 10,
     color: '#065F46',
+  },
+  viewFileBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#8B1E1E12',
+    paddingHorizontal: 7,
+    paddingVertical: 3.5,
+    borderRadius: 4,
+    gap: 3,
+    borderWidth: 0.5,
+    borderColor: '#8B1E1E30',
+  },
+  viewFileBadgeText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 10.5,
+    color: theme.colors.primary,
+  },
+
+  // Certificate Modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  certModalBox: {
+    width: '100%',
+    maxHeight: '88%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 16,
+    ...theme.shadows.card,
+  },
+  certModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0ECE4',
+  },
+  certModalHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flex: 1,
+  },
+  certModalTitle: {
+    fontFamily: fonts.serifBold,
+    fontSize: 16,
+    color: theme.colors.primary,
+  },
+  modalCloseBtn: {
+    padding: 4,
+  },
+  certModalBody: {
+    marginTop: 10,
+    maxHeight: 450,
+  },
+  certModalCertName: {
+    fontFamily: fonts.serifBold,
+    fontSize: 15,
+    color: theme.colors.textPrimary,
+    lineHeight: 21,
+    marginBottom: 10,
+  },
+  certDetailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+  },
+  certDetailLabel: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: '#666666',
+  },
+  certDetailValue: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 12,
+    color: '#333333',
+    maxWidth: '65%',
+    textAlign: 'right',
+  },
+  certDetailValueBold: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12,
+    color: theme.colors.primary,
+    maxWidth: '65%',
+    textAlign: 'right',
+  },
+  certVerifiedBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    padding: 10,
+    borderRadius: 8,
+    gap: 8,
+    marginTop: 10,
+    borderWidth: 0.5,
+    borderColor: '#A7F3D0',
+  },
+  certVerifiedBannerText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 11.5,
+    color: '#065F46',
+    flex: 1,
+  },
+  certFileSection: {
+    marginTop: 14,
+  },
+  certFileSectionTitle: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12.5,
+    color: theme.colors.textPrimary,
+    marginBottom: 8,
+  },
+  certImageWrap: {
+    width: '100%',
+    height: 220,
+    backgroundColor: '#F9F7F2',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E8E2D6',
+    overflow: 'hidden',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  certImagePreview: {
+    width: '100%',
+    height: '100%',
+  },
+  certDocWrap: {
+    padding: 24,
+    backgroundColor: '#F9F7F2',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E8E2D6',
+    alignItems: 'center',
+    gap: 8,
+  },
+  certDocText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 12,
+    color: '#666666',
+  },
+  openExternalBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: theme.colors.primary,
+    paddingVertical: 10,
+    borderRadius: 8,
+    gap: 6,
+    marginTop: 10,
+  },
+  openExternalBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12.5,
+    color: '#FFFFFF',
+  },
+  noFileNotice: {
+    padding: 16,
+    backgroundColor: '#FAF8F3',
+    borderRadius: 8,
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 14,
+    borderWidth: 1,
+    borderColor: '#ECE4D4',
+  },
+  noFileNoticeText: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: '#666666',
+    textAlign: 'center',
+  },
+  certModalFooter: {
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#F0ECE4',
+  },
+  certModalCloseBtn: {
+    backgroundColor: '#F3EFE6',
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  certModalCloseBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 13,
+    color: '#444444',
   },
 
   // Fee Cards
@@ -1042,7 +1597,97 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
   },
 
-  // Schedule Tab
+  // Schedule Tab - Service Types List (Full-width vertical cards)
+  serviceTypesList: {
+    gap: 8,
+    marginTop: 6,
+    marginBottom: 8,
+  },
+  serviceCardItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FAF8F3',
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1.5,
+    borderColor: '#EFE8DB',
+  },
+  serviceCardItemActive: {
+    borderColor: theme.colors.primary,
+    backgroundColor: '#FDF7F7',
+  },
+  serviceCardLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+    marginRight: 8,
+  },
+  serviceIconWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#FAF5EE',
+    borderWidth: 1,
+    borderColor: '#E8DEC8',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  serviceIconWrapActive: {
+    backgroundColor: theme.colors.primary,
+    borderColor: theme.colors.primary,
+  },
+  serviceInfoCol: {
+    flex: 1,
+  },
+  serviceName: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 13,
+    color: '#3A2E25',
+  },
+  serviceNameActive: {
+    color: theme.colors.primary,
+  },
+  serviceDesc: {
+    fontFamily: fonts.body,
+    fontSize: 11,
+    color: '#786F66',
+    marginTop: 2,
+  },
+  serviceCardRight: {
+    alignItems: 'flex-end',
+    gap: 4,
+  },
+  servicePriceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  servicePrice: {
+    fontFamily: fonts.serifBold,
+    fontSize: 13,
+    color: theme.colors.primaryDark,
+    fontVariant: ['tabular-nums'],
+  },
+  serviceSlotBadge: {
+    backgroundColor: '#ECFDF5',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 4,
+    alignSelf: 'flex-end',
+  },
+  serviceSlotBadgeEmpty: {
+    backgroundColor: '#F3F4F6',
+  },
+  serviceSlotBadgeText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 10,
+    color: '#065F46',
+  },
+  serviceSlotBadgeTextEmpty: {
+    color: '#9CA3AF',
+  },
+
   emptySlotBox: {
     alignItems: 'center',
     paddingVertical: 30,

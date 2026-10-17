@@ -24,6 +24,9 @@ import {
 } from '../../api/dependentDocumentApi';
 import { dependentLifecycleApi } from '../../api/dependentLifecycleApi';
 import { notificationApi, NotificationItem } from '../../api/notificationApi';
+import { taxSettlementApi } from '../../api/taxSettlementApi';
+import type { TaxDeadlineCountdown } from '../../types/taxSettlement';
+import { deadlineDisplay } from './homeDeadlineCountdown';
 import {
   buildHomeReminderChangeGroupPlan,
   runHomeReminderChangeGroup,
@@ -42,7 +45,11 @@ import { MainTabBar } from '../../components/navigation/MainTabBar';
 import { humanizeGroupCodes } from '../dependent/dependentGroupUtils';
 import { formatPersonName } from '../../utils/formatPersonName';
 
-const DEDUCTION_PER_DEPENDENT = 6_200_000;
+const DEADLINE_COLORS = {
+  normal: theme.colors.primaryDark,
+  warning: theme.colors.warning,
+  danger: theme.colors.error,
+};
 
 type TodoItem = {
   id: string;
@@ -58,10 +65,6 @@ function initialFromName(name?: string | null): string {
   if (!trimmed) return '?';
   const parts = trimmed.split(/\s+/);
   return (parts[parts.length - 1] || '?').charAt(0).toUpperCase();
-}
-
-function formatMoney(amount: number): string {
-  return `${amount.toLocaleString('vi-VN')} đ`;
 }
 
 export const HomeScreen: React.FC = () => {
@@ -84,8 +87,15 @@ export const HomeScreen: React.FC = () => {
   const [notifTab, setNotifTab] = useState<'ALL' | 'UNREAD'>('ALL');
   const [loadingNotifs, setLoadingNotifs] = useState<boolean>(false);
   const [refreshingNotifs, setRefreshingNotifs] = useState<boolean>(false);
+  const [deadline, setDeadline] = useState<TaxDeadlineCountdown | null>(null);
+  const [promptAnswered, setPromptAnswered] = useState(false);
 
   const fetchDashboardData = useCallback(async () => {
+    // Tách riêng: lỗi đếm ngược không làm hỏng phần nhắc NPT / thông báo
+    taxSettlementApi
+      .getDeadlineCountdown()
+      .then(setDeadline)
+      .catch((err) => console.warn('HomeScreen deadline countdown error:', err));
     try {
       const [remindersData, deps] = await Promise.all([
         dependentDocumentApi.getAgeTransitionReminders(),
@@ -109,9 +119,17 @@ export const HomeScreen: React.FC = () => {
   );
 
   const displayName = formatPersonName(user?.fullName) || 'Người nộp thuế';
-  const completeCount = dependents.filter((d) => d.isProfileComplete).length;
-  const pendingProofCount = dependents.filter((d) => !d.isProfileComplete).length;
-  const deductionAmount = dependents.length * DEDUCTION_PER_DEPENDENT;
+  const deadlineView = deadline ? deadlineDisplay(deadline) : null;
+  const promptTaxYear = deadline?.shouldPromptSettlementCheck ? deadline.promptTaxYear : null;
+
+  const answerSettlementPrompt = (response: 'YES' | 'NO' | 'DISMISSED') => {
+    if (!promptTaxYear) return;
+    setPromptAnswered(true);
+    taxSettlementApi
+      .acknowledgeSettlementPrompt(promptTaxYear, response)
+      .catch((err) => console.warn('HomeScreen acknowledge prompt error:', err));
+    if (response === 'NO') navigation.navigate('SettlementStart');
+  };
 
   const todoItems = useMemo((): TodoItem[] => {
     const items: TodoItem[] = [];
@@ -266,11 +284,6 @@ export const HomeScreen: React.FC = () => {
     }
   };
 
-  const deductionSubtitle =
-    dependents.length === 0
-      ? 'Chưa có người phụ thuộc'
-      : `${dependents.length} người · ${completeCount} đủ hồ sơ · ${pendingProofCount} chờ minh chứng`;
-
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <DrumPatternBackdrop variant="soft" />
@@ -307,10 +320,22 @@ export const HomeScreen: React.FC = () => {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.deductionBlock}>
-          <Text style={styles.deductionLabel}>Giảm trừ người phụ thuộc mỗi tháng</Text>
-          <Text style={styles.deductionAmount}>{formatMoney(deductionAmount)}</Text>
-          <Text style={styles.deductionMeta}>{deductionSubtitle}</Text>
+        <View style={styles.deductionBlock} testID="homeDeadlineCountdown">
+          <Text style={styles.deductionLabel}>Hạn nộp quyết toán thuế TNCN</Text>
+          <Text
+            style={[styles.deductionAmount, deadlineView && { color: DEADLINE_COLORS[deadlineView.tone] }]}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.6}
+            testID="homeDeadlineDays"
+          >
+            {deadlineView?.headline ?? '—'}
+          </Text>
+          {deadlineView ? (
+            <Text style={styles.deductionMeta} numberOfLines={2}>
+              {deadlineView.meta}
+            </Text>
+          ) : null}
         </View>
 
         <GoldDoubleRule style={styles.rule} />
@@ -551,6 +576,18 @@ export const HomeScreen: React.FC = () => {
       />
 
       <Dialog
+        visible={!!promptTaxYear && !promptAnswered}
+        title={`Quyết toán thuế TNCN năm ${promptTaxYear ?? ''}`}
+        message={deadline?.promptQuestion ?? 'Bạn đã quyết toán thuế chưa?'}
+        primaryLabel="Đã quyết toán"
+        secondaryLabel="Chưa, quyết toán ngay"
+        onPrimary={() => answerSettlementPrompt('YES')}
+        onSecondary={() => answerSettlementPrompt('NO')}
+        onRequestClose={() => answerSettlementPrompt('DISMISSED')}
+        testID="homeSettlementPromptDialog"
+      />
+
+      <Dialog
         visible={!!infoDialog}
         title={infoDialog?.title ?? ''}
         message={infoDialog?.message ?? ''}
@@ -638,12 +675,17 @@ const styles = StyleSheet.create({
   },
   deductionAmount: {
     ...theme.typography.amountLarge,
+    // Chữ (có dấu tiếng Việt) thay cho số tiền: dòng cao hơn để không cắt dấu/đuôi chữ
+    lineHeight: 50,
+    alignSelf: 'stretch',
+    textAlign: 'center',
     color: theme.colors.primaryDark,
     fontVariant: ['tabular-nums'],
   },
   deductionMeta: {
     ...theme.typography.helper,
     color: theme.colors.textSecondary,
+    textAlign: 'center',
   },
   rule: {
     marginTop: 24,

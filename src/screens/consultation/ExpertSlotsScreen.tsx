@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -34,7 +34,58 @@ const TIME_OPTIONS = [
   '18:00', '18:30', '19:00', '19:30', '20:00', '20:30', '21:00',
 ];
 
-type FilterType = 'ALL' | 'AVAILABLE' | 'BOOKED' | 'INACTIVE';
+type FilterType = 'ALL' | 'AVAILABLE' | 'BOOKED' | 'INACTIVE' | 'EXPIRED';
+type ServiceFilterType = 'ALL' | SessionType;
+
+function isSlotExpired(slotDate: string, endTime: string): boolean {
+  if (!slotDate) return false;
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const todayStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+
+  if (slotDate < todayStr) return true;
+  if (slotDate === todayStr) {
+    const nowTimeStr = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+    const cleanEndTime = endTime ? endTime.slice(0, 5) : '23:59';
+    return cleanEndTime <= nowTimeStr;
+  }
+  return false;
+}
+
+function getMonthDays(year: number, month: number) {
+  const firstDay = new Date(year, month, 1);
+  const firstDayOfWeek = (firstDay.getDay() + 6) % 7; // Monday = 0, Sunday = 6
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const daysInPrevMonth = new Date(year, month, 0).getDate();
+
+  const days: { dateStr: string; dayNum: number; isCurrentMonth: boolean }[] = [];
+  const pad = (n: number) => String(n).padStart(2, '0');
+
+  // Trailing days from previous month
+  for (let i = firstDayOfWeek - 1; i >= 0; i--) {
+    const d = daysInPrevMonth - i;
+    const prevDate = new Date(year, month - 1, d);
+    const dateStr = `${prevDate.getFullYear()}-${pad(prevDate.getMonth() + 1)}-${pad(d)}`;
+    days.push({ dateStr, dayNum: d, isCurrentMonth: false });
+  }
+
+  // Current month days
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${year}-${pad(month + 1)}-${pad(d)}`;
+    days.push({ dateStr, dayNum: d, isCurrentMonth: true });
+  }
+
+  // Next month leading days to complete full 35 or 42 grid
+  const totalCells = days.length <= 35 ? 35 : 42;
+  const nextNeeded = totalCells - days.length;
+  for (let d = 1; d <= nextNeeded; d++) {
+    const nextDate = new Date(year, month + 1, d);
+    const dateStr = `${nextDate.getFullYear()}-${pad(nextDate.getMonth() + 1)}-${pad(d)}`;
+    days.push({ dateStr, dayNum: d, isCurrentMonth: false });
+  }
+
+  return days;
+}
 
 function formatDateVi(dateStr: string) {
   if (!dateStr) return '—';
@@ -60,7 +111,24 @@ export const ExpertSlotsScreen: React.FC = () => {
   const [slots, setSlots] = useState<ExpertSlotDetailResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Calendar View State
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const todayStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+
+  const [calYear, setCalYear] = useState(now.getFullYear());
+  const [calMonth, setCalMonth] = useState(now.getMonth());
+  const [selectedCalendarDate, setSelectedCalendarDate] = useState<string | null>(null);
+  const [calendarExpanded, setCalendarExpanded] = useState(true);
+
+  // Filters
   const [filter, setFilter] = useState<FilterType>('ALL');
+  const [serviceFilter, setServiceFilter] = useState<ServiceFilterType>('ALL');
+
+  // Dropdown Picker Modals
+  const [servicePickerVisible, setServicePickerVisible] = useState(false);
+  const [statusPickerVisible, setStatusPickerVisible] = useState(false);
 
   // Modal create/edit
   const [modalVisible, setModalVisible] = useState(false);
@@ -136,10 +204,14 @@ export const ExpertSlotsScreen: React.FC = () => {
   }, [fetchSlots]);
 
   // Open Create Modal
-  const handleOpenCreate = () => {
+  const handleOpenCreate = (prefillDate?: string) => {
     setModalMode('create');
     setEditingSlot(null);
-    if (availableDates.length > 1) {
+    if (prefillDate) {
+      setSelectedDate(prefillDate);
+    } else if (selectedCalendarDate) {
+      setSelectedDate(selectedCalendarDate);
+    } else if (availableDates.length > 1) {
       setSelectedDate(availableDates[1].dateStr);
     }
     setStartTime('09:00');
@@ -155,6 +227,15 @@ export const ExpertSlotsScreen: React.FC = () => {
       setDialog({
         title: 'Khung giờ đã có khách',
         message: 'Khung giờ này đã có khách hàng đặt lịch hẹn. Không thể chỉnh sửa.',
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
+      return;
+    }
+    if (isSlotExpired(slot.slotDate, slot.endTime)) {
+      setDialog({
+        title: 'Khung giờ đã hết hạn',
+        message: 'Khung giờ này đã quá thời gian so với hiện tại. Không thể chỉnh sửa.',
         primaryLabel: 'Đã hiểu',
         onPrimary: () => setDialog(null),
       });
@@ -264,6 +345,16 @@ export const ExpertSlotsScreen: React.FC = () => {
       return;
     }
 
+    if (isSlotExpired(slot.slotDate, slot.endTime)) {
+      setDialog({
+        title: 'Khung giờ đã hết hạn',
+        message: 'Khung giờ này đã quá thời gian so với hiện tại. Hệ thống đã tự động khóa ca này.',
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
+      return;
+    }
+
     try {
       await consultationApi.toggleSlotActive(slot.id);
       fetchSlots();
@@ -329,18 +420,108 @@ export const ExpertSlotsScreen: React.FC = () => {
     });
   };
 
-  // Filtered slots
-  const filteredSlots = slots.filter((slot) => {
-    if (filter === 'AVAILABLE') return slot.isActive && !slot.isBooked && !slot.isHolding;
-    if (filter === 'BOOKED') return slot.isBooked;
-    if (filter === 'INACTIVE') return !slot.isActive && !slot.isBooked;
-    return true;
-  });
+  // Calendar month days
+  const monthDays = useMemo(() => getMonthDays(calYear, calMonth), [calYear, calMonth]);
 
-  // Counters
-  const countAvailable = slots.filter((s) => s.isActive && !s.isBooked && !s.isHolding).length;
-  const countBooked = slots.filter((s) => s.isBooked).length;
-  const countInactive = slots.filter((s) => !s.isActive && !s.isBooked).length;
+  // Slots aggregated by date for calendar dots & counts
+  const slotsByDate = useMemo(() => {
+    const map = new Map<string, { total: number; available: number; booked: number; expired: number }>();
+    slots.forEach((s) => {
+      const entry = map.get(s.slotDate) || { total: 0, available: 0, booked: 0, expired: 0 };
+      entry.total += 1;
+      const expired = isSlotExpired(s.slotDate, s.endTime);
+      if (s.isBooked) {
+        entry.booked += 1;
+      } else if (expired) {
+        entry.expired += 1;
+      } else if (s.isActive && !s.isHolding) {
+        entry.available += 1;
+      }
+      map.set(s.slotDate, entry);
+    });
+    return map;
+  }, [slots]);
+
+  // Month navigation helpers
+  const handlePrevMonth = () => {
+    if (calMonth === 0) {
+      setCalYear((y) => y - 1);
+      setCalMonth(11);
+    } else {
+      setCalMonth((m) => m - 1);
+    }
+  };
+
+  const handleNextMonth = () => {
+    if (calMonth === 11) {
+      setCalYear((y) => y + 1);
+      setCalMonth(0);
+    } else {
+      setCalMonth((m) => m + 1);
+    }
+  };
+
+  const handleToday = () => {
+    const d = new Date();
+    setCalYear(d.getFullYear());
+    setCalMonth(d.getMonth());
+    setSelectedCalendarDate(todayStr);
+  };
+
+  // Counters strictly separating active future slots vs expired past slots
+  const countAvailable = useMemo(
+    () => slots.filter((s) => !isSlotExpired(s.slotDate, s.endTime) && s.isActive && !s.isBooked && !s.isHolding).length,
+    [slots]
+  );
+  const countBooked = useMemo(
+    () => slots.filter((s) => s.isBooked).length,
+    [slots]
+  );
+  const countExpired = useMemo(
+    () => slots.filter((s) => isSlotExpired(s.slotDate, s.endTime) && !s.isBooked).length,
+    [slots]
+  );
+  const countInactive = useMemo(
+    () => slots.filter((s) => !s.isActive && !s.isBooked && !isSlotExpired(s.slotDate, s.endTime)).length,
+    [slots]
+  );
+
+  // Filter state check
+  const isFiltered = filter !== 'ALL' || selectedCalendarDate !== null || serviceFilter !== 'ALL';
+
+  const handleResetFilters = () => {
+    setFilter('ALL');
+    setSelectedCalendarDate(null);
+    setServiceFilter('ALL');
+  };
+
+  // Filtered slots
+  const filteredSlots = useMemo(() => {
+    return slots.filter((slot) => {
+      const expired = isSlotExpired(slot.slotDate, slot.endTime);
+
+      // 1. Status filter
+      if (filter === 'AVAILABLE') {
+        if (expired || !slot.isActive || slot.isBooked || slot.isHolding) return false;
+      } else if (filter === 'BOOKED') {
+        if (!slot.isBooked) return false;
+      } else if (filter === 'INACTIVE') {
+        if (slot.isActive || slot.isBooked || expired) return false;
+      } else if (filter === 'EXPIRED') {
+        if (!expired || slot.isBooked) return false;
+      }
+
+      // 2. Service filter
+      if (serviceFilter !== 'ALL' && slot.sessionType !== serviceFilter) return false;
+
+      // 3. Calendar Date filter
+      if (selectedCalendarDate !== null && slot.slotDate !== selectedCalendarDate) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [slots, filter, serviceFilter, selectedCalendarDate]);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
@@ -359,7 +540,7 @@ export const ExpertSlotsScreen: React.FC = () => {
 
         <TouchableOpacity
           style={styles.addBtn}
-          onPress={handleOpenCreate}
+          onPress={() => handleOpenCreate()}
           accessibilityRole="button"
           accessibilityLabel="Thêm khung giờ mới"
         >
@@ -370,65 +551,341 @@ export const ExpertSlotsScreen: React.FC = () => {
 
       {/* Counters Pill Bar */}
       <View style={styles.countersRow}>
-        <View style={styles.counterItem}>
+        <TouchableOpacity
+          style={styles.counterItem}
+          onPress={() => setFilter('ALL')}
+          activeOpacity={0.7}
+        >
           <Text style={styles.counterNum}>{slots.length}</Text>
           <Text style={styles.counterLabel}>Tổng khung giờ</Text>
-        </View>
+        </TouchableOpacity>
         <View style={styles.counterDivider} />
-        <View style={styles.counterItem}>
+        <TouchableOpacity
+          style={styles.counterItem}
+          onPress={() => setFilter('AVAILABLE')}
+          activeOpacity={0.7}
+        >
           <Text style={[styles.counterNum, { color: '#059669' }]}>{countAvailable}</Text>
           <Text style={styles.counterLabel}>Sẵn sàng</Text>
-        </View>
+        </TouchableOpacity>
         <View style={styles.counterDivider} />
-        <View style={styles.counterItem}>
+        <TouchableOpacity
+          style={styles.counterItem}
+          onPress={() => setFilter('BOOKED')}
+          activeOpacity={0.7}
+        >
           <Text style={[styles.counterNum, { color: '#2563EB' }]}>{countBooked}</Text>
           <Text style={styles.counterLabel}>Đã đặt</Text>
-        </View>
+        </TouchableOpacity>
         <View style={styles.counterDivider} />
-        <View style={styles.counterItem}>
-          <Text style={[styles.counterNum, { color: '#6B7280' }]}>{countInactive}</Text>
-          <Text style={styles.counterLabel}>Tạm tắt</Text>
+        <TouchableOpacity
+          style={styles.counterItem}
+          onPress={() => setFilter('EXPIRED')}
+          activeOpacity={0.7}
+        >
+          <Text style={[styles.counterNum, { color: '#D97706' }]}>{countExpired}</Text>
+          <Text style={styles.counterLabel}>Đã hết hạn</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Component Bảng lịch ngày tháng năm */}
+      <View style={styles.calendarCard}>
+        {/* Calendar Card Header */}
+        <View style={styles.calHeaderRow}>
+          <View style={styles.calMonthNav}>
+            <TouchableOpacity
+              style={styles.calNavArrow}
+              onPress={handlePrevMonth}
+              accessibilityRole="button"
+              accessibilityLabel="Tháng trước"
+            >
+              <Ionicons name="chevron-back" size={14} color={theme.colors.primary} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => setCalendarExpanded(!calendarExpanded)}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Đổi trạng thái lịch"
+            >
+              <Text style={styles.calMonthTitle}>
+                Tháng {calMonth + 1}/{calYear}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.calNavArrow}
+              onPress={handleNextMonth}
+              accessibilityRole="button"
+              accessibilityLabel="Tháng sau"
+            >
+              <Ionicons name="chevron-forward" size={14} color={theme.colors.primary} />
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.calHeaderActions}>
+            <TouchableOpacity
+              style={styles.calTodayBtn}
+              onPress={handleToday}
+              accessibilityRole="button"
+              accessibilityLabel="Về hôm nay"
+            >
+              <Ionicons name="today-outline" size={12} color={theme.colors.primary} />
+              <Text style={styles.calTodayBtnText}>Hôm nay</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.calToggleBtn,
+                !calendarExpanded && styles.calToggleBtnHighlight,
+              ]}
+              onPress={() => setCalendarExpanded(!calendarExpanded)}
+              accessibilityRole="button"
+              accessibilityLabel={calendarExpanded ? 'Thu gọn lịch' : 'Mở lịch'}
+            >
+              <Ionicons
+                name={calendarExpanded ? 'chevron-up' : 'calendar'}
+                size={12}
+                color={!calendarExpanded ? '#FFFFFF' : theme.colors.primary}
+              />
+              <Text
+                style={[
+                  styles.calToggleBtnText,
+                  !calendarExpanded && styles.calToggleBtnTextHighlight,
+                ]}
+              >
+                {calendarExpanded ? 'Thu gọn' : 'Mở lịch'}
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
+
+        {calendarExpanded && (
+          <View style={styles.calBody}>
+            {/* Weekday Row */}
+            <View style={styles.weekDaysRow}>
+              {['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'].map((w, idx) => (
+                <View key={w} style={styles.weekDayCol}>
+                  <Text
+                    style={[
+                      styles.weekDayText,
+                      idx >= 5 && styles.weekDayWeekendText,
+                    ]}
+                  >
+                    {w}
+                  </Text>
+                </View>
+              ))}
+            </View>
+
+            {/* Grid of days */}
+            <View style={styles.daysGrid}>
+              {monthDays.map((d, index) => {
+                const isToday = d.dateStr === todayStr;
+                const isSelected = d.dateStr === selectedCalendarDate;
+                const stats = slotsByDate.get(d.dateStr);
+
+                return (
+                  <TouchableOpacity
+                    key={`${d.dateStr}-${index}`}
+                    style={[
+                      styles.dayCell,
+                      isSelected && styles.dayCellSelected,
+                      isToday && !isSelected && styles.dayCellToday,
+                    ]}
+                    onPress={() => {
+                      if (selectedCalendarDate === d.dateStr) {
+                        setSelectedCalendarDate(null);
+                      } else {
+                        setSelectedCalendarDate(d.dateStr);
+                      }
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Text
+                      style={[
+                        styles.dayNumText,
+                        !d.isCurrentMonth && styles.dayNumOtherMonth,
+                        isToday && styles.dayNumTodayText,
+                        isSelected && styles.dayNumSelectedText,
+                      ]}
+                    >
+                      {d.dayNum}
+                    </Text>
+
+                    {/* Indicator dots for slots */}
+                    <View style={styles.dayDotsRow}>
+                      {stats && stats.available > 0 && (
+                        <View style={[styles.dayDot, { backgroundColor: '#059669' }]} />
+                      )}
+                      {stats && stats.booked > 0 && (
+                        <View style={[styles.dayDot, { backgroundColor: '#2563EB' }]} />
+                      )}
+                      {stats && stats.expired > 0 && stats.available === 0 && (
+                        <View style={[styles.dayDot, { backgroundColor: '#9CA3AF' }]} />
+                      )}
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+
+            {/* Legend bar */}
+            <View style={styles.calLegendRow}>
+              <View style={styles.calLegendItem}>
+                <View style={[styles.calLegendDot, { backgroundColor: '#059669' }]} />
+                <Text style={styles.calLegendText}>Sẵn sàng</Text>
+              </View>
+              <View style={styles.calLegendItem}>
+                <View style={[styles.calLegendDot, { backgroundColor: '#2563EB' }]} />
+                <Text style={styles.calLegendText}>Đã đặt</Text>
+              </View>
+              <View style={styles.calLegendItem}>
+                <View style={[styles.calLegendDot, { backgroundColor: '#9CA3AF' }]} />
+                <Text style={styles.calLegendText}>Hết hạn</Text>
+              </View>
+            </View>
+          </View>
+        )}
+
+        {/* Selected Date Filter Banner */}
+        {selectedCalendarDate && (
+          <View style={styles.selectedDateBanner}>
+            <View style={styles.selectedDateInfo}>
+              <Ionicons name="calendar" size={15} color={theme.colors.primary} />
+              <Text style={styles.selectedDateText}>
+                {formatDateVi(selectedCalendarDate)} ({filteredSlots.length} ca)
+              </Text>
+            </View>
+            <View style={styles.selectedDateActions}>
+              <TouchableOpacity
+                style={styles.addSlotForDateBtn}
+                onPress={() => handleOpenCreate(selectedCalendarDate)}
+              >
+                <Ionicons name="add" size={14} color="#FFFFFF" />
+                <Text style={styles.addSlotForDateText}>Mở ca</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.clearDateFilterBtn}
+                onPress={() => setSelectedCalendarDate(null)}
+              >
+                <Ionicons name="close" size={16} color="#666666" />
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
       </View>
 
-      {/* Filters Segment Bar */}
-      <View style={styles.filtersBar}>
+      {/* Thanh bộ lọc dạng Dropdown */}
+      <View style={styles.dropdownFiltersContainer}>
+        {/* Dropdown Dịch Vụ */}
         <TouchableOpacity
-          style={[styles.filterChip, filter === 'ALL' && styles.filterChipActive]}
-          onPress={() => setFilter('ALL')}
+          style={[
+            styles.dropdownBtn,
+            serviceFilter !== 'ALL' && styles.dropdownBtnActive,
+          ]}
+          onPress={() => setServicePickerVisible(true)}
+          accessibilityRole="button"
+          accessibilityLabel="Lọc dịch vụ"
         >
-          <Text style={[styles.filterChipText, filter === 'ALL' && styles.filterChipTextActive]}>
-            Tất cả ({slots.length})
+          <Ionicons
+            name={
+              serviceFilter === 'ONLINE_MEETING'
+                ? 'videocam'
+                : serviceFilter === 'CHAT'
+                ? 'chatbubbles'
+                : serviceFilter === 'VOICE_CALL'
+                ? 'call'
+                : 'layers-outline'
+            }
+            size={14}
+            color={serviceFilter !== 'ALL' ? theme.colors.primary : '#555555'}
+          />
+          <Text
+            style={[
+              styles.dropdownBtnText,
+              serviceFilter !== 'ALL' && styles.dropdownBtnTextActive,
+            ]}
+            numberOfLines={1}
+          >
+            {serviceFilter === 'ONLINE_MEETING'
+              ? 'Họp trực tuyến'
+              : serviceFilter === 'CHAT'
+              ? 'Nhắn tin'
+              : serviceFilter === 'VOICE_CALL'
+              ? 'Gọi thoại'
+              : 'Tất cả dịch vụ'}
           </Text>
+          <Ionicons
+            name="chevron-down"
+            size={14}
+            color={serviceFilter !== 'ALL' ? theme.colors.primary : '#777777'}
+          />
         </TouchableOpacity>
 
+        {/* Dropdown Trạng Thái */}
         <TouchableOpacity
-          style={[styles.filterChip, filter === 'AVAILABLE' && styles.filterChipActive]}
-          onPress={() => setFilter('AVAILABLE')}
+          style={[
+            styles.dropdownBtn,
+            filter !== 'ALL' && styles.dropdownBtnActive,
+          ]}
+          onPress={() => setStatusPickerVisible(true)}
+          accessibilityRole="button"
+          accessibilityLabel="Lọc trạng thái"
         >
-          <Text style={[styles.filterChipText, filter === 'AVAILABLE' && styles.filterChipTextActive]}>
-            Sẵn sàng ({countAvailable})
+          <Ionicons
+            name="funnel-outline"
+            size={14}
+            color={filter !== 'ALL' ? theme.colors.primary : '#555555'}
+          />
+          <Text
+            style={[
+              styles.dropdownBtnText,
+              filter !== 'ALL' && styles.dropdownBtnTextActive,
+            ]}
+            numberOfLines={1}
+          >
+            {filter === 'AVAILABLE'
+              ? `Sẵn sàng (${countAvailable})`
+              : filter === 'BOOKED'
+              ? `Đã đặt (${countBooked})`
+              : filter === 'EXPIRED'
+              ? `Hết hạn (${countExpired})`
+              : filter === 'INACTIVE'
+              ? `Tạm tắt (${countInactive})`
+              : `Tất cả (${slots.length})`}
           </Text>
+          <Ionicons
+            name="chevron-down"
+            size={14}
+            color={filter !== 'ALL' ? theme.colors.primary : '#777777'}
+          />
         </TouchableOpacity>
 
-        <TouchableOpacity
-          style={[styles.filterChip, filter === 'BOOKED' && styles.filterChipActive]}
-          onPress={() => setFilter('BOOKED')}
-        >
-          <Text style={[styles.filterChipText, filter === 'BOOKED' && styles.filterChipTextActive]}>
-            Đã đặt ({countBooked})
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.filterChip, filter === 'INACTIVE' && styles.filterChipActive]}
-          onPress={() => setFilter('INACTIVE')}
-        >
-          <Text style={[styles.filterChipText, filter === 'INACTIVE' && styles.filterChipTextActive]}>
-            Tạm tắt ({countInactive})
-          </Text>
-        </TouchableOpacity>
+        {/* Reset Filter Button */}
+        {isFiltered && (
+          <TouchableOpacity
+            style={styles.dropdownResetBtn}
+            onPress={handleResetFilters}
+            accessibilityRole="button"
+            accessibilityLabel="Đặt lại bộ lọc"
+          >
+            <Ionicons name="refresh" size={14} color="#DC2626" />
+          </TouchableOpacity>
+        )}
       </View>
+
+      {/* Active Filter Notification */}
+      {isFiltered && (
+        <View style={styles.activeFilterNotice}>
+          <Text style={styles.activeFilterNoticeText}>
+            Hiển thị {filteredSlots.length} / {slots.length} khung giờ phù hợp
+          </Text>
+          <TouchableOpacity onPress={handleResetFilters}>
+            <Text style={styles.clearFilterLink}>Bỏ lọc</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Slots List */}
       {loading && !refreshing ? (
@@ -450,26 +907,53 @@ export const ExpertSlotsScreen: React.FC = () => {
           }
           ListEmptyComponent={
             <View style={styles.emptyBox}>
-              <Ionicons name="calendar-outline" size={48} color="#CCCCCC" />
-              <Text style={styles.emptyTitle}>Chưa có khung giờ làm việc</Text>
-              <Text style={styles.emptySubtitle}>
-                Hãy mở khung giờ để người nộp thuế có thể đặt lịch hẹn tư vấn với bạn.
+              <Ionicons
+                name={isFiltered ? 'search-outline' : 'calendar-outline'}
+                size={44}
+                color="#CCCCCC"
+              />
+              <Text style={styles.emptyTitle}>
+                {isFiltered ? 'Không có khung giờ phù hợp' : 'Chưa có khung giờ làm việc'}
               </Text>
-              <TouchableOpacity style={styles.emptyAddBtn} onPress={handleOpenCreate}>
-                <Ionicons name="add-circle-outline" size={18} color="#FFFFFF" />
-                <Text style={styles.emptyAddBtnText}>Mở khung giờ ngay</Text>
-              </TouchableOpacity>
+              <Text style={styles.emptySubtitle}>
+                {isFiltered
+                  ? 'Không tìm thấy khung giờ nào theo tiêu chí ngày hẹn hoặc dịch vụ đã chọn.'
+                  : 'Hãy mở khung giờ để người nộp thuế có thể đặt lịch hẹn tư vấn với bạn.'}
+              </Text>
+              {isFiltered ? (
+                <TouchableOpacity style={styles.emptyAddBtn} onPress={handleResetFilters}>
+                  <Ionicons name="refresh-outline" size={17} color="#FFFFFF" />
+                  <Text style={styles.emptyAddBtnText}>Đặt lại bộ lọc</Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity style={styles.emptyAddBtn} onPress={() => handleOpenCreate()}>
+                  <Ionicons name="add-circle-outline" size={17} color="#FFFFFF" />
+                  <Text style={styles.emptyAddBtnText}>Mở khung giờ ngay</Text>
+                </TouchableOpacity>
+              )}
             </View>
           }
           renderItem={({ item }) => {
             const sInfo = formatSessionType(item.sessionType);
+            const expired = isSlotExpired(item.slotDate, item.endTime);
 
             return (
-              <View style={styles.slotCard}>
+              <View style={[styles.slotCard, expired && !item.isBooked && styles.slotCardExpired]}>
                 <View style={styles.slotTopRow}>
                   <View style={styles.slotDateRow}>
-                    <Ionicons name="calendar" size={15} color={theme.colors.gold} />
-                    <Text style={styles.slotDateText}>{formatDateVi(item.slotDate)}</Text>
+                    <Ionicons
+                      name="calendar"
+                      size={15}
+                      color={expired && !item.isBooked ? '#9CA3AF' : theme.colors.gold}
+                    />
+                    <Text
+                      style={[
+                        styles.slotDateText,
+                        expired && !item.isBooked && styles.slotDateTextExpired,
+                      ]}
+                    >
+                      {formatDateVi(item.slotDate)}
+                    </Text>
                   </View>
 
                   {/* Status Badge */}
@@ -482,6 +966,11 @@ export const ExpertSlotsScreen: React.FC = () => {
                     <View style={styles.badgeHolding}>
                       <Ionicons name="lock-closed" size={11} color="#92400E" />
                       <Text style={styles.badgeHoldingText}>Đang tạm giữ</Text>
+                    </View>
+                  ) : expired ? (
+                    <View style={styles.badgeExpired}>
+                      <Ionicons name="time" size={11} color="#475569" />
+                      <Text style={styles.badgeExpiredText}>Đã hết hạn</Text>
                     </View>
                   ) : item.isActive ? (
                     <View style={styles.badgeActive}>
@@ -498,17 +987,45 @@ export const ExpertSlotsScreen: React.FC = () => {
 
                 {/* Time & Session */}
                 <View style={styles.slotMidRow}>
-                  <View style={styles.slotTimePill}>
-                    <Ionicons name="time-outline" size={14} color={theme.colors.primary} />
-                    <Text style={styles.slotTimeText}>
+                  <View
+                    style={[
+                      styles.slotTimePill,
+                      expired && !item.isBooked && styles.slotTimePillExpired,
+                    ]}
+                  >
+                    <Ionicons
+                      name="time-outline"
+                      size={14}
+                      color={expired && !item.isBooked ? '#64748B' : theme.colors.primary}
+                    />
+                    <Text
+                      style={[
+                        styles.slotTimeText,
+                        expired && !item.isBooked && styles.slotTimeTextExpired,
+                      ]}
+                    >
                       {formatTime(item.startTime)} - {formatTime(item.endTime)}
                     </Text>
                     <Text style={styles.slotDurationText}>({item.durationMinutes || 60} phút)</Text>
                   </View>
 
-                  <View style={[styles.sessionTypePill, { backgroundColor: `${sInfo.color}14` }]}>
-                    <Ionicons name={sInfo.icon as any} size={13} color={sInfo.color} />
-                    <Text style={[styles.sessionTypeText, { color: sInfo.color }]}>
+                  <View
+                    style={[
+                      styles.sessionTypePill,
+                      { backgroundColor: expired && !item.isBooked ? '#F1F5F9' : `${sInfo.color}14` },
+                    ]}
+                  >
+                    <Ionicons
+                      name={sInfo.icon as any}
+                      size={13}
+                      color={expired && !item.isBooked ? '#64748B' : sInfo.color}
+                    />
+                    <Text
+                      style={[
+                        styles.sessionTypeText,
+                        { color: expired && !item.isBooked ? '#64748B' : sInfo.color },
+                      ]}
+                    >
                       {sInfo.label}
                     </Text>
                   </View>
@@ -517,38 +1034,73 @@ export const ExpertSlotsScreen: React.FC = () => {
                 {/* Bottom Actions */}
                 <View style={styles.slotBottomRow}>
                   {/* Toggle Active Button */}
-                  <TouchableOpacity
-                    style={[
-                      styles.toggleBtn,
-                      item.isBooked && styles.btnDisabled,
-                      item.isActive ? styles.toggleBtnActive : styles.toggleBtnInactive,
-                    ]}
-                    disabled={item.isBooked}
-                    onPress={() => handleToggleActive(item)}
-                  >
-                    <Ionicons
-                      name={item.isActive ? 'toggle' : 'toggle-outline'}
-                      size={15}
-                      color={item.isActive ? '#065F46' : '#6B7280'}
-                    />
-                    <Text
-                      style={[
-                        styles.toggleBtnText,
-                        { color: item.isActive ? '#065F46' : '#6B7280' },
-                      ]}
+                  {expired && !item.isBooked ? (
+                    <TouchableOpacity
+                      style={[styles.toggleBtn, styles.toggleBtnExpired]}
+                      onPress={() => {
+                        setDialog({
+                          title: 'Khung giờ đã hết hạn',
+                          message:
+                            'Khung giờ này đã quá thời gian so với hiện tại. Hệ thống đã tự động tắt nhận lịch để tránh xung đột.',
+                          primaryLabel: 'Đã hiểu',
+                          onPrimary: () => setDialog(null),
+                        });
+                      }}
                     >
-                      {item.isActive ? 'Đang mở' : 'Đang tắt'}
-                    </Text>
-                  </TouchableOpacity>
+                      <Ionicons name="lock-closed-outline" size={14} color="#64748B" />
+                      <Text style={styles.toggleBtnExpiredText}>Đã tự tắt (Hết hạn)</Text>
+                    </TouchableOpacity>
+                  ) : item.isBooked ? (
+                    <View style={[styles.toggleBtn, styles.btnDisabled]}>
+                      <Ionicons name="checkmark-done" size={14} color="#1E40AF" />
+                      <Text style={[styles.toggleBtnText, { color: '#1E40AF' }]}>Đã có lịch hẹn</Text>
+                    </View>
+                  ) : (
+                    <TouchableOpacity
+                      style={[
+                        styles.toggleBtn,
+                        item.isActive ? styles.toggleBtnActive : styles.toggleBtnInactive,
+                      ]}
+                      onPress={() => handleToggleActive(item)}
+                    >
+                      <Ionicons
+                        name={item.isActive ? 'toggle' : 'toggle-outline'}
+                        size={15}
+                        color={item.isActive ? '#065F46' : '#6B7280'}
+                      />
+                      <Text
+                        style={[
+                          styles.toggleBtnText,
+                          { color: item.isActive ? '#065F46' : '#6B7280' },
+                        ]}
+                      >
+                        {item.isActive ? 'Đang mở' : 'Đang tắt'}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
 
                   <View style={styles.rightActionRow}>
                     <TouchableOpacity
-                      style={[styles.cardActionBtn, item.isBooked && styles.btnDisabled]}
-                      disabled={item.isBooked}
+                      style={[
+                        styles.cardActionBtn,
+                        (item.isBooked || expired) && styles.btnDisabled,
+                      ]}
+                      disabled={item.isBooked || expired}
                       onPress={() => handleOpenEdit(item)}
                     >
-                      <Ionicons name="pencil-outline" size={15} color={theme.colors.primary} />
-                      <Text style={styles.cardActionBtnText}>Sửa</Text>
+                      <Ionicons
+                        name="pencil-outline"
+                        size={15}
+                        color={item.isBooked || expired ? '#A3A3A3' : theme.colors.primary}
+                      />
+                      <Text
+                        style={[
+                          styles.cardActionBtnText,
+                          (item.isBooked || expired) && { color: '#A3A3A3' },
+                        ]}
+                      >
+                        Sửa
+                      </Text>
                     </TouchableOpacity>
 
                     <TouchableOpacity
@@ -556,8 +1108,19 @@ export const ExpertSlotsScreen: React.FC = () => {
                       disabled={item.isBooked}
                       onPress={() => handleDeleteSlot(item)}
                     >
-                      <Ionicons name="trash-outline" size={15} color="#DC2626" />
-                      <Text style={styles.cardDeleteBtnText}>Xóa</Text>
+                      <Ionicons
+                        name="trash-outline"
+                        size={15}
+                        color={item.isBooked ? '#A3A3A3' : '#DC2626'}
+                      />
+                      <Text
+                        style={[
+                          styles.cardDeleteBtnText,
+                          item.isBooked && { color: '#A3A3A3' },
+                        ]}
+                      >
+                        Xóa
+                      </Text>
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -752,6 +1315,246 @@ export const ExpertSlotsScreen: React.FC = () => {
         </View>
       </Modal>
 
+      {/* Modal Dropdown Chọn Dịch Vụ */}
+      <Modal
+        visible={servicePickerVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setServicePickerVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.pickerBackdrop}
+          activeOpacity={1}
+          onPress={() => setServicePickerVisible(false)}
+        >
+          <View style={styles.pickerSheet}>
+            <View style={styles.pickerHeader}>
+              <View style={styles.pickerTitleRow}>
+                <Ionicons name="layers" size={18} color={theme.colors.primary} />
+                <Text style={styles.pickerTitle}>Lọc theo hình thức tư vấn</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setServicePickerVisible(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Đóng"
+              >
+                <Ionicons name="close" size={20} color="#666666" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.pickerOptionsList}>
+              {[
+                {
+                  id: 'ALL' as const,
+                  label: 'Tất cả dịch vụ',
+                  icon: 'apps-outline',
+                  desc: 'Hiển thị mọi hình thức tư vấn',
+                },
+                {
+                  id: 'ONLINE_MEETING' as const,
+                  label: 'Họp trực tuyến (1-1)',
+                  icon: 'videocam-outline',
+                  desc: 'Họp video qua Google Meet / phòng họp số',
+                },
+                {
+                  id: 'CHAT' as const,
+                  label: 'Nhắn tin tư vấn',
+                  icon: 'chatbubble-ellipses-outline',
+                  desc: 'Tư vấn trực tiếp bằng tin nhắn trong ứng dụng',
+                },
+                {
+                  id: 'VOICE_CALL' as const,
+                  label: 'Gọi thoại',
+                  icon: 'call-outline',
+                  desc: 'Tư vấn qua cuộc gọi thoại bảo mật',
+                },
+              ].map((opt) => {
+                const isSelected = serviceFilter === opt.id;
+                return (
+                  <TouchableOpacity
+                    key={opt.id}
+                    style={[
+                      styles.pickerOptionItem,
+                      isSelected && styles.pickerOptionItemSelected,
+                    ]}
+                    onPress={() => {
+                      setServiceFilter(opt.id);
+                      setServicePickerVisible(false);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <View
+                      style={[
+                        styles.pickerOptionIconBox,
+                        isSelected && styles.pickerOptionIconBoxSelected,
+                      ]}
+                    >
+                      <Ionicons
+                        name={opt.icon as any}
+                        size={18}
+                        color={isSelected ? theme.colors.primary : '#666666'}
+                      />
+                    </View>
+                    <View style={styles.pickerOptionContent}>
+                      <Text
+                        style={[
+                          styles.pickerOptionLabel,
+                          isSelected && styles.pickerOptionLabelSelected,
+                        ]}
+                      >
+                        {opt.label}
+                      </Text>
+                      <Text style={styles.pickerOptionDesc}>{opt.desc}</Text>
+                    </View>
+                    {isSelected && (
+                      <Ionicons
+                        name="checkmark-circle"
+                        size={20}
+                        color={theme.colors.primary}
+                      />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Modal Dropdown Chọn Trạng Thái */}
+      <Modal
+        visible={statusPickerVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setStatusPickerVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.pickerBackdrop}
+          activeOpacity={1}
+          onPress={() => setStatusPickerVisible(false)}
+        >
+          <View style={styles.pickerSheet}>
+            <View style={styles.pickerHeader}>
+              <View style={styles.pickerTitleRow}>
+                <Ionicons name="funnel" size={18} color={theme.colors.primary} />
+                <Text style={styles.pickerTitle}>Lọc theo trạng thái khung giờ</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setStatusPickerVisible(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Đóng"
+              >
+                <Ionicons name="close" size={20} color="#666666" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.pickerOptionsList}>
+              {[
+                {
+                  id: 'ALL' as const,
+                  label: 'Tất cả trạng thái',
+                  count: slots.length,
+                  color: '#4B5563',
+                  desc: 'Xem toàn bộ khung giờ làm việc',
+                  icon: 'grid-outline',
+                },
+                {
+                  id: 'AVAILABLE' as const,
+                  label: 'Sẵn sàng nhận khách',
+                  count: countAvailable,
+                  color: '#059669',
+                  desc: 'Khung giờ trong tương lai chưa có khách đặt',
+                  icon: 'checkmark-circle-outline',
+                },
+                {
+                  id: 'BOOKED' as const,
+                  label: 'Đã có khách đặt hẹn',
+                  count: countBooked,
+                  color: '#2563EB',
+                  desc: 'Khách hàng đã đăng ký & xác nhận cuộc hẹn',
+                  icon: 'person-outline',
+                },
+                {
+                  id: 'EXPIRED' as const,
+                  label: 'Đã hết hạn (Hệ thống tự tắt)',
+                  count: countExpired,
+                  color: '#D97706',
+                  desc: 'Đã quá thời gian hiện tại, tự động khóa nhận khách',
+                  icon: 'time-outline',
+                },
+                {
+                  id: 'INACTIVE' as const,
+                  label: 'Tạm tắt thủ công',
+                  count: countInactive,
+                  color: '#6B7280',
+                  desc: 'Khung giờ bạn tự chuyển sang tạm ngưng',
+                  icon: 'pause-circle-outline',
+                },
+              ].map((opt) => {
+                const isSelected = filter === opt.id;
+                return (
+                  <TouchableOpacity
+                    key={opt.id}
+                    style={[
+                      styles.pickerOptionItem,
+                      isSelected && styles.pickerOptionItemSelected,
+                    ]}
+                    onPress={() => {
+                      setFilter(opt.id);
+                      setStatusPickerVisible(false);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <View
+                      style={[
+                        styles.pickerOptionIconBox,
+                        isSelected && styles.pickerOptionIconBoxSelected,
+                      ]}
+                    >
+                      <Ionicons
+                        name={opt.icon as any}
+                        size={18}
+                        color={isSelected ? opt.color : '#666666'}
+                      />
+                    </View>
+                    <View style={styles.pickerOptionContent}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text
+                          style={[
+                            styles.pickerOptionLabel,
+                            isSelected && styles.pickerOptionLabelSelected,
+                          ]}
+                        >
+                          {opt.label}
+                        </Text>
+                        <View
+                          style={[
+                            styles.pickerCountBadge,
+                            { backgroundColor: `${opt.color}18` },
+                          ]}
+                        >
+                          <Text style={[styles.pickerCountBadgeText, { color: opt.color }]}>
+                            {opt.count}
+                          </Text>
+                        </View>
+                      </View>
+                      <Text style={styles.pickerOptionDesc}>{opt.desc}</Text>
+                    </View>
+                    {isSelected && (
+                      <Ionicons
+                        name="checkmark-circle"
+                        size={20}
+                        color={theme.colors.primary}
+                      />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
       {/* Thông báo Dialog chuẩn hệ thống */}
       {dialog ? (
         <Dialog
@@ -814,8 +1617,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-around',
     backgroundColor: '#FFFFFF',
     paddingVertical: 10,
-    marginHorizontal: 16,
-    marginTop: 12,
+    marginHorizontal: 12,
+    marginTop: 10,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#ECE6DA',
@@ -841,30 +1644,447 @@ const styles = StyleSheet.create({
     backgroundColor: '#EBE5D8',
   },
 
-  // Filters Bar
-  filtersBar: {
+  // Component Bảng lịch ngày tháng năm
+  calendarCard: {
+    backgroundColor: '#FFFFFF',
+    marginHorizontal: 12,
+    marginTop: 10,
+    marginBottom: 6,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#ECE6DA',
+    overflow: 'hidden',
+    ...theme.shadows.card,
+  },
+  calHeaderRow: {
     flexDirection: 'row',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    gap: 6,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 8,
+    paddingVertical: 8,
+    backgroundColor: '#FAF8F3',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0EBE1',
   },
-  filterChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+  calMonthNav: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  calNavArrow: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 0.5,
+    borderColor: '#E2DAC8',
+  },
+  calMonthTitle: {
+    fontFamily: fonts.serifBold,
+    fontSize: 13.5,
+    color: theme.colors.primary,
+    paddingHorizontal: 4,
+    textAlign: 'center',
+  },
+  calHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  calTodayBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 7,
+    paddingVertical: 4.5,
+    borderRadius: 6,
+    borderWidth: 0.5,
+    borderColor: '#E2DAC8',
+    gap: 3,
+  },
+  calTodayBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 11,
+    color: theme.colors.primary,
+  },
+  calToggleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 8,
+    paddingVertical: 4.5,
+    borderRadius: 6,
+    borderWidth: 0.5,
+    borderColor: '#E2DAC8',
+    gap: 3,
+  },
+  calToggleBtnHighlight: {
+    backgroundColor: theme.colors.primary,
+    borderColor: theme.colors.primary,
+  },
+  calToggleBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 11,
+    color: theme.colors.primary,
+  },
+  calToggleBtnTextHighlight: {
+    color: '#FFFFFF',
+  },
+
+  calBody: {
+    paddingHorizontal: 8,
+    paddingTop: 8,
+    paddingBottom: 6,
+  },
+  weekDaysRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  weekDayCol: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 2,
+  },
+  weekDayText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 11,
+    color: '#8C7653',
+  },
+  weekDayWeekendText: {
+    color: '#C2410C',
+  },
+
+  daysGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  dayCell: {
+    width: '14.28%',
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
     borderRadius: 8,
-    backgroundColor: '#ECE7DB',
+    marginVertical: 1,
   },
-  filterChipActive: {
+  dayCellSelected: {
     backgroundColor: theme.colors.primary,
   },
-  filterChipText: {
+  dayCellToday: {
+    borderWidth: 1.2,
+    borderColor: theme.colors.gold,
+    backgroundColor: '#FDFBF7',
+  },
+  dayNumText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12,
+    color: '#333333',
+  },
+  dayNumOtherMonth: {
+    color: '#C4B5A5',
+    fontFamily: fonts.body,
+  },
+  dayNumTodayText: {
+    color: theme.colors.primary,
+  },
+  dayNumSelectedText: {
+    color: '#FFFFFF',
+  },
+  dayDotsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 5,
+    marginTop: 2,
+    gap: 2,
+  },
+  dayDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+  },
+
+  calLegendRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 14,
+    paddingTop: 6,
+    borderTopWidth: 0.5,
+    borderTopColor: '#F3EFE6',
+    marginTop: 4,
+  },
+  calLegendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  calLegendDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  calLegendText: {
+    fontFamily: fonts.body,
+    fontSize: 10,
+    color: '#777777',
+  },
+
+  // Selected date filter banner
+  selectedDateBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    backgroundColor: '#FEF9F3',
+    borderTopWidth: 1,
+    borderTopColor: '#F7E7C4',
+  },
+  selectedDateInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flex: 1,
+  },
+  selectedDateText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12,
+    color: theme.colors.primary,
+  },
+  selectedDateActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  addSlotForDateBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: theme.colors.primary,
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 5,
+    gap: 3,
+  },
+  addSlotForDateText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 11,
+    color: '#FFFFFF',
+  },
+  clearDateFilterBtn: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#EDE8DE',
+  },
+
+  // Dropdown Filter Row
+  dropdownFiltersContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 12,
+    marginTop: 2,
+    marginBottom: 4,
+    gap: 8,
+  },
+  dropdownBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#ECE6DA',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    ...theme.shadows.card,
+  },
+  dropdownBtnActive: {
+    borderColor: theme.colors.primary,
+    backgroundColor: '#FDFBF9',
+  },
+  dropdownBtnText: {
     fontFamily: fonts.bodySemi,
     fontSize: 11.5,
-    color: '#666666',
+    color: '#444444',
+    flex: 1,
+    marginHorizontal: 6,
   },
-  filterChipTextActive: {
-    color: '#FFFFFF',
+  dropdownBtnTextActive: {
     fontFamily: fonts.bodyBold,
+    color: theme.colors.primary,
+  },
+  dropdownResetBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+
+  activeFilterNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginHorizontal: 16,
+    marginTop: 4,
+    marginBottom: 2,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: '#FBF9F4',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#EFE9DD',
+  },
+  activeFilterNoticeText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 11.5,
+    color: theme.colors.textSecondary,
+  },
+  clearFilterLink: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 11.5,
+    color: '#DC2626',
+  },
+
+  // Expired slot styles
+  slotCardExpired: {
+    backgroundColor: '#FAFAFA',
+    borderColor: '#E5E7EB',
+    opacity: 0.88,
+  },
+  slotDateTextExpired: {
+    color: '#6B7280',
+  },
+  badgeExpired: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 5,
+    gap: 4,
+    borderWidth: 0.5,
+    borderColor: '#CBD5E1',
+  },
+  badgeExpiredText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 10.5,
+    color: '#475569',
+  },
+  slotTimePillExpired: {
+    backgroundColor: '#F3F4F6',
+  },
+  slotTimeTextExpired: {
+    color: '#6B7280',
+  },
+  toggleBtnExpired: {
+    backgroundColor: '#F1F5F9',
+    borderWidth: 0.5,
+    borderColor: '#CBD5E1',
+  },
+  toggleBtnExpiredText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 11,
+    color: '#64748B',
+  },
+
+  // Picker Modal Styles
+  pickerBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'flex-end',
+  },
+  pickerSheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: 18,
+    paddingTop: 16,
+    paddingBottom: 28,
+  },
+  pickerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0EBE1',
+  },
+  pickerTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  pickerTitle: {
+    fontFamily: fonts.serifBold,
+    fontSize: 16,
+    color: theme.colors.primary,
+  },
+  pickerOptionsList: {
+    paddingTop: 10,
+    gap: 8,
+  },
+  pickerOptionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: '#FAF8F3',
+    borderWidth: 1,
+    borderColor: '#EFEBE1',
+    gap: 12,
+  },
+  pickerOptionItemSelected: {
+    backgroundColor: '#8B1E1E0B',
+    borderColor: theme.colors.primary,
+  },
+  pickerOptionIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 0.5,
+    borderColor: '#E2DAC8',
+  },
+  pickerOptionIconBoxSelected: {
+    borderColor: theme.colors.primary,
+  },
+  pickerOptionContent: {
+    flex: 1,
+  },
+  pickerOptionLabel: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 13,
+    color: '#333333',
+  },
+  pickerOptionLabelSelected: {
+    color: theme.colors.primary,
+  },
+  pickerOptionDesc: {
+    fontFamily: fonts.body,
+    fontSize: 11,
+    color: '#777777',
+    marginTop: 2,
+  },
+  pickerCountBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  pickerCountBadgeText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 11,
   },
 
   // List

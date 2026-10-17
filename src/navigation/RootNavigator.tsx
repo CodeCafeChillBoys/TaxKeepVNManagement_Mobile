@@ -39,6 +39,7 @@ import { BookingDetailScreen } from '../screens/consultation/BookingDetailScreen
 import { ExpertBookingsScreen } from '../screens/consultation/ExpertBookingsScreen';
 import { ExpertSlotsScreen } from '../screens/consultation/ExpertSlotsScreen';
 import { ExpertApplicationScreen } from '../screens/consultation/ExpertApplicationScreen';
+import { PaymentResultScreen } from '../screens/consultation/PaymentResultScreen';
 import { useAuthStore } from '../stores/useAuthStore';
 import { theme } from '../constants/theme';
 
@@ -46,6 +47,16 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 
 const tabScreenOptions = {
   animation: 'none' as const,
+};
+
+const linking = {
+  prefixes: ['taxkeep://', 'fe://', 'exp://'],
+  config: {
+    screens: {
+      PaymentResult: 'payments/vnpay-return',
+      BookingDetail: 'bookings/:bookingId',
+    },
+  },
 };
 
 export const RootNavigator: React.FC = () => {
@@ -65,6 +76,7 @@ export const RootNavigator: React.FC = () => {
 
   return (
     <NavigationContainer
+      linking={linking}
       onStateChange={() => {
         if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
           document.activeElement.blur();
@@ -115,6 +127,7 @@ export const RootNavigator: React.FC = () => {
         <Stack.Screen name="ExpertBookings" component={ExpertBookingsScreen} />
         <Stack.Screen name="ExpertSlots" component={ExpertSlotsScreen} />
         <Stack.Screen name="ExpertApplication" component={ExpertApplicationScreen} />
+        <Stack.Screen name="PaymentResult" component={PaymentResultScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

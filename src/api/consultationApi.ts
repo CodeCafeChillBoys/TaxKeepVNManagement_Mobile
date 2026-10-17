@@ -28,6 +28,13 @@ import type {
   UpdateExpertSlotRequest,
   ExpertSlotFilterParameters,
   ExpertSlotDetailResponse,
+  CreateReviewRequest,
+  ReviewDetailResponse,
+  ReviewEligibilityResponse,
+  CreateDisputeRequest,
+  DisputeDetailResponse,
+  DisputeEligibilityResponse,
+  ExpertRespondDisputeRequest,
 } from '../types/consultation';
 
 function unwrap<T>(res: { data: ApiResponse<T> }, fallbackMsg: string): T {
@@ -562,6 +569,27 @@ export const consultationApi = {
     return unwrap(res, 'Không thể tải thông tin ký quỹ bảo đảm.');
   },
 
+  /**
+   * Điều hướng trả về và xử lý kết quả từ cổng thanh toán VNPay (Đặc tả 4)
+   * GET /api/v1/payments/vnpay-return
+   */
+  async handleVnPayReturn(
+    params: Record<string, string | number | undefined>
+  ): Promise<EscrowTransactionResponse | null> {
+    const cleanParams: Record<string, string> = {};
+    Object.entries(params).forEach(([k, v]) => {
+      if (v !== undefined && v !== null) {
+        cleanParams[k] = String(v);
+      }
+    });
+
+    const res = await apiClient.get<ApiResponse<EscrowTransactionResponse | null>>(
+      '/api/v1/payments/vnpay-return',
+      { params: cleanParams }
+    );
+    return unwrap(res, 'Không thể xử lý kết quả thanh toán VNPay.');
+  },
+
   // ══════════════════════════════════════════════════════════════════
   // PHIÊN TƯ VẤN TRỰC TUYẾN 1-1 (LIVE CONSULTATION - Đặc tả 5)
   // ══════════════════════════════════════════════════════════════════
@@ -738,6 +766,129 @@ export const consultationApi = {
   async deleteSlot(id: string): Promise<void> {
     const res = await apiClient.delete<ApiResponse<any>>(`/api/v1/expert/slots/${id}`);
     unwrapVoid(res, 'Không thể xóa khung giờ làm việc.');
+  },
+
+  // ══════════════════════════════════════════════════════════════════
+  // ĐÁNH GIÁ & FEEDBACK (ĐẶC TẢ 6)
+  // ══════════════════════════════════════════════════════════════════
+
+  /**
+   * Kiểm tra điều kiện gửi đánh giá cho ca tư vấn
+   * GET /api/v1/bookings/{bookingId}/review-eligibility
+   */
+  async checkReviewEligibility(bookingId: string): Promise<ReviewEligibilityResponse> {
+    const res = await apiClient.get<ApiResponse<ReviewEligibilityResponse>>(
+      `/api/v1/bookings/${bookingId}/review-eligibility`
+    );
+    return unwrap(res, 'Không thể kiểm tra điều kiện đánh giá.');
+  },
+
+  /**
+   * Gửi đánh giá và nhận xét sau phiên tư vấn
+   * POST /api/v1/bookings/{bookingId}/reviews
+   */
+  async submitReview(
+    bookingId: string,
+    request: CreateReviewRequest
+  ): Promise<ReviewDetailResponse> {
+    if (request.rating < 1 || request.rating > 5) {
+      throw new Error('Số sao đánh giá phải từ 1 đến 5 sao.');
+    }
+    if (!request.comment || request.comment.trim().length < 10) {
+      throw new Error('Nội dung nhận xét tối thiểu phải từ 10 ký tự.');
+    }
+    const res = await apiClient.post<ApiResponse<ReviewDetailResponse>>(
+      `/api/v1/bookings/${bookingId}/reviews`,
+      request
+    );
+    return unwrap(res, 'Không thể gửi đánh giá cho ca tư vấn.');
+  },
+
+  /**
+   * Xem thông tin đánh giá của ca tư vấn
+   * GET /api/v1/bookings/{bookingId}/review
+   */
+  async getBookingReview(bookingId: string): Promise<ReviewDetailResponse | null> {
+    const res = await apiClient.get<ApiResponse<ReviewDetailResponse | null>>(
+      `/api/v1/bookings/${bookingId}/review`
+    );
+    return res.data?.data ?? null;
+  },
+
+  // ══════════════════════════════════════════════════════════════════
+  // GIẢI NGÂN & KHIẾU NẠI TRANH CHẤP (ĐẶC TẢ 7)
+  // ══════════════════════════════════════════════════════════════════
+
+  /**
+   * Khách hàng xác nhận hài lòng sớm trong 24h Cool-down để giải ngân cho chuyên gia
+   * POST /api/v1/bookings/{bookingId}/confirm-satisfaction
+   */
+  async confirmSatisfaction(bookingId: string): Promise<string> {
+    const res = await apiClient.post<ApiResponse<string>>(
+      `/api/v1/bookings/${bookingId}/confirm-satisfaction`
+    );
+    return res.data?.message || 'Xác nhận hài lòng thành công.';
+  },
+
+  /**
+   * Kiểm tra điều kiện và thời hạn khiếu nại chất lượng ca tư vấn
+   * GET /api/v1/bookings/{bookingId}/dispute-eligibility
+   */
+  async checkDisputeEligibility(bookingId: string): Promise<DisputeEligibilityResponse> {
+    const res = await apiClient.get<ApiResponse<DisputeEligibilityResponse>>(
+      `/api/v1/bookings/${bookingId}/dispute-eligibility`
+    );
+    return unwrap(res, 'Không thể kiểm tra điều kiện khiếu nại.');
+  },
+
+  /**
+   * Gửi khiếu nại chất lượng ca tư vấn để đóng băng Escrow
+   * POST /api/v1/bookings/{bookingId}/disputes
+   */
+  async submitDispute(
+    bookingId: string,
+    request: CreateDisputeRequest
+  ): Promise<DisputeDetailResponse> {
+    if (!request.reason) {
+      throw new Error('Vui lòng chọn lý do khiếu nại.');
+    }
+    if (!request.description || request.description.trim().length < 10) {
+      throw new Error('Mô tả chi tiết sự việc tối thiểu 10 ký tự.');
+    }
+    const res = await apiClient.post<ApiResponse<DisputeDetailResponse>>(
+      `/api/v1/bookings/${bookingId}/disputes`,
+      request
+    );
+    return unwrap(res, 'Không thể gửi khiếu nại cho phiên tư vấn.');
+  },
+
+  /**
+   * Xem thông tin khiếu nại của Booking
+   * GET /api/v1/bookings/{bookingId}/dispute
+   */
+  async getBookingDispute(bookingId: string): Promise<DisputeDetailResponse | null> {
+    const res = await apiClient.get<ApiResponse<DisputeDetailResponse | null>>(
+      `/api/v1/bookings/${bookingId}/dispute`
+    );
+    return res.data?.data ?? null;
+  },
+
+  /**
+   * Chuyên gia gửi giải trình / phản hồi khiếu nại
+   * POST /api/v1/expert/disputes/{id}/respond
+   */
+  async expertRespondDispute(
+    disputeId: string,
+    request: ExpertRespondDisputeRequest
+  ): Promise<DisputeDetailResponse> {
+    if (!request.response || request.response.trim().length < 10) {
+      throw new Error('Nội dung giải trình tối thiểu 10 ký tự.');
+    }
+    const res = await apiClient.post<ApiResponse<DisputeDetailResponse>>(
+      `/api/v1/expert/disputes/${disputeId}/respond`,
+      request
+    );
+    return unwrap(res, 'Không thể gửi phản hồi giải trình khiếu nại.');
   },
 };
 

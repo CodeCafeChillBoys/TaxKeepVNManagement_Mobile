@@ -40,6 +40,7 @@ describe('consultation domain formatters', () => {
       expect(formatBookingStatus('IN_PROGRESS').label).toBe('Đang tư vấn');
       expect(formatBookingStatus('COMPLETED').label).toBe('Đã hoàn thành');
       expect(formatBookingStatus('SETTLED').label).toBe('Đã quyết toán');
+      expect(formatBookingStatus('UNDER_DISPUTE').label).toBe('Đang khiếu nại');
     });
   });
 
@@ -52,6 +53,23 @@ describe('consultation domain formatters', () => {
       expect(formatEscrowStatus('Refunded').label).toBe('Đã hoàn tiền 100%');
       expect(formatEscrowStatus('PartiallyRefunded').label).toBe('Hoàn tiền một phần');
       expect(formatEscrowStatus('Cancelled').label).toBe('Đã hủy');
+    });
+  });
+
+  describe('formatDisputeReason & formatDisputeStatus', () => {
+    it('formats dispute reason codes correctly', () => {
+      const { formatDisputeReason, formatDisputeStatus } = require('./consultation');
+      expect(formatDisputeReason('WRONG_TAX_LAW_ADVICE')).toBe('Tư vấn sai luật thuế / gây rủi ro pháp lý');
+      expect(formatDisputeReason('UNPROFESSIONAL_BEHAVIOR')).toBe('Thái độ thiếu chuyên nghiệp / xúc phạm');
+      expect(formatDisputeReason('EARLY_DISCONNECT')).toBe('Chuyên gia rời phòng sớm / không đủ thời lượng');
+      expect(formatDisputeReason('NETWORK_ISSUE')).toBe('Sự cố kết nối từ phía chuyên gia');
+      expect(formatDisputeReason('OTHER')).toBe('Lý do khác');
+      expect(formatDisputeReason('UNKNOWN_CODE')).toBe('Lý do khác');
+
+      expect(formatDisputeStatus('PENDING_EXPERT_RESPONSE').label).toBe('Chờ chuyên gia giải trình');
+      expect(formatDisputeStatus('PENDING_ADMIN_REVIEW').label).toBe('Ban quản trị đang xử lý');
+      expect(formatDisputeStatus('RESOLVED').label).toBe('Đã giải quyết');
+      expect(formatDisputeStatus('UNKNOWN').label).toBe('UNKNOWN');
     });
   });
 

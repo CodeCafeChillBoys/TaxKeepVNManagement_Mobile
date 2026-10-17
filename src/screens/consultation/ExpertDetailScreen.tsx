@@ -35,32 +35,6 @@ import {
   formatTimeRange,
 } from '../../types/consultation';
 
-const SERVICE_OPTIONS: {
-  key: SessionType;
-  label: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  desc: string;
-}[] = [
-  {
-    key: 'ONLINE_MEETING',
-    label: 'Họp trực tuyến (Video)',
-    icon: 'videocam-outline',
-    desc: 'Gọi video tương tác trực tiếp',
-  },
-  {
-    key: 'CHAT',
-    label: 'Nhắn tin tư vấn',
-    icon: 'chatbubbles-outline',
-    desc: 'Hỏi đáp & gửi chứng từ qua chat',
-  },
-  {
-    key: 'VOICE_CALL',
-    label: 'Gọi thoại trực tiếp',
-    icon: 'call-outline',
-    desc: 'Tư vấn nhanh qua đường thoại',
-  },
-];
-
 export const ExpertDetailScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
   const route = useRoute<RouteProp<RootStackParamList, 'ExpertDetail'>>();
@@ -131,13 +105,16 @@ export const ExpertDetailScreen: React.FC = () => {
       setAvailableSlots(slots);
       setReviews(detail.recentReviews || []);
 
-      // Auto-select session type that has available slots
-      const order: SessionType[] = ['ONLINE_MEETING', 'CHAT', 'VOICE_CALL'];
-      const firstWithSlots =
-        order.find((t) => slots.some((s) => s.sessionType === t)) || 'ONLINE_MEETING';
-      setSelectedSessionType(firstWithSlots);
+      // Auto-select session type that has available slots or from first fee package
+      let initialType: SessionType = 'ONLINE_MEETING';
+      if (detail.feePackages && detail.feePackages.length > 0) {
+        initialType = detail.feePackages[0].sessionType;
+      } else if (slots.length > 0) {
+        initialType = slots[0].sessionType;
+      }
+      setSelectedSessionType(initialType);
 
-      const slotsForType = slots.filter((s) => s.sessionType === firstWithSlots);
+      const slotsForType = slots.filter((s) => s.sessionType === initialType);
       if (slotsForType.length > 0) {
         setSelectedDate(slotsForType[0].slotDate);
       }
@@ -184,6 +161,62 @@ export const ExpertDetailScreen: React.FC = () => {
       setSelectedDate(null);
     }
   };
+
+  // Danh sách các gói dịch vụ tư vấn niêm yết của chuyên gia gom nhóm duy nhất theo sessionType (Tránh Duplicate Key)
+  const dynamicServicePackages = useMemo(() => {
+    if (!expert) return [];
+
+    const feeSessionTypes = expert.feePackages ? expert.feePackages.map((p) => p.sessionType) : [];
+    const slotSessionTypes = availableSlots.map((s) => s.sessionType);
+    const distinctTypes = Array.from(new Set([...feeSessionTypes, ...slotSessionTypes]));
+
+    return distinctTypes.map((type) => {
+      const sInfo = formatSessionType(type);
+      const pkgs = (expert.feePackages || [])
+        .filter((p) => p.sessionType === type)
+        .sort((a, b) => a.durationMinutes - b.durationMinutes);
+
+      const slotCount = availableSlots.filter((s) => s.sessionType === type).length;
+      const minFee = pkgs.length > 0 ? Math.min(...pkgs.map((p) => p.fee)) : 0;
+      const maxFee = pkgs.length > 0 ? Math.max(...pkgs.map((p) => p.fee)) : 0;
+
+      // Chuỗi hiển thị mức giá chính
+      let feeDisplay = 'Liên hệ';
+      if (pkgs.length === 1) {
+        feeDisplay = `${formatVnd(pkgs[0].fee)} / ${pkgs[0].durationMinutes}p`;
+      } else if (pkgs.length > 1) {
+        if (minFee === maxFee) {
+          feeDisplay = formatVnd(minFee);
+        } else {
+          feeDisplay = `Từ ${formatVnd(minFee)}`;
+        }
+      }
+
+      // Chuỗi tóm tắt biểu phí theo các mốc thời lượng (ví dụ: "30p: 300.000 đ • 60p: 500.000 đ")
+      const feeTiersText = pkgs.length > 1
+        ? pkgs.map((p) => `${p.durationMinutes}p: ${formatVnd(p.fee)}`).join('  •  ')
+        : '';
+
+      return {
+        sessionType: type,
+        label: sInfo.fullLabel || sInfo.label,
+        icon: sInfo.icon as keyof typeof Ionicons.glyphMap,
+        color: sInfo.color,
+        minFee,
+        maxFee,
+        feeDisplay,
+        feeTiersText,
+        packages: pkgs,
+        slotCount,
+        desc:
+          type === 'ONLINE_MEETING'
+            ? 'Gọi video tương tác và chia sẻ màn hình trực tiếp'
+            : type === 'CHAT'
+            ? 'Hỏi đáp & trao đổi hồ sơ chứng từ qua tin nhắn'
+            : 'Tư vấn trực tiếp qua đường truyền thoại',
+      };
+    });
+  }, [expert, availableSlots]);
 
   // Slots filtered by chosen service type
   const slotsForSelectedSession = useMemo(() => {
@@ -544,83 +577,93 @@ export const ExpertDetailScreen: React.FC = () => {
                 Vui lòng chọn hình thức bạn muốn tư vấn trước khi chọn lịch làm việc
               </Text>
 
-              <View style={styles.serviceTypesList}>
-                {SERVICE_OPTIONS.map((srv) => {
-                  const isSelected = selectedSessionType === srv.key;
-                  const feePkg = expert.feePackages?.find((p) => p.sessionType === srv.key);
-                  const feeVal = feePkg ? feePkg.fee : 0;
-                  const slotCount = availableSlots.filter((s) => s.sessionType === srv.key).length;
+              {dynamicServicePackages.length === 0 ? (
+                <View style={styles.emptySlotBox}>
+                  <Ionicons name="pricetags-outline" size={36} color="#CCCCCC" />
+                  <Text style={styles.emptySlotTitle}>Chưa có dịch vụ niêm yết</Text>
+                  <Text style={styles.emptySlotDesc}>
+                    Chuyên gia hiện chưa niêm yết gói biểu phí hoặc mở khung giờ tư vấn nào.
+                  </Text>
+                </View>
+              ) : (
+                  <View style={styles.serviceTypesList}>
+                    {dynamicServicePackages.map((srv) => {
+                      const isSelected = selectedSessionType === srv.sessionType;
 
-                  return (
-                    <TouchableOpacity
-                      key={srv.key}
-                      style={[
-                        styles.serviceCardItem,
-                        isSelected && styles.serviceCardItemActive,
-                      ]}
-                      onPress={() => handleSelectSessionType(srv.key)}
-                      activeOpacity={0.85}
-                      accessibilityRole="button"
-                      accessibilityLabel={`Chọn hình thức ${srv.label}`}
-                    >
-                      <View style={styles.serviceCardLeft}>
-                        <View
+                      return (
+                        <TouchableOpacity
+                          key={`exp_srv_${srv.sessionType}`}
                           style={[
-                            styles.serviceIconWrap,
-                            isSelected && styles.serviceIconWrapActive,
+                            styles.serviceCardItem,
+                            isSelected && styles.serviceCardItemActive,
                           ]}
+                          onPress={() => handleSelectSessionType(srv.sessionType)}
+                          activeOpacity={0.85}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Chọn hình thức ${srv.label}`}
                         >
-                          <Ionicons
-                            name={srv.icon}
-                            size={20}
-                            color={isSelected ? '#FFFFFF' : theme.colors.primary}
-                          />
-                        </View>
-                        <View style={styles.serviceInfoCol}>
-                          <Text
-                            style={[
-                              styles.serviceName,
-                              isSelected && styles.serviceNameActive,
-                            ]}
-                          >
-                            {srv.label}
-                          </Text>
-                          <Text style={styles.serviceDesc}>{srv.desc}</Text>
-                        </View>
-                      </View>
+                          <View style={styles.serviceCardLeft}>
+                            <View
+                              style={[
+                                styles.serviceIconWrap,
+                                isSelected && styles.serviceIconWrapActive,
+                              ]}
+                            >
+                              <Ionicons
+                                name={srv.icon}
+                                size={20}
+                                color={isSelected ? '#FFFFFF' : theme.colors.primary}
+                              />
+                            </View>
+                            <View style={styles.serviceInfoCol}>
+                              <Text
+                                style={[
+                                  styles.serviceName,
+                                  isSelected && styles.serviceNameActive,
+                                ]}
+                              >
+                                {srv.label}
+                              </Text>
+                              <Text style={styles.serviceDesc}>{srv.desc}</Text>
+                              {srv.feeTiersText ? (
+                                <Text style={styles.serviceTiersText}>{srv.feeTiersText}</Text>
+                              ) : null}
+                            </View>
+                          </View>
 
-                      <View style={styles.serviceCardRight}>
-                        <View style={styles.servicePriceRow}>
-                          <Text style={styles.servicePrice}>
-                            {feeVal > 0 ? formatVnd(feeVal) : 'Liên hệ'}
-                          </Text>
-                          <Ionicons
-                            name={isSelected ? 'checkmark-circle' : 'ellipse-outline'}
-                            size={20}
-                            color={isSelected ? theme.colors.primary : '#C4B5A5'}
-                            style={{ marginLeft: 6 }}
-                          />
-                        </View>
-                        <View
-                          style={[
-                            styles.serviceSlotBadge,
-                            slotCount === 0 && styles.serviceSlotBadgeEmpty,
-                          ]}
-                        >
-                          <Text
-                            style={[
-                              styles.serviceSlotBadgeText,
-                              slotCount === 0 && styles.serviceSlotBadgeTextEmpty,
-                            ]}
-                          >
-                            {slotCount > 0 ? `${slotCount} khung giờ` : 'Tạm hết lịch'}
-                          </Text>
-                        </View>
-                      </View>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
+                          <View style={styles.serviceCardRight}>
+                            <View style={styles.servicePriceRow}>
+                              <Text style={styles.servicePrice}>
+                                {srv.feeDisplay}
+                              </Text>
+                              <Ionicons
+                                name={isSelected ? 'checkmark-circle' : 'ellipse-outline'}
+                                size={20}
+                                color={isSelected ? theme.colors.primary : '#C4B5A5'}
+                                style={{ marginLeft: 6 }}
+                              />
+                            </View>
+                            <View
+                              style={[
+                                styles.serviceSlotBadge,
+                                srv.slotCount === 0 && styles.serviceSlotBadgeEmpty,
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.serviceSlotBadgeText,
+                                  srv.slotCount === 0 && styles.serviceSlotBadgeTextEmpty,
+                                ]}
+                              >
+                                {srv.slotCount > 0 ? `${srv.slotCount} khung giờ` : 'Tạm hết lịch'}
+                              </Text>
+                            </View>
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                )}
             </View>
 
             {/* 2. CHỌN NGÀY VÀ KHUNG GIỜ CỦA HÌNH THỨC ĐÃ CHỌN */}
@@ -628,7 +671,10 @@ export const ExpertDetailScreen: React.FC = () => {
               <View style={styles.sectionHeaderRow}>
                 <Ionicons name="calendar-outline" size={18} color={theme.colors.primary} />
                 <Text style={styles.sectionHeaderTitle}>
-                  2. Lịch tư vấn: {SERVICE_OPTIONS.find((s) => s.key === selectedSessionType)?.label}
+                  2. Lịch tư vấn:{' '}
+                  {dynamicServicePackages.find((s) => s.sessionType === selectedSessionType)?.label ||
+                    formatSessionType(selectedSessionType).fullLabel ||
+                    formatSessionType(selectedSessionType).label}
                 </Text>
               </View>
               <Text style={styles.sectionSubtitle}>
@@ -639,7 +685,10 @@ export const ExpertDetailScreen: React.FC = () => {
                 <View style={styles.emptySlotBox}>
                   <Ionicons name="calendar-outline" size={36} color="#CCCCCC" />
                   <Text style={styles.emptySlotTitle}>
-                    Chưa có lịch cho {SERVICE_OPTIONS.find((s) => s.key === selectedSessionType)?.label}
+                    Chưa có lịch cho{' '}
+                    {dynamicServicePackages.find((s) => s.sessionType === selectedSessionType)?.label ||
+                      formatSessionType(selectedSessionType).fullLabel ||
+                      formatSessionType(selectedSessionType).label}
                   </Text>
                   <Text style={styles.emptySlotDesc}>
                     Chuyên gia hiện chưa mở khung giờ cho hình thức này. Bạn có thể chọn hình thức dịch vụ khác ở bước 1.
@@ -1654,6 +1703,12 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#786F66',
     marginTop: 2,
+  },
+  serviceTiersText: {
+    fontFamily: fonts.body,
+    fontSize: 10,
+    color: '#92400E',
+    marginTop: 3,
   },
   serviceCardRight: {
     alignItems: 'flex-end',

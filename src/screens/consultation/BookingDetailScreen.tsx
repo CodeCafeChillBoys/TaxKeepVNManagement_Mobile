@@ -10,6 +10,7 @@ import {
   Modal,
   TextInput,
   Linking,
+  AppState,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
@@ -22,11 +23,18 @@ import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { consultationApi } from '../../api/consultationApi';
 import { toFriendlyConsultationError, formatRefundStatus } from '../../utils/consultationFriendlyErrors';
+import { config } from '../../constants/config';
 import type {
   BookingDetailResponse,
   PaymentLinkResponse,
   EscrowTransactionResponse,
   SharedTaxDossierResponse,
+  ReviewDetailResponse,
+  ReviewEligibilityResponse,
+  ReviewDetailScoresDto,
+  DisputeDetailResponse,
+  DisputeEligibilityResponse,
+  DisputeReasonCode,
 } from '../../types/consultation';
 import {
   formatVnd,
@@ -35,7 +43,45 @@ import {
   formatVietnameseDate,
   formatTimeRange,
   formatEscrowStatus,
+  formatDisputeReason,
+  formatDisputeStatus,
 } from '../../types/consultation';
+import {
+  canUserReview,
+  canUserDispute,
+  canConfirmSatisfaction,
+  validateReviewInput,
+  validateDisputeInput,
+  validateExpertResponse,
+} from './consultationBookingDetailUtils';
+
+const DISPUTE_REASONS: { code: DisputeReasonCode; label: string; desc: string }[] = [
+  {
+    code: 'WRONG_TAX_LAW_ADVICE',
+    label: 'Tư vấn sai luật thuế / rủi ro pháp lý',
+    desc: 'Chuyên gia trích dẫn sai điều luật, hướng dẫn không đúng quy định hiện hành.',
+  },
+  {
+    code: 'UNPROFESSIONAL_BEHAVIOR',
+    label: 'Thái độ thiếu chuyên nghiệp',
+    desc: 'Chuyên gia có hành vi khiếm nhã, thiếu tôn trọng hoặc không hợp tác.',
+  },
+  {
+    code: 'EARLY_DISCONNECT',
+    label: 'Rời phòng sớm / không đủ thời lượng',
+    desc: 'Chuyên gia ngắt kết nối trước khi hết giờ hoặc không hoàn thành buổi tư vấn.',
+  },
+  {
+    code: 'NETWORK_ISSUE',
+    label: 'Sự cố kết nối từ phía chuyên gia',
+    desc: 'Chuyên gia gặp sự cố kết nối liên tục không thể tiếp tục phiên tư vấn.',
+  },
+  {
+    code: 'OTHER',
+    label: 'Lý do khác',
+    desc: 'Vấn đề phát sinh khác cần Ban quản trị TaxKeepVN đối soát giải quyết.',
+  },
+];
 
 export const BookingDetailScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
@@ -65,6 +111,7 @@ export const BookingDetailScreen: React.FC = () => {
   const [paymentModalVisible, setPaymentModalVisible] = useState(false);
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [paymentData, setPaymentData] = useState<PaymentLinkResponse | null>(null);
+  const [checkingPayment, setCheckingPayment] = useState(false);
 
   // Live Consultation & Dossier states
   const [joiningMeeting, setJoiningMeeting] = useState(false);
@@ -87,6 +134,35 @@ export const BookingDetailScreen: React.FC = () => {
   const [escrowModalVisible, setEscrowModalVisible] = useState(false);
   const [escrowLoading, setEscrowLoading] = useState(false);
   const [escrowTx, setEscrowTx] = useState<EscrowTransactionResponse | null>(null);
+
+  // Review & Feedback states (Đặc tả 6)
+  const [reviewEligibility, setReviewEligibility] = useState<ReviewEligibilityResponse | null>(null);
+  const [bookingReview, setBookingReview] = useState<ReviewDetailResponse | null>(null);
+  const [reviewModalVisible, setReviewModalVisible] = useState(false);
+  const [reviewRating, setReviewRating] = useState(5);
+  const [reviewComment, setReviewComment] = useState('');
+  const [reviewDetailScores, setReviewDetailScores] = useState<ReviewDetailScoresDto>({
+    expertise: 5,
+    punctuality: 5,
+    communication: 5,
+    problemSolving: 5,
+  });
+  const [reviewIsAnonymous, setReviewIsAnonymous] = useState(false);
+  const [submittingReview, setSubmittingReview] = useState(false);
+
+  // Disbursement, Early Satisfaction & Dispute states (Đặc tả 7)
+  const [disputeEligibility, setDisputeEligibility] = useState<DisputeEligibilityResponse | null>(null);
+  const [bookingDispute, setBookingDispute] = useState<DisputeDetailResponse | null>(null);
+  const [confirmingSatisfaction, setConfirmingSatisfaction] = useState(false);
+  const [disputeModalVisible, setDisputeModalVisible] = useState(false);
+  const [disputeReason, setDisputeReason] = useState<DisputeReasonCode>('WRONG_TAX_LAW_ADVICE');
+  const [disputeDescription, setDisputeDescription] = useState('');
+  const [submittingDispute, setSubmittingDispute] = useState(false);
+
+  // Expert dispute response states
+  const [expertResponseModalVisible, setExpertResponseModalVisible] = useState(false);
+  const [expertResponseText, setExpertResponseText] = useState('');
+  const [submittingExpertResponse, setSubmittingExpertResponse] = useState(false);
 
   // Dialog state
   const [dialog, setDialog] = useState<{
@@ -112,6 +188,33 @@ export const BookingDetailScreen: React.FC = () => {
     try {
       const data = await consultationApi.getBookingDetail(bookingId);
       setBooking(data);
+
+      // Khi ca tư vấn đã hoàn thành, đã quyết toán hoặc đang có tranh chấp
+      if (
+        data.status === 'COMPLETED' ||
+        data.status === 'SETTLED' ||
+        data.status === 'UNDER_DISPUTE'
+      ) {
+        const [reviewRes, reviewEligRes, disputeRes, disputeEligRes] = await Promise.allSettled([
+          consultationApi.getBookingReview(bookingId),
+          consultationApi.checkReviewEligibility(bookingId),
+          consultationApi.getBookingDispute(bookingId),
+          consultationApi.checkDisputeEligibility(bookingId),
+        ]);
+
+        if (reviewRes.status === 'fulfilled') {
+          setBookingReview(reviewRes.value);
+        }
+        if (reviewEligRes.status === 'fulfilled') {
+          setReviewEligibility(reviewEligRes.value);
+        }
+        if (disputeRes.status === 'fulfilled') {
+          setBookingDispute(disputeRes.value);
+        }
+        if (disputeEligRes.status === 'fulfilled') {
+          setDisputeEligibility(disputeEligRes.value);
+        }
+      }
     } catch (err: any) {
       setError(err?.response?.data?.message || err?.message || 'Không thể tải chi tiết lịch hẹn.');
     } finally {
@@ -278,7 +381,8 @@ export const BookingDetailScreen: React.FC = () => {
   const handleOpenPayment = async () => {
     setPaymentLoading(true);
     try {
-      const res = await consultationApi.createPaymentLink(bookingId);
+      const returnUrl = `${config.webFrontendUrl}/payments/vnpay-return`;
+      const res = await consultationApi.createPaymentLink(bookingId, returnUrl);
       setPaymentData(res);
       setPaymentModalVisible(true);
     } catch (err: any) {
@@ -297,6 +401,105 @@ export const BookingDetailScreen: React.FC = () => {
       setPaymentLoading(false);
     }
   };
+
+  // Check payment result & escrow status
+  const handleCheckPaymentResult = async (silent: boolean = false) => {
+    setCheckingPayment(true);
+    try {
+      const [detailRes, escrowRes] = await Promise.allSettled([
+        consultationApi.getBookingDetail(bookingId),
+        consultationApi.getBookingEscrow(bookingId),
+      ]);
+
+      const latestBooking = detailRes.status === 'fulfilled' ? detailRes.value : null;
+      const latestEscrow = escrowRes.status === 'fulfilled' ? escrowRes.value : null;
+
+      if (latestBooking) {
+        setBooking(latestBooking);
+      }
+
+      const isPaid =
+        Boolean(latestBooking?.paidAt) ||
+        latestBooking?.status === 'AWAITING_EXPERT_APPROVAL' ||
+        latestBooking?.status === 'CONFIRMED' ||
+        latestBooking?.status === 'IN_PROGRESS' ||
+        latestEscrow?.escrowStatus === 'HeldInEscrow';
+
+      if (isPaid) {
+        setPaymentModalVisible(false);
+        navigation.navigate('PaymentResult', {
+          bookingId,
+          isSuccess: true,
+        });
+      } else if (!silent) {
+        setDialog({
+          title: 'Đang chờ xử lý giao dịch',
+          message:
+            'Hệ thống chưa ghi nhận trạng thái thanh toán thành công từ Ngân hàng / VNPay. Giao dịch có thể cần 15 - 30 giây để hoàn tất. Bạn vui lòng thử kiểm tra lại sau ít giây.',
+          primaryLabel: 'Kiểm tra lại',
+          onPrimary: () => {
+            setDialog(null);
+            handleCheckPaymentResult(false);
+          },
+          secondaryLabel: 'Đóng',
+          onSecondary: () => setDialog(null),
+        });
+      }
+    } catch (err: any) {
+      console.warn('Check payment error:', err);
+    } finally {
+      setCheckingPayment(false);
+    }
+  };
+
+  // Tự động kiểm tra trạng thái thanh toán khi người dùng quay lại app từ trình duyệt
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active' && paymentModalVisible && !checkingPayment) {
+        handleCheckPaymentResult(true);
+      }
+    });
+    return () => {
+      sub.remove();
+    };
+  }, [paymentModalVisible, checkingPayment]);
+
+  // Listen to incoming deep links (vnpay-return)
+  useEffect(() => {
+    const handleUrlEvent = async (event: { url: string }) => {
+      try {
+        const urlStr = event.url;
+        if (!urlStr) return;
+
+        if (urlStr.includes('vnp_ResponseCode') || urlStr.includes('vnpay-return')) {
+          const queryPart = urlStr.includes('?') ? urlStr.split('?')[1] : '';
+          const params: Record<string, string> = {};
+          if (queryPart) {
+            queryPart.split('&').forEach((pair) => {
+              const [k, v] = pair.split('=');
+              if (k) params[decodeURIComponent(k)] = decodeURIComponent(v || '');
+            });
+          }
+
+          setPaymentModalVisible(false);
+          const effectiveSuccess = params.isSuccess === 'true' || params.vnp_ResponseCode === '00';
+          navigation.navigate('PaymentResult', {
+            bookingId: params.bookingId || bookingId,
+            vnp_ResponseCode: params.vnp_ResponseCode,
+            vnpParams: params.vnp_SecureHash && !effectiveSuccess ? params : undefined,
+            isSuccess: effectiveSuccess,
+          });
+        }
+      } catch (err) {
+        console.warn('Handle deep link url error:', err);
+      }
+    };
+
+    const sub = Linking.addEventListener('url', handleUrlEvent);
+    return () => {
+      sub.remove();
+    };
+  }, [bookingId]);
 
   // Handle Join Consultation Meeting
   const handleJoinMeeting = async () => {
@@ -493,6 +696,186 @@ export const BookingDetailScreen: React.FC = () => {
     }
   };
 
+  // Handle Submit Review (Khách hàng)
+  const handleSubmitReview = async () => {
+    const val = validateReviewInput(reviewRating, reviewComment);
+    if (!val.valid) {
+      setDialog({
+        title: 'Thông tin chưa hợp lệ',
+        message: val.error || 'Vui lòng nhập nhận xét chi tiết tối thiểu 10 ký tự.',
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
+      return;
+    }
+
+    setSubmittingReview(true);
+    try {
+      const createdReview = await consultationApi.submitReview(bookingId, {
+        rating: reviewRating,
+        comment: reviewComment.trim(),
+        detailScores: reviewDetailScores,
+        isAnonymous: reviewIsAnonymous,
+      });
+      setBookingReview(createdReview);
+      setReviewModalVisible(false);
+      setReviewComment('');
+      setDialog({
+        title: 'Đánh giá thành công',
+        message: 'Cảm ơn bạn đã gửi đánh giá! Ý kiến của bạn giúp nâng cao chất lượng dịch vụ tư vấn trên TaxKeepVN.',
+        primaryLabel: 'Đóng',
+        onPrimary: () => setDialog(null),
+      });
+      fetchDetail();
+    } catch (err: any) {
+      const friendly = toFriendlyConsultationError(
+        err,
+        'Không thể gửi đánh giá',
+        'Có lỗi xảy ra khi gửi đánh giá của bạn.'
+      );
+      setDialog({
+        title: friendly.title,
+        message: friendly.message,
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
+    } finally {
+      setSubmittingReview(false);
+    }
+  };
+
+  // Handle Confirm Satisfaction & Early Escrow Disbursement (Khách hàng)
+  const handleConfirmSatisfaction = () => {
+    setDialog({
+      title: 'Xác nhận hài lòng & Giải ngân sớm',
+      message: `Bạn xác nhận hài lòng với kết quả tư vấn và đồng ý giải ngân ngay số tiền tạm giữ cho chuyên gia ${booking?.expertFullName} mà không cần chờ hết 24 giờ bảo chứng?`,
+      primaryLabel: 'Xác nhận giải ngân',
+      secondaryLabel: 'Để sau',
+      onSecondary: () => setDialog(null),
+      onPrimary: async () => {
+        setDialog(null);
+        setConfirmingSatisfaction(true);
+        try {
+          await consultationApi.confirmSatisfaction(bookingId);
+          setDialog({
+            title: 'Giải ngân thành công',
+            message: 'Thù lao ca tư vấn đã được giải ngân ngay vào ví của chuyên gia. Cảm ơn bạn đã sử dụng dịch vụ!',
+            primaryLabel: 'Đóng',
+            onPrimary: () => setDialog(null),
+          });
+          fetchDetail();
+        } catch (err: any) {
+          const friendly = toFriendlyConsultationError(
+            err,
+            'Không thể xác nhận',
+            'Không thể xác nhận hài lòng lúc này.'
+          );
+          setDialog({
+            title: friendly.title,
+            message: friendly.message,
+            primaryLabel: 'Đã hiểu',
+            onPrimary: () => setDialog(null),
+          });
+        } finally {
+          setConfirmingSatisfaction(false);
+        }
+      },
+    });
+  };
+
+  // Handle Submit Dispute & Freeze Escrow (Khách hàng)
+  const handleSubmitDispute = async () => {
+    const val = validateDisputeInput(disputeReason, disputeDescription);
+    if (!val.valid) {
+      setDialog({
+        title: 'Thông tin chưa hợp lệ',
+        message: val.error || 'Vui lòng mô tả chi tiết lý do khiếu nại tối thiểu 10 ký tự.',
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
+      return;
+    }
+
+    setSubmittingDispute(true);
+    try {
+      const createdDispute = await consultationApi.submitDispute(bookingId, {
+        reason: disputeReason,
+        description: disputeDescription.trim(),
+      });
+      setBookingDispute(createdDispute);
+      setDisputeModalVisible(false);
+      setDisputeDescription('');
+      setDialog({
+        title: 'Đã gửi khiếu nại thành công',
+        message: 'Số tiền ký quỹ đã được ĐÓNG BĂNG NGAY LẬP TỨC để bảo vệ quyền lợi của bạn. Chuyên gia có 24 giờ để gửi giải trình trước khi Ban quản trị TaxKeepVN phán quyết.',
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
+      fetchDetail();
+    } catch (err: any) {
+      const friendly = toFriendlyConsultationError(
+        err,
+        'Không thể gửi khiếu nại',
+        'Có lỗi xảy ra khi tạo khiếu nại.'
+      );
+      setDialog({
+        title: friendly.title,
+        message: friendly.message,
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
+    } finally {
+      setSubmittingDispute(false);
+    }
+  };
+
+  // Handle Submit Expert Response to Dispute (Chuyên gia)
+  const handleSubmitExpertResponse = async () => {
+    const val = validateExpertResponse(expertResponseText);
+    if (!val.valid) {
+      setDialog({
+        title: 'Thông tin chưa hợp lệ',
+        message: val.error || 'Vui lòng cung cấp giải trình chi tiết tối thiểu 10 ký tự.',
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
+      return;
+    }
+
+    if (!bookingDispute?.id) return;
+
+    setSubmittingExpertResponse(true);
+    try {
+      const updatedDispute = await consultationApi.expertRespondDispute(bookingDispute.id, {
+        response: expertResponseText.trim(),
+      });
+      setBookingDispute(updatedDispute);
+      setExpertResponseModalVisible(false);
+      setExpertResponseText('');
+      setDialog({
+        title: 'Đã gửi giải trình',
+        message: 'Nội dung giải trình của bạn đã được chuyển tới Ban quản trị để tiến hành đối soát và đưa ra phán quyết.',
+        primaryLabel: 'Đóng',
+        onPrimary: () => setDialog(null),
+      });
+      fetchDetail();
+    } catch (err: any) {
+      const friendly = toFriendlyConsultationError(
+        err,
+        'Không thể gửi giải trình',
+        'Có lỗi xảy ra khi gửi phản hồi giải trình.'
+      );
+      setDialog({
+        title: friendly.title,
+        message: friendly.message,
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
+    } finally {
+      setSubmittingExpertResponse(false);
+    }
+  };
+
   if (loading) {
     return (
       <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
@@ -660,6 +1043,19 @@ export const BookingDetailScreen: React.FC = () => {
               <Text style={styles.refundText}>
                 Trạng thái hoàn tiền: <Text style={styles.boldText}>{formatRefundStatus(booking.refundStatus)}</Text> (Hoàn 100% chi phí đã đóng)
               </Text>
+            </View>
+          )}
+
+          {/* Under Dispute Escrow Freeze Alert */}
+          {booking.status === 'UNDER_DISPUTE' && (
+            <View style={styles.disputeHeroAlert}>
+              <Ionicons name="shield-half" size={22} color="#DC2626" />
+              <View style={{ flex: 1, marginLeft: 8 }}>
+                <Text style={styles.disputeHeroTitle}>Ca tư vấn đang trong quá trình khiếu nại</Text>
+                <Text style={styles.disputeHeroDesc}>
+                  Khoản tiền ký quỹ Escrow đã được ĐÓNG BĂNG AN TOÀN. Ban quản trị TaxKeepVN đang đối soát để giải quyết bảo vệ quyền lợi hai bên.
+                </Text>
+              </View>
             </View>
           )}
         </View>
@@ -836,6 +1232,211 @@ export const BookingDetailScreen: React.FC = () => {
           </View>
         )}
 
+        {/* ── CHI TIẾT TRANH CHẤP & KHIẾU NẠI (ĐẶC TẢ 7) ── */}
+        {bookingDispute && (
+          <View style={styles.cardSection}>
+            <View style={styles.cardSectionHeaderRow}>
+              <Text style={styles.sectionHeaderTitle}>Khiếu nại & Tranh chấp</Text>
+              <View
+                style={[
+                  styles.disputeStatusBadge,
+                  { backgroundColor: formatDisputeStatus(bookingDispute.status).bg },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.disputeStatusText,
+                    { color: formatDisputeStatus(bookingDispute.status).color },
+                  ]}
+                >
+                  {formatDisputeStatus(bookingDispute.status).label}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.disputeInfoBox}>
+              <View style={styles.infoRow}>
+                <Text style={styles.infoLabel}>Lý do khiếu nại:</Text>
+                <Text style={[styles.infoValueBold, { color: '#B91C1C' }]}>
+                  {formatDisputeReason(bookingDispute.reason)}
+                </Text>
+              </View>
+              <View style={styles.problemWrap}>
+                <Text style={styles.topicLabel}>Nội dung từ người nộp thuế:</Text>
+                <Text style={styles.problemDescText}>{bookingDispute.description}</Text>
+              </View>
+              <Text style={styles.disputeDateText}>
+                Thời gian gửi: {formatVietnameseDate(bookingDispute.createdAt.split('T')[0])}
+              </Text>
+            </View>
+
+            {/* Phản hồi giải trình từ chuyên gia */}
+            {bookingDispute.expertResponse ? (
+              <View style={styles.expertReplyBox}>
+                <View style={styles.expertReplyHeader}>
+                  <Ionicons name="chatbox-ellipses" size={16} color={theme.colors.primary} />
+                  <Text style={styles.expertReplyTitle}>Giải trình từ chuyên gia:</Text>
+                </View>
+                <Text style={styles.expertReplyContent}>{bookingDispute.expertResponse}</Text>
+                {bookingDispute.expertRespondedAt && (
+                  <Text style={styles.expertReplyTime}>
+                    Gửi lúc: {formatVietnameseDate(bookingDispute.expertRespondedAt.split('T')[0])}
+                  </Text>
+                )}
+              </View>
+            ) : isExpertView && bookingDispute.status === 'PENDING_EXPERT_RESPONSE' ? (
+              <View style={styles.expertRespondPromptBox}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.expertRespondPromptTitle}>Cần chuyên gia gửi giải trình</Text>
+                  <Text style={styles.expertRespondPromptDesc}>
+                    Khách hàng đã gửi khiếu nại. Bạn có 24 giờ để gửi giải trình trước khi BQT phán quyết.
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.respondDisputeBtn}
+                  onPress={() => setExpertResponseModalVisible(true)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Gửi giải trình"
+                >
+                  <Text style={styles.respondDisputeBtnText}>Gửi giải trình</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
+
+            {/* Phán quyết giải quyết của Ban quản trị */}
+            {bookingDispute.status === 'RESOLVED' && (
+              <View style={styles.adminResolutionBox}>
+                <View style={styles.adminResolutionHeader}>
+                  <Ionicons name="ribbon" size={18} color="#059669" />
+                  <Text style={styles.adminResolutionTitle}>Phán quyết của Ban Quản Trị</Text>
+                </View>
+                <View style={styles.infoRow}>
+                  <Text style={styles.infoLabel}>Hình thức xử lý:</Text>
+                  <Text style={styles.infoValueBold}>
+                    {bookingDispute.adminDecisionType === 'FULL_REFUND'
+                      ? 'Hoàn tiền 100% cho người nộp thuế'
+                      : bookingDispute.adminDecisionType === 'SETTLE_EXPERT'
+                      ? 'Bác khiếu nại - Giải ngân cho chuyên gia'
+                      : `Hoàn một phần (${bookingDispute.refundRatePercent || 0}%)`}
+                  </Text>
+                </View>
+                <View style={styles.disputeSettlementGrid}>
+                  <View style={styles.disputeSettlementItem}>
+                    <Text style={styles.dossierLabel}>Hoàn khách hàng:</Text>
+                    <Text style={[styles.dossierValueBold, { color: '#059669' }]}>
+                      {formatVnd(bookingDispute.userRefundAmount)}
+                    </Text>
+                  </View>
+                  <View style={styles.disputeSettlementItem}>
+                    <Text style={styles.dossierLabel}>Chuyên gia nhận:</Text>
+                    <Text style={[styles.dossierValueBold, { color: theme.colors.primary }]}>
+                      {formatVnd(bookingDispute.expertSettlementAmount)}
+                    </Text>
+                  </View>
+                </View>
+                {bookingDispute.adminResolution && (
+                  <View style={{ marginTop: 8 }}>
+                    <Text style={styles.topicLabel}>Căn cứ phán quyết:</Text>
+                    <Text style={styles.problemDescText}>{bookingDispute.adminResolution}</Text>
+                  </View>
+                )}
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* ── ĐÁNH GIÁ & NHẬN XÉT ĐÃ GỬI (ĐẶC TẢ 6) ── */}
+        {bookingReview && (
+          <View style={styles.cardSection}>
+            <View style={styles.cardSectionHeaderRow}>
+              <Text style={styles.sectionHeaderTitle}>Đánh giá & Nhận xét</Text>
+              <View style={styles.reviewStarsRow}>
+                {[1, 2, 3, 4, 5].map((star) => (
+                  <Ionicons
+                    key={star}
+                    name={star <= bookingReview.rating ? 'star' : 'star-outline'}
+                    size={16}
+                    color="#D97706"
+                  />
+                ))}
+                <Text style={styles.reviewRatingNumber}>{bookingReview.rating}.0</Text>
+              </View>
+            </View>
+
+            <View style={styles.reviewerInfoRow}>
+              <Ionicons
+                name={bookingReview.isAnonymous ? 'eye-off-outline' : 'person-circle-outline'}
+                size={18}
+                color="#666666"
+              />
+              <Text style={styles.reviewerNameText}>
+                {bookingReview.isAnonymous ? 'Người nộp thuế (Ẩn danh)' : bookingReview.reviewerName}
+              </Text>
+              <Text style={styles.reviewDateText}>
+                {formatVietnameseDate(bookingReview.createdAt.split('T')[0])}
+              </Text>
+            </View>
+
+            {bookingReview.comment ? (
+              <View style={styles.reviewCommentBox}>
+                <Text style={styles.reviewCommentText}>"{bookingReview.comment}"</Text>
+              </View>
+            ) : null}
+
+            {/* Chi tiết tiêu chí */}
+            {bookingReview.detailScores && (
+              <View style={styles.criteriaGrid}>
+                {bookingReview.detailScores.expertise != null && (
+                  <View style={styles.criteriaItem}>
+                    <Text style={styles.criteriaLabel}>Chuyên môn:</Text>
+                    <View style={styles.criteriaStarRow}>
+                      <Text style={styles.criteriaValue}>{bookingReview.detailScores.expertise}</Text>
+                      <Ionicons name="star" size={11} color="#D97706" />
+                    </View>
+                  </View>
+                )}
+                {bookingReview.detailScores.punctuality != null && (
+                  <View style={styles.criteriaItem}>
+                    <Text style={styles.criteriaLabel}>Đúng giờ:</Text>
+                    <View style={styles.criteriaStarRow}>
+                      <Text style={styles.criteriaValue}>{bookingReview.detailScores.punctuality}</Text>
+                      <Ionicons name="star" size={11} color="#D97706" />
+                    </View>
+                  </View>
+                )}
+                {bookingReview.detailScores.communication != null && (
+                  <View style={styles.criteriaItem}>
+                    <Text style={styles.criteriaLabel}>Giao tiếp:</Text>
+                    <View style={styles.criteriaStarRow}>
+                      <Text style={styles.criteriaValue}>{bookingReview.detailScores.communication}</Text>
+                      <Ionicons name="star" size={11} color="#D97706" />
+                    </View>
+                  </View>
+                )}
+                {bookingReview.detailScores.problemSolving != null && (
+                  <View style={styles.criteriaItem}>
+                    <Text style={styles.criteriaLabel}>Giải quyết VĐ:</Text>
+                    <View style={styles.criteriaStarRow}>
+                      <Text style={styles.criteriaValue}>{bookingReview.detailScores.problemSolving}</Text>
+                      <Ionicons name="star" size={11} color="#D97706" />
+                    </View>
+                  </View>
+                )}
+              </View>
+            )}
+
+            {bookingReview.expertReply && (
+              <View style={styles.expertReplyBox}>
+                <View style={styles.expertReplyHeader}>
+                  <Ionicons name="return-down-forward" size={16} color={theme.colors.primary} />
+                  <Text style={styles.expertReplyTitle}>Phản hồi từ chuyên gia:</Text>
+                </View>
+                <Text style={styles.expertReplyContent}>{bookingReview.expertReply}</Text>
+              </View>
+            )}
+          </View>
+        )}
+
         {/* ── 6. ACTION BUTTONS ── */}
         <View style={styles.actionsWrap}>
           {/* Quyết định tiếp nhận dành cho chuyên gia khi ca đang chờ phê duyệt */}
@@ -969,6 +1570,60 @@ export const BookingDetailScreen: React.FC = () => {
                 <Ionicons name="folder-open-outline" size={16} color={theme.colors.primary} />
                 <Text style={styles.dossierBtnText}>Xem lại hồ sơ thuế chia sẻ</Text>
               </TouchableOpacity>
+
+              {/* Nút gửi đánh giá nếu chưa đánh giá & là khách hàng */}
+              {canUserReview(booking.status, isExpertView, reviewEligibility, Boolean(bookingReview)) && (
+                <TouchableOpacity
+                  style={styles.reviewActionBtn}
+                  onPress={() => setReviewModalVisible(true)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Đánh giá chuyên gia"
+                >
+                  <Ionicons name="star" size={18} color="#FFFFFF" />
+                  <Text style={styles.reviewActionBtnText}>Đánh giá buổi tư vấn</Text>
+                </TouchableOpacity>
+              )}
+
+              {/* Khối bảo chứng 24h & Thao tác Giải ngân sớm / Khiếu nại (chỉ khi COMPLETED và là khách hàng) */}
+              {canUserDispute(booking.status, isExpertView, disputeEligibility, Boolean(bookingDispute)) && (
+                <View style={styles.escrowCooldownActionCard}>
+                  <View style={styles.escrowCooldownHeader}>
+                    <Ionicons name="shield-checkmark" size={18} color="#B45309" />
+                    <Text style={styles.escrowCooldownTitle}>Bảo chứng thanh toán 24 giờ</Text>
+                  </View>
+                  <Text style={styles.escrowCooldownDesc}>
+                    Khoản tiền đang được tạm giữ an toàn tại TaxKeepVN. Nếu bạn hoàn toàn hài lòng với buổi tư vấn, bạn có thể xác nhận sớm để chuyển thù lao ngay cho chuyên gia mà không cần chờ hết 24 giờ.
+                  </Text>
+                  <View style={styles.escrowCooldownBtnRow}>
+                    <TouchableOpacity
+                      style={styles.confirmSatisfactionBtn}
+                      onPress={handleConfirmSatisfaction}
+                      disabled={confirmingSatisfaction}
+                      accessibilityRole="button"
+                      accessibilityLabel="Xác nhận hài lòng"
+                    >
+                      {confirmingSatisfaction ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      ) : (
+                        <>
+                          <Ionicons name="checkmark-done" size={16} color="#FFFFFF" />
+                          <Text style={styles.confirmSatisfactionBtnText}>Hài lòng & Giải ngân sớm</Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.disputeActionBtn}
+                      onPress={() => setDisputeModalVisible(true)}
+                      accessibilityRole="button"
+                      accessibilityLabel="Gửi khiếu nại"
+                    >
+                      <Ionicons name="alert-circle-outline" size={16} color={theme.colors.error} />
+                      <Text style={styles.disputeActionBtnText}>Khiếu nại</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
             </View>
           )}
 
@@ -1198,13 +1853,19 @@ export const BookingDetailScreen: React.FC = () => {
 
             <View style={styles.paymentFooter}>
               <TouchableOpacity
-                style={styles.paidCheckBtn}
-                onPress={() => {
-                  setPaymentModalVisible(false);
-                  fetchDetail();
-                }}
+                style={[styles.paidCheckBtn, checkingPayment && styles.paidCheckBtnDisabled]}
+                onPress={() => handleCheckPaymentResult(false)}
+                disabled={checkingPayment}
+                activeOpacity={0.85}
               >
-                <Text style={styles.paidCheckBtnText}>Tôi đã chuyển khoản xong</Text>
+                {checkingPayment ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <Ionicons name="shield-checkmark" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
+                    <Text style={styles.paidCheckBtnText}>Kiểm tra kết quả giao dịch</Text>
+                  </>
+                )}
               </TouchableOpacity>
             </View>
           </View>
@@ -1612,6 +2273,436 @@ export const BookingDetailScreen: React.FC = () => {
                 onPress={() => setEscrowModalVisible(false)}
               >
                 <Text style={[styles.cancelModalCloseBtnText, { textAlign: 'center' }]}>Đóng</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── MODAL ĐÁNH GIÁ & PHẢN HỒI (ĐẶC TẢ 6) ── */}
+      <Modal
+        visible={reviewModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setReviewModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.reviewModalBox}>
+            <View style={styles.paymentModalHeader}>
+              <View style={[styles.paymentHeaderIcon, { backgroundColor: '#FEF3C7' }]}>
+                <Ionicons name="star" size={24} color="#D97706" />
+              </View>
+              <View style={{ flex: 1, marginLeft: 8 }}>
+                <Text style={styles.paymentModalTitle}>Đánh giá buổi tư vấn</Text>
+                <Text style={styles.paymentModalSubtitle}>
+                  Chuyên gia: {booking.expertFullName}
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setReviewModalVisible(false)}>
+                <Ionicons name="close" size={24} color="#777777" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ maxHeight: 460 }} showsVerticalScrollIndicator={false}>
+              {/* Overall Star Rating */}
+              <View style={styles.overallRatingWrap}>
+                <Text style={styles.ratingSectionTitle}>Mức độ hài lòng tổng quan:</Text>
+                <View style={styles.starPickerRow}>
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <TouchableOpacity
+                      key={star}
+                      onPress={() => setReviewRating(star)}
+                      style={styles.starTouchItem}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons
+                        name={star <= reviewRating ? 'star' : 'star-outline'}
+                        size={34}
+                        color={star <= reviewRating ? '#D97706' : '#CCCCCC'}
+                      />
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <Text style={styles.starRatingDesc}>
+                  {reviewRating === 5 && '⭐⭐⭐⭐⭐ Xuất sắc / Rất hài lòng'}
+                  {reviewRating === 4 && '⭐⭐⭐⭐ Hài lòng'}
+                  {reviewRating === 3 && '⭐⭐⭐ Bình thường'}
+                  {reviewRating === 2 && '⭐⭐ Chưa hài lòng'}
+                  {reviewRating === 1 && '⭐ Rất không hài lòng'}
+                </Text>
+              </View>
+
+              {/* Detailed Criteria Scores */}
+              <View style={styles.criteriaPickerWrap}>
+                <Text style={styles.ratingSectionTitle}>Chi tiết theo từng tiêu chí:</Text>
+
+                {/* 1. Chuyên môn */}
+                <View style={styles.criteriaPickerRow}>
+                  <Text style={styles.criteriaPickerLabel}>Chuyên môn & Giải pháp:</Text>
+                  <View style={styles.miniStarRow}>
+                    {[1, 2, 3, 4, 5].map((s) => (
+                      <TouchableOpacity
+                        key={s}
+                        onPress={() =>
+                          setReviewDetailScores((prev) => ({ ...prev, expertise: s }))
+                        }
+                      >
+                        <Ionicons
+                          name={s <= (reviewDetailScores.expertise || 5) ? 'star' : 'star-outline'}
+                          size={18}
+                          color={s <= (reviewDetailScores.expertise || 5) ? '#D97706' : '#DDDDDD'}
+                          style={{ marginHorizontal: 1 }}
+                        />
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+
+                {/* 2. Đúng giờ */}
+                <View style={styles.criteriaPickerRow}>
+                  <Text style={styles.criteriaPickerLabel}>Đúng giờ & Tác phong:</Text>
+                  <View style={styles.miniStarRow}>
+                    {[1, 2, 3, 4, 5].map((s) => (
+                      <TouchableOpacity
+                        key={s}
+                        onPress={() =>
+                          setReviewDetailScores((prev) => ({ ...prev, punctuality: s }))
+                        }
+                      >
+                        <Ionicons
+                          name={s <= (reviewDetailScores.punctuality || 5) ? 'star' : 'star-outline'}
+                          size={18}
+                          color={s <= (reviewDetailScores.punctuality || 5) ? '#D97706' : '#DDDDDD'}
+                          style={{ marginHorizontal: 1 }}
+                        />
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+
+                {/* 3. Giao tiếp */}
+                <View style={styles.criteriaPickerRow}>
+                  <Text style={styles.criteriaPickerLabel}>Giao tiếp & Thái độ:</Text>
+                  <View style={styles.miniStarRow}>
+                    {[1, 2, 3, 4, 5].map((s) => (
+                      <TouchableOpacity
+                        key={s}
+                        onPress={() =>
+                          setReviewDetailScores((prev) => ({ ...prev, communication: s }))
+                        }
+                      >
+                        <Ionicons
+                          name={s <= (reviewDetailScores.communication || 5) ? 'star' : 'star-outline'}
+                          size={18}
+                          color={s <= (reviewDetailScores.communication || 5) ? '#D97706' : '#DDDDDD'}
+                          style={{ marginHorizontal: 1 }}
+                        />
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+
+                {/* 4. Giải quyết vấn đề */}
+                <View style={styles.criteriaPickerRow}>
+                  <Text style={styles.criteriaPickerLabel}>Giải quyết vấn đề:</Text>
+                  <View style={styles.miniStarRow}>
+                    {[1, 2, 3, 4, 5].map((s) => (
+                      <TouchableOpacity
+                        key={s}
+                        onPress={() =>
+                          setReviewDetailScores((prev) => ({ ...prev, problemSolving: s }))
+                        }
+                      >
+                        <Ionicons
+                          name={s <= (reviewDetailScores.problemSolving || 5) ? 'star' : 'star-outline'}
+                          size={18}
+                          color={s <= (reviewDetailScores.problemSolving || 5) ? '#D97706' : '#DDDDDD'}
+                          style={{ marginHorizontal: 1 }}
+                        />
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              </View>
+
+              {/* Comment Input */}
+              <View style={{ marginTop: 12 }}>
+                <View style={styles.labelCountRow}>
+                  <Text style={styles.reasonInputLabel}>Nhận xét của bạn *:</Text>
+                  <Text
+                    style={[
+                      styles.charCountText,
+                      { color: reviewComment.trim().length >= 10 ? '#059669' : '#DC2626' },
+                    ]}
+                  >
+                    {reviewComment.trim().length} / 10 ký tự
+                  </Text>
+                </View>
+                <TextInput
+                  style={styles.reasonInput}
+                  placeholder="Chia sẻ chi tiết trải nghiệm tư vấn của bạn (tối thiểu 10 ký tự)..."
+                  placeholderTextColor="#999999"
+                  value={reviewComment}
+                  onChangeText={setReviewComment}
+                  multiline
+                  numberOfLines={4}
+                  textAlignVertical="top"
+                />
+              </View>
+
+              {/* Anonymous Checkbox */}
+              <TouchableOpacity
+                style={styles.anonymousToggleRow}
+                onPress={() => setReviewIsAnonymous((prev) => !prev)}
+                activeOpacity={0.7}
+              >
+                <Ionicons
+                  name={reviewIsAnonymous ? 'checkbox' : 'square-outline'}
+                  size={20}
+                  color={reviewIsAnonymous ? theme.colors.primary : '#888888'}
+                />
+                <Text style={styles.anonymousToggleText}>
+                  Đánh giá ẩn danh (không công khai họ tên của bạn)
+                </Text>
+              </TouchableOpacity>
+            </ScrollView>
+
+            <View style={styles.cancelModalBtnRow}>
+              <TouchableOpacity
+                style={styles.cancelModalCloseBtn}
+                onPress={() => setReviewModalVisible(false)}
+                disabled={submittingReview}
+              >
+                <Text style={styles.cancelModalCloseBtnText}>Hủy</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.cancelModalSubmitBtn,
+                  { backgroundColor: theme.colors.primary },
+                  (reviewComment.trim().length < 10 || submittingReview) && { opacity: 0.5 },
+                ]}
+                onPress={handleSubmitReview}
+                disabled={reviewComment.trim().length < 10 || submittingReview}
+              >
+                {submittingReview ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.cancelModalSubmitBtnText}>Gửi đánh giá</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── MODAL GỬI KHIẾU NẠI & ĐÓNG BĂNG ESCROW (ĐẶC TẢ 7) ── */}
+      <Modal
+        visible={disputeModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setDisputeModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.reviewModalBox}>
+            <View style={styles.paymentModalHeader}>
+              <View style={[styles.paymentHeaderIcon, { backgroundColor: '#FEE2E2' }]}>
+                <Ionicons name="shield-half" size={24} color="#DC2626" />
+              </View>
+              <View style={{ flex: 1, marginLeft: 8 }}>
+                <Text style={[styles.paymentModalTitle, { color: '#B91C1C' }]}>
+                  Khiếu nại ca tư vấn
+                </Text>
+                <Text style={styles.paymentModalSubtitle}>
+                  Bảo vệ quyền lợi người nộp thuế
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setDisputeModalVisible(false)}>
+                <Ionicons name="close" size={24} color="#777777" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ maxHeight: 460 }} showsVerticalScrollIndicator={false}>
+              {/* Escrow Freeze Warning */}
+              <View style={styles.disputeWarningAlert}>
+                <Ionicons name="alert-circle" size={20} color="#B91C1C" />
+                <Text style={styles.disputeWarningText}>
+                  Khiếu nại sẽ <Text style={{ fontFamily: fonts.bodyBold }}>ĐÓNG BĂNG NGAY LẬP TỨC</Text> số tiền ký quỹ Escrow. Ban quản trị TaxKeepVN sẽ yêu cầu chuyên gia giải trình và xử lý đối soát minh bạch.
+                </Text>
+              </View>
+
+              {/* Dispute Reasons Radio List */}
+              <Text style={styles.ratingSectionTitle}>Chọn lý do khiếu nại *:</Text>
+              <View style={{ gap: 8, marginVertical: 8 }}>
+                {DISPUTE_REASONS.map((item) => {
+                  const isSelected = disputeReason === item.code;
+                  return (
+                    <TouchableOpacity
+                      key={item.code}
+                      style={[
+                        styles.disputeReasonItem,
+                        isSelected && styles.disputeReasonItemActive,
+                      ]}
+                      onPress={() => setDisputeReason(item.code)}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons
+                        name={isSelected ? 'radio-button-on' : 'radio-button-off'}
+                        size={18}
+                        color={isSelected ? '#DC2626' : '#888888'}
+                        style={{ marginTop: 2 }}
+                      />
+                      <View style={{ flex: 1, marginLeft: 8 }}>
+                        <Text
+                          style={[
+                            styles.disputeReasonLabel,
+                            isSelected && { color: '#B91C1C', fontFamily: fonts.bodyBold },
+                          ]}
+                        >
+                          {item.label}
+                        </Text>
+                        <Text style={styles.disputeReasonDesc}>{item.desc}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* Description Input */}
+              <View style={{ marginTop: 8 }}>
+                <View style={styles.labelCountRow}>
+                  <Text style={styles.reasonInputLabel}>Mô tả chi tiết sự việc *:</Text>
+                  <Text
+                    style={[
+                      styles.charCountText,
+                      { color: disputeDescription.trim().length >= 10 ? '#059669' : '#DC2626' },
+                    ]}
+                  >
+                    {disputeDescription.trim().length} / 10 ký tự
+                  </Text>
+                </View>
+                <TextInput
+                  style={styles.reasonInput}
+                  placeholder="Mô tả cụ thể vấn đề bạn gặp phải trong phiên tư vấn (tối thiểu 10 ký tự)..."
+                  placeholderTextColor="#999999"
+                  value={disputeDescription}
+                  onChangeText={setDisputeDescription}
+                  multiline
+                  numberOfLines={4}
+                  textAlignVertical="top"
+                />
+              </View>
+            </ScrollView>
+
+            <View style={styles.cancelModalBtnRow}>
+              <TouchableOpacity
+                style={styles.cancelModalCloseBtn}
+                onPress={() => setDisputeModalVisible(false)}
+                disabled={submittingDispute}
+              >
+                <Text style={styles.cancelModalCloseBtnText}>Đóng</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.cancelModalSubmitBtn,
+                  { backgroundColor: '#DC2626' },
+                  (disputeDescription.trim().length < 10 || submittingDispute) && { opacity: 0.5 },
+                ]}
+                onPress={handleSubmitDispute}
+                disabled={disputeDescription.trim().length < 10 || submittingDispute}
+              >
+                {submittingDispute ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.cancelModalSubmitBtnText}>Gửi khiếu nại (Đóng băng)</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── MODAL CHUYÊN GIA GIẢI TRÌNH KHIẾU NẠI (ĐẶC TẢ 7) ── */}
+      <Modal
+        visible={expertResponseModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setExpertResponseModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.reviewModalBox}>
+            <View style={styles.paymentModalHeader}>
+              <View style={[styles.paymentHeaderIcon, { backgroundColor: '#EFF6FF' }]}>
+                <Ionicons name="chatbubbles" size={24} color="#2563EB" />
+              </View>
+              <View style={{ flex: 1, marginLeft: 8 }}>
+                <Text style={styles.paymentModalTitle}>Giải trình khiếu nại</Text>
+                <Text style={styles.paymentModalSubtitle}>
+                  Gửi phản hồi tới Ban Quản Trị
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setExpertResponseModalVisible(false)}>
+                <Ionicons name="close" size={24} color="#777777" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+              <View style={styles.disputeWarningAlert}>
+                <Ionicons name="information-circle" size={20} color="#2563EB" />
+                <Text style={[styles.disputeWarningText, { color: '#1E40AF' }]}>
+                  Lý do khách hàng khiếu nại: <Text style={{ fontFamily: fonts.bodyBold }}>{formatDisputeReason(bookingDispute?.reason || '')}</Text>. Hãy nêu rõ căn cứ pháp luật và quy trình đã thực hiện.
+                </Text>
+              </View>
+
+              <View style={{ marginTop: 8 }}>
+                <View style={styles.labelCountRow}>
+                  <Text style={styles.reasonInputLabel}>Nội dung giải trình *:</Text>
+                  <Text
+                    style={[
+                      styles.charCountText,
+                      { color: expertResponseText.trim().length >= 10 ? '#059669' : '#DC2626' },
+                    ]}
+                  >
+                    {expertResponseText.trim().length} / 10 ký tự
+                  </Text>
+                </View>
+                <TextInput
+                  style={styles.reasonInput}
+                  placeholder="Nhập nội dung giải trình chi tiết (tối thiểu 10 ký tự)..."
+                  placeholderTextColor="#999999"
+                  value={expertResponseText}
+                  onChangeText={setExpertResponseText}
+                  multiline
+                  numberOfLines={5}
+                  textAlignVertical="top"
+                />
+              </View>
+            </ScrollView>
+
+            <View style={styles.cancelModalBtnRow}>
+              <TouchableOpacity
+                style={styles.cancelModalCloseBtn}
+                onPress={() => setExpertResponseModalVisible(false)}
+                disabled={submittingExpertResponse}
+              >
+                <Text style={styles.cancelModalCloseBtnText}>Đóng</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.cancelModalSubmitBtn,
+                  { backgroundColor: '#2563EB' },
+                  (expertResponseText.trim().length < 10 || submittingExpertResponse) && { opacity: 0.5 },
+                ]}
+                onPress={handleSubmitExpertResponse}
+                disabled={expertResponseText.trim().length < 10 || submittingExpertResponse}
+              >
+                {submittingExpertResponse ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.cancelModalSubmitBtnText}>Gửi giải trình</Text>
+                )}
               </TouchableOpacity>
             </View>
           </View>
@@ -2496,6 +3587,11 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderRadius: 8,
     alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
+  },
+  paidCheckBtnDisabled: {
+    opacity: 0.65,
   },
   paidCheckBtnText: {
     fontFamily: fonts.bodyBold,
@@ -2649,5 +3745,441 @@ const styles = StyleSheet.create({
     borderColor: '#E5DDCB',
     borderRadius: 8,
     padding: 10,
+  },
+
+  // ── UNDER DISPUTE HERO ALERT ──
+  disputeHeroAlert: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 10,
+    padding: 12,
+    marginTop: 10,
+  },
+  disputeHeroTitle: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 13,
+    color: '#B91C1C',
+    marginBottom: 2,
+  },
+  disputeHeroDesc: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: '#7F1D1D',
+    lineHeight: 17,
+  },
+
+  // ── DISPUTE & REVIEW SECTION HEADERS ──
+  cardSectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  disputeStatusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  disputeStatusText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 11,
+  },
+
+  // ── DISPUTE CARD CONTENT ──
+  disputeInfoBox: {
+    backgroundColor: '#FFF7ED',
+    borderWidth: 1,
+    borderColor: '#FED7AA',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 10,
+  },
+  disputeDateText: {
+    fontFamily: fonts.body,
+    fontSize: 11,
+    color: '#888888',
+    marginTop: 6,
+  },
+  expertReplyBox: {
+    backgroundColor: '#F8FAFC',
+    borderLeftWidth: 3,
+    borderLeftColor: theme.colors.primary,
+    padding: 10,
+    borderRadius: 6,
+    marginTop: 8,
+  },
+  expertReplyHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  expertReplyTitle: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12,
+    color: theme.colors.primary,
+    marginLeft: 6,
+  },
+  expertReplyContent: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: '#334155',
+    lineHeight: 18,
+  },
+  expertReplyTime: {
+    fontFamily: fonts.body,
+    fontSize: 10,
+    color: '#94A3B8',
+    marginTop: 4,
+  },
+  expertRespondPromptBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 8,
+  },
+  expertRespondPromptTitle: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12,
+    color: '#92400E',
+  },
+  expertRespondPromptDesc: {
+    fontFamily: fonts.body,
+    fontSize: 11,
+    color: '#78350F',
+    marginTop: 2,
+  },
+  respondDisputeBtn: {
+    backgroundColor: '#2563EB',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 6,
+    marginLeft: 10,
+  },
+  respondDisputeBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12,
+    color: '#FFFFFF',
+  },
+  adminResolutionBox: {
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 10,
+  },
+  adminResolutionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  adminResolutionTitle: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 13,
+    color: '#065F46',
+    marginLeft: 6,
+  },
+  disputeSettlementGrid: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 6,
+  },
+  disputeSettlementItem: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#D1FAE5',
+    borderRadius: 6,
+    padding: 8,
+  },
+
+  // ── REVIEW SUMMARY CARD CONTENT ──
+  reviewStarsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  reviewRatingNumber: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 13,
+    color: '#D97706',
+    marginLeft: 4,
+  },
+  reviewerInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  reviewerNameText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 12,
+    color: '#444444',
+    marginLeft: 6,
+    flex: 1,
+  },
+  reviewDateText: {
+    fontFamily: fonts.body,
+    fontSize: 11,
+    color: '#888888',
+  },
+  reviewCommentBox: {
+    backgroundColor: '#FAF5EE',
+    borderWidth: 1,
+    borderColor: '#E8DEC8',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 10,
+  },
+  reviewCommentText: {
+    fontFamily: fonts.body,
+    fontSize: 13,
+    fontStyle: 'italic',
+    color: '#333333',
+    lineHeight: 19,
+  },
+  criteriaGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  criteriaItem: {
+    width: '48%',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
+    borderWidth: 1,
+    borderColor: '#EEEEEE',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+  criteriaLabel: {
+    fontFamily: fonts.body,
+    fontSize: 11,
+    color: '#555555',
+  },
+  criteriaStarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  criteriaValue: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 11,
+    color: '#D97706',
+  },
+
+  // ── REVIEW & COOL-DOWN ACTION BUTTONS ──
+  reviewActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: theme.colors.primary,
+    paddingVertical: 12,
+    borderRadius: 8,
+    marginTop: 10,
+    gap: 6,
+  },
+  reviewActionBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 13,
+    color: '#FFFFFF',
+  },
+  escrowCooldownActionCard: {
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    borderRadius: 10,
+    padding: 12,
+    marginTop: 12,
+  },
+  escrowCooldownHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
+  },
+  escrowCooldownTitle: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 13,
+    color: '#92400E',
+  },
+  escrowCooldownDesc: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: '#78350F',
+    lineHeight: 17,
+    marginBottom: 10,
+  },
+  escrowCooldownBtnRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  confirmSatisfactionBtn: {
+    flex: 1.4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#059669',
+    paddingVertical: 10,
+    borderRadius: 8,
+    gap: 4,
+  },
+  confirmSatisfactionBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12,
+    color: '#FFFFFF',
+  },
+  disputeActionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: theme.colors.error,
+    paddingVertical: 10,
+    borderRadius: 8,
+    gap: 4,
+  },
+  disputeActionBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12,
+    color: theme.colors.error,
+  },
+
+  // ── REVIEW & DISPUTE MODALS ──
+  reviewModalBox: {
+    width: '92%',
+    maxWidth: 420,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 18,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  overallRatingWrap: {
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+    marginBottom: 12,
+  },
+  ratingSectionTitle: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 13,
+    color: '#333333',
+    marginBottom: 8,
+  },
+  starPickerRow: {
+    flexDirection: 'row',
+    gap: 6,
+    marginVertical: 4,
+  },
+  starTouchItem: {
+    padding: 4,
+  },
+  starRatingDesc: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12,
+    color: '#D97706',
+    marginTop: 4,
+  },
+  criteriaPickerWrap: {
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+    marginBottom: 10,
+  },
+  criteriaPickerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 6,
+  },
+  criteriaPickerLabel: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: '#444444',
+  },
+  miniStarRow: {
+    flexDirection: 'row',
+  },
+  labelCountRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  charCountText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 11,
+  },
+  anonymousToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 12,
+    paddingVertical: 4,
+  },
+  anonymousToggleText: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: '#666666',
+    flex: 1,
+  },
+  disputeWarningAlert: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 12,
+    gap: 8,
+  },
+  disputeWarningText: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: '#991B1B',
+    lineHeight: 17,
+    flex: 1,
+  },
+  disputeReasonItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#F9FAFB',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+    padding: 10,
+  },
+  disputeReasonItemActive: {
+    borderColor: '#DC2626',
+    backgroundColor: '#FEF2F2',
+  },
+  disputeReasonLabel: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 12,
+    color: '#374151',
+  },
+  disputeReasonDesc: {
+    fontFamily: fonts.body,
+    fontSize: 11,
+    color: '#6B7280',
+    marginTop: 2,
+    lineHeight: 15,
   },
 });

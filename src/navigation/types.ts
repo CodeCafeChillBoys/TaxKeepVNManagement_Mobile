@@ -105,6 +105,14 @@ export type RootStackParamList = {
   ExpertBookings: { initialTab?: 'pending' | 'all' } | undefined;
   ExpertSlots: undefined;
   ExpertApplication: undefined;
+  PaymentResult: {
+    bookingId?: string;
+    isSuccess?: boolean;
+    vnp_ResponseCode?: string;
+    vnp_TxnRef?: string;
+    message?: string;
+    vnpParams?: Record<string, string>;
+  };
 };
 
 export type RootNavigationProp = NativeStackNavigationProp<RootStackParamList>;

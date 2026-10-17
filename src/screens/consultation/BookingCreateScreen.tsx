@@ -39,32 +39,6 @@ import {
 const MAX_ATTACHMENTS = 5;
 const MAX_TOTAL_SIZE_MB = 25;
 
-const SERVICE_OPTIONS: {
-  key: SessionType;
-  label: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  desc: string;
-}[] = [
-  {
-    key: 'ONLINE_MEETING',
-    label: 'Họp trực tuyến (Video)',
-    icon: 'videocam-outline',
-    desc: 'Gọi video tương tác trực tiếp',
-  },
-  {
-    key: 'CHAT',
-    label: 'Nhắn tin tư vấn',
-    icon: 'chatbubbles-outline',
-    desc: 'Hỏi đáp & gửi chứng từ qua chat',
-  },
-  {
-    key: 'VOICE_CALL',
-    label: 'Gọi thoại trực tiếp',
-    icon: 'call-outline',
-    desc: 'Tư vấn nhanh qua đường thoại',
-  },
-];
-
 interface SelectedFile {
   uri: string;
   name: string;
@@ -138,17 +112,18 @@ export const BookingCreateScreen: React.FC = () => {
               setSelectedSessionType(initSlot.sessionType);
               setSelectedDate(initSlot.slotDate);
             }
-          } else if (slots.length > 0) {
-            const firstTypeWithSlots =
-              (['ONLINE_MEETING', 'CHAT', 'VOICE_CALL'] as SessionType[]).find((t) =>
-                slots.some((s) => s.sessionType === t)
-              ) || 'ONLINE_MEETING';
-            setSelectedSessionType(firstTypeWithSlots);
-            const slotsForType = slots.filter((s) => s.sessionType === firstTypeWithSlots);
+          } else if (detail.feePackages && detail.feePackages.length > 0) {
+            const firstType = detail.feePackages[0].sessionType;
+            setSelectedSessionType(firstType);
+            const slotsForType = slots.filter((s) => s.sessionType === firstType);
             if (slotsForType.length > 0) {
               setSelectedDate(slotsForType[0].slotDate);
               setSelectedSlotId(slotsForType[0].id);
             }
+          } else if (slots.length > 0) {
+            setSelectedSessionType(slots[0].sessionType);
+            setSelectedDate(slots[0].slotDate);
+            setSelectedSlotId(slots[0].id);
           }
         }
       } catch (err: any) {
@@ -172,6 +147,75 @@ export const BookingCreateScreen: React.FC = () => {
       mounted = false;
     };
   }, [expertProfileId, initialSlotId, initialSpecId]);
+
+// Helper: Tính thời lượng phút giữa 2 mốc giờ
+const getSlotDurationMinutes = (startTime?: string, endTime?: string): number => {
+  if (!startTime || !endTime) return 60;
+  try {
+    const [sh, sm] = startTime.split(':').map(Number);
+    const [eh, em] = endTime.split(':').map(Number);
+    const diff = (eh * 60 + (em || 0)) - (sh * 60 + (sm || 0));
+    return diff > 0 ? diff : 60;
+  } catch {
+    return 60;
+  }
+};
+
+  // Danh sách các gói dịch vụ tư vấn niêm yết của chuyên gia gom nhóm duy nhất theo sessionType (Tránh Duplicate Key)
+  const dynamicServicePackages = useMemo(() => {
+    if (!expert) return [];
+
+    const feeSessionTypes = expert.feePackages ? expert.feePackages.map((p) => p.sessionType) : [];
+    const slotSessionTypes = availableSlots.map((s) => s.sessionType);
+    const distinctTypes = Array.from(new Set([...feeSessionTypes, ...slotSessionTypes]));
+
+    return distinctTypes.map((type) => {
+      const sInfo = formatSessionType(type);
+      const pkgs = (expert.feePackages || [])
+        .filter((p) => p.sessionType === type)
+        .sort((a, b) => a.durationMinutes - b.durationMinutes);
+
+      const slotCount = availableSlots.filter((s) => s.sessionType === type).length;
+      const minFee = pkgs.length > 0 ? Math.min(...pkgs.map((p) => p.fee)) : 0;
+      const maxFee = pkgs.length > 0 ? Math.max(...pkgs.map((p) => p.fee)) : 0;
+
+      // Chuỗi hiển thị mức giá chính
+      let feeDisplay = 'Liên hệ';
+      if (pkgs.length === 1) {
+        feeDisplay = `${formatVnd(pkgs[0].fee)} / ${pkgs[0].durationMinutes}p`;
+      } else if (pkgs.length > 1) {
+        if (minFee === maxFee) {
+          feeDisplay = formatVnd(minFee);
+        } else {
+          feeDisplay = `Từ ${formatVnd(minFee)}`;
+        }
+      }
+
+      // Chuỗi tóm tắt biểu phí theo các mốc thời lượng (ví dụ: "30p: 300.000 đ • 60p: 500.000 đ")
+      const feeTiersText = pkgs.length > 1
+        ? pkgs.map((p) => `${p.durationMinutes}p: ${formatVnd(p.fee)}`).join('  •  ')
+        : '';
+
+      return {
+        sessionType: type,
+        label: sInfo.fullLabel || sInfo.label,
+        icon: sInfo.icon as keyof typeof Ionicons.glyphMap,
+        color: sInfo.color,
+        minFee,
+        maxFee,
+        feeDisplay,
+        feeTiersText,
+        packages: pkgs,
+        slotCount,
+        desc:
+          type === 'ONLINE_MEETING'
+            ? 'Gọi video tương tác và chia sẻ màn hình trực tiếp'
+            : type === 'CHAT'
+            ? 'Hỏi đáp & gửi hồ sơ chứng từ qua tin nhắn'
+            : 'Tư vấn trực tiếp qua đường truyền thoại',
+      };
+    });
+  }, [expert, availableSlots]);
 
   // Switch session type: reset slot and update date
   const handleSelectSessionType = (type: SessionType) => {
@@ -558,83 +602,111 @@ export const BookingCreateScreen: React.FC = () => {
             Chọn hình thức bạn mong muốn để xem lịch và khung giờ tương ứng
           </Text>
 
-          <View style={styles.serviceTypesList}>
-            {SERVICE_OPTIONS.map((srv) => {
-              const isSelected = selectedSessionType === srv.key;
-              const feePkg = expert?.feePackages?.find((p) => p.sessionType === srv.key);
-              const feeVal = feePkg ? feePkg.fee : 0;
-              const slotCount = availableSlots.filter((s) => s.sessionType === srv.key).length;
+          {dynamicServicePackages.length === 0 ? (
+            <View style={styles.emptySlotWarning}>
+              <Ionicons name="alert-circle" size={18} color="#D97706" />
+              <Text style={styles.emptySlotWarningText}>
+                Chuyên gia hiện chưa niêm yết gói dịch vụ hoặc khung giờ tư vấn nào.
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.serviceTypesList}>
+              {dynamicServicePackages.map((srv) => {
+                const isSelected = selectedSessionType === srv.sessionType;
 
-              return (
-                <TouchableOpacity
-                  key={srv.key}
-                  style={[
-                    styles.serviceCardItem,
-                    isSelected && styles.serviceCardItemActive,
-                  ]}
-                  onPress={() => handleSelectSessionType(srv.key)}
-                  activeOpacity={0.85}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Chọn hình thức ${srv.label}`}
-                >
-                  <View style={styles.serviceCardLeft}>
-                    <View
-                      style={[
-                        styles.serviceIconWrap,
-                        isSelected && styles.serviceIconWrapActive,
-                      ]}
-                    >
-                      <Ionicons
-                        name={srv.icon}
-                        size={20}
-                        color={isSelected ? '#FFFFFF' : theme.colors.primary}
-                      />
-                    </View>
-                    <View style={styles.serviceInfoCol}>
-                      <Text
+                // Nếu hình thức này đang được chọn và người dùng đã chọn slot, tính giá chính xác theo thời lượng slot
+                const selectedSlotDur =
+                  isSelected && selectedSlot && selectedSlot.sessionType === srv.sessionType
+                    ? getSlotDurationMinutes(selectedSlot.startTime, selectedSlot.endTime)
+                    : null;
+
+                const matchedSlotPkg = selectedSlotDur
+                  ? srv.packages.find((p) => p.durationMinutes === selectedSlotDur)
+                  : null;
+
+                const activeFeeDisplay = matchedSlotPkg
+                  ? formatVnd(matchedSlotPkg.fee)
+                  : srv.feeDisplay;
+
+                return (
+                  <TouchableOpacity
+                    key={`srv_${srv.sessionType}`}
+                    style={[
+                      styles.serviceCardItem,
+                      isSelected && styles.serviceCardItemActive,
+                    ]}
+                    onPress={() => handleSelectSessionType(srv.sessionType)}
+                    activeOpacity={0.85}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Chọn hình thức ${srv.label}`}
+                  >
+                    <View style={styles.serviceCardLeft}>
+                      <View
                         style={[
-                          styles.serviceName,
-                          isSelected && styles.serviceNameActive,
+                          styles.serviceIconWrap,
+                          isSelected && styles.serviceIconWrapActive,
                         ]}
                       >
-                        {srv.label}
-                      </Text>
-                      <Text style={styles.serviceDesc}>{srv.desc}</Text>
+                        <Ionicons
+                          name={srv.icon}
+                          size={20}
+                          color={isSelected ? '#FFFFFF' : theme.colors.primary}
+                        />
+                      </View>
+                      <View style={styles.serviceInfoCol}>
+                        <Text
+                          style={[
+                            styles.serviceName,
+                            isSelected && styles.serviceNameActive,
+                          ]}
+                        >
+                          {srv.label}
+                        </Text>
+                        <Text style={styles.serviceDesc}>{srv.desc}</Text>
+                        {srv.feeTiersText ? (
+                          <Text style={styles.serviceTiersText}>{srv.feeTiersText}</Text>
+                        ) : null}
+                      </View>
                     </View>
-                  </View>
 
-                  <View style={styles.serviceCardRight}>
-                    <View style={styles.servicePriceRow}>
-                      <Text style={styles.servicePrice}>
-                        {feeVal > 0 ? formatVnd(feeVal) : 'Liên hệ'}
-                      </Text>
-                      <Ionicons
-                        name={isSelected ? 'checkmark-circle' : 'ellipse-outline'}
-                        size={20}
-                        color={isSelected ? theme.colors.primary : '#C4B5A5'}
-                        style={{ marginLeft: 6 }}
-                      />
-                    </View>
-                    <View
-                      style={[
-                        styles.serviceSlotBadge,
-                        slotCount === 0 && styles.serviceSlotBadgeEmpty,
-                      ]}
-                    >
-                      <Text
+                    <View style={styles.serviceCardRight}>
+                      <View style={styles.servicePriceRow}>
+                        <Text style={styles.servicePrice}>
+                          {activeFeeDisplay}
+                        </Text>
+                        <Ionicons
+                          name={isSelected ? 'checkmark-circle' : 'ellipse-outline'}
+                          size={20}
+                          color={isSelected ? theme.colors.primary : '#C4B5A5'}
+                          style={{ marginLeft: 6 }}
+                        />
+                      </View>
+                      {matchedSlotPkg && selectedSlotDur ? (
+                        <Text style={styles.selectedDurationHint}>
+                          Đã chọn: {selectedSlotDur} phút
+                        </Text>
+                      ) : null}
+                      <View
                         style={[
-                          styles.serviceSlotBadgeText,
-                          slotCount === 0 && styles.serviceSlotBadgeTextEmpty,
+                          styles.serviceSlotBadge,
+                          srv.slotCount === 0 && styles.serviceSlotBadgeEmpty,
                         ]}
                       >
-                        {slotCount > 0 ? `${slotCount} khung giờ` : 'Tạm hết lịch'}
-                      </Text>
+                        <Text
+                          style={[
+                            styles.serviceSlotBadgeText,
+                            srv.slotCount === 0 && styles.serviceSlotBadgeTextEmpty,
+                          ]}
+                        >
+                          {srv.slotCount > 0 ? `${srv.slotCount} khung giờ` : 'Tạm hết lịch'}
+                        </Text>
+                      </View>
                     </View>
-                  </View>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          )}
         </View>
 
         {/* ── 3. LỊCH & KHUNG GIỜ CỦA HÌNH THỨC ĐÃ CHỌN ── */}
@@ -643,7 +715,9 @@ export const BookingCreateScreen: React.FC = () => {
             <Ionicons name="calendar-outline" size={18} color={theme.colors.primary} />
             <Text style={styles.sectionTitle}>
               2. Lịch & Khung giờ:{' '}
-              {SERVICE_OPTIONS.find((s) => s.key === selectedSessionType)?.label}
+              {dynamicServicePackages.find((s) => s.sessionType === selectedSessionType)?.label ||
+                formatSessionType(selectedSessionType).fullLabel ||
+                formatSessionType(selectedSessionType).label}
             </Text>
             <Text style={styles.requiredMark}>*</Text>
           </View>
@@ -707,6 +781,10 @@ export const BookingCreateScreen: React.FC = () => {
                     {slotsForSelectedDate.map((slot) => {
                       const isSelected = selectedSlotId === slot.id;
                       const sInfo = formatSessionType(slot.sessionType);
+                      const slotDur = getSlotDurationMinutes(slot.startTime, slot.endTime);
+                      const matchedSlotFee = expert?.feePackages?.find(
+                        (p) => p.sessionType === slot.sessionType && p.durationMinutes === slotDur
+                      )?.fee;
 
                       return (
                         <TouchableOpacity
@@ -735,6 +813,16 @@ export const BookingCreateScreen: React.FC = () => {
                           >
                             {formatTimeRange(slot.startTime, slot.endTime)}
                           </Text>
+                          <View style={styles.slotDurationRow}>
+                            <Text
+                              style={[
+                                styles.slotDurationText,
+                                isSelected && styles.slotTextActive,
+                              ]}
+                            >
+                              {slotDur} phút{matchedSlotFee ? ` • ${formatVnd(matchedSlotFee)}` : ''}
+                            </Text>
+                          </View>
                         </TouchableOpacity>
                       );
                     })}
@@ -913,8 +1001,19 @@ export const BookingCreateScreen: React.FC = () => {
                 <Text style={styles.previewLabel}>Hình thức:</Text>
                 <Text style={styles.previewValue}>
                   {formatSessionType(previewData.sessionType).fullLabel ||
-                    formatSessionType(previewData.sessionType).label}{' '}
-                  ({previewData.durationMinutes} phút)
+                    formatSessionType(previewData.sessionType).label}
+                </Text>
+              </View>
+
+              <View style={styles.previewRow}>
+                <Text style={styles.previewLabel}>Thời lượng phiên:</Text>
+                <Text style={styles.previewValueBold}>{previewData.durationMinutes} phút</Text>
+              </View>
+
+              <View style={styles.previewRow}>
+                <Text style={styles.previewLabel}>Biểu phí niêm yết:</Text>
+                <Text style={styles.previewValue}>
+                  {formatVnd(previewData.totalFee)} / gói {previewData.durationMinutes} phút
                 </Text>
               </View>
 
@@ -928,6 +1027,13 @@ export const BookingCreateScreen: React.FC = () => {
               <View style={styles.previewFeeRow}>
                 <Text style={styles.previewFeeLabel}>Tổng chi phí phiên tư vấn:</Text>
                 <Text style={styles.previewFeeValue}>{formatVnd(previewData.totalFee)}</Text>
+              </View>
+
+              <View style={styles.feeExplanationBox}>
+                <Ionicons name="information-circle" size={16} color="#1E40AF" style={{ marginTop: 1 }} />
+                <Text style={styles.feeExplanationText}>
+                  Chi phí được tính dựa trên thời lượng thực tế của khung giờ bạn đã chọn ({previewData.durationMinutes} phút) theo bảng biểu phí niêm yết của chuyên gia.
+                </Text>
               </View>
 
               <View style={styles.holdNoticeBox}>
@@ -1186,6 +1292,12 @@ const styles = StyleSheet.create({
     color: '#786F66',
     marginTop: 2,
   },
+  serviceTiersText: {
+    fontFamily: fonts.body,
+    fontSize: 10,
+    color: '#92400E',
+    marginTop: 3,
+  },
   serviceCardRight: {
     alignItems: 'flex-end',
     gap: 4,
@@ -1199,6 +1311,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: theme.colors.primaryDark,
     fontVariant: ['tabular-nums'],
+  },
+  selectedDurationHint: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 10,
+    color: theme.colors.primary,
+    marginTop: 1,
   },
   serviceSlotBadge: {
     backgroundColor: '#ECFDF5',
@@ -1311,6 +1429,14 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: theme.colors.textPrimary,
     fontVariant: ['tabular-nums'],
+  },
+  slotDurationRow: {
+    marginTop: 2,
+  },
+  slotDurationText: {
+    fontFamily: fonts.body,
+    fontSize: 10,
+    color: '#666666',
   },
   slotTextActive: {
     color: '#FFFFFF',
@@ -1541,6 +1667,24 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: theme.colors.primary,
     fontVariant: ['tabular-nums'],
+  },
+  feeExplanationBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#EFF6FF',
+    padding: 8,
+    borderRadius: 6,
+    gap: 6,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    marginTop: 4,
+  },
+  feeExplanationText: {
+    flex: 1,
+    fontFamily: fonts.body,
+    fontSize: 11,
+    color: '#1E3A8A',
+    lineHeight: 15,
   },
   holdNoticeBox: {
     flexDirection: 'row',

@@ -16,7 +16,8 @@ export type BookingStatus =
   | 'CANCELLED_BY_EXPERT'
   | 'IN_PROGRESS'
   | 'COMPLETED'
-  | 'SETTLED';
+  | 'SETTLED'
+  | 'UNDER_DISPUTE';
 
 export type EscrowStatus =
   | 'PendingPayment'
@@ -395,6 +396,14 @@ export function formatBookingStatus(status?: BookingStatus | string): {
         bg: '#D1FAE5',
         icon: 'cash-outline',
         desc: 'Khoản thù lao đã được quyết toán và giải ngân cho chuyên gia.',
+      };
+    case 'UNDER_DISPUTE':
+      return {
+        label: 'Đang khiếu nại',
+        color: '#DC2626',
+        bg: '#FEF2F2',
+        icon: 'alert-circle-outline',
+        desc: 'Phiên tư vấn đang có khiếu nại chất lượng. Tiền ký quỹ Escrow đã được đóng băng an toàn.',
       };
     default:
       return {
@@ -875,5 +884,141 @@ export interface ExpertSlotDetailResponse {
   createdAt: string;
   updatedAt: string;
 }
+
+// ══════════════════════════════════════════════════════════════════
+// ĐÁNH GIÁ & FEEDBACK (Đặc tả 6)
+// ══════════════════════════════════════════════════════════════════
+
+export interface ReviewDetailScoresDto {
+  expertise?: number | null;
+  punctuality?: number | null;
+  communication?: number | null;
+  problemSolving?: number | null;
+}
+
+export interface CreateReviewRequest {
+  rating: number; // 1-5
+  comment: string; // >= 10 chars
+  detailScores?: ReviewDetailScoresDto;
+  isAnonymous?: boolean;
+}
+
+export interface ReviewDetailResponse {
+  id: string;
+  bookingId: string;
+  expertProfileId: string;
+  userId: string;
+  reviewerName: string;
+  rating: number;
+  comment?: string | null;
+  detailScores?: ReviewDetailScoresDto | null;
+  isAnonymous: boolean;
+  isPublished: boolean;
+  isFlaggedForReview: boolean;
+  expertReply?: string | null;
+  expertRepliedAt?: string | null;
+  createdAt: string;
+}
+
+export interface ReviewEligibilityResponse {
+  canReview: boolean;
+  alreadyReviewed: boolean;
+  reviewDeadline?: string | null;
+  remainingSeconds?: number | null;
+  message?: string | null;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// KHIẾU NẠI & TRANH CHẤP ESCROW (Đặc tả 7)
+// ══════════════════════════════════════════════════════════════════
+
+export type DisputeReasonCode =
+  | 'WRONG_TAX_LAW_ADVICE'
+  | 'UNPROFESSIONAL_BEHAVIOR'
+  | 'EARLY_DISCONNECT'
+  | 'NETWORK_ISSUE'
+  | 'OTHER';
+
+export interface CreateDisputeRequest {
+  reason: DisputeReasonCode | string;
+  description: string;
+  evidenceUrls?: string[];
+}
+
+export interface ExpertRespondDisputeRequest {
+  response: string;
+  evidenceUrls?: string[];
+}
+
+export interface DisputeDetailResponse {
+  id: string;
+  bookingId: string;
+  bookingCode: string;
+  totalFee: number;
+  userId: string;
+  taxpayerFullName: string;
+  taxpayerPhone?: string | null;
+  expertUserId: string;
+  expertFullName: string;
+  reason: string;
+  description: string;
+  evidenceUrls: string[];
+  status: 'PENDING_EXPERT_RESPONSE' | 'PENDING_ADMIN_REVIEW' | 'RESOLVED' | string;
+  expertResponse?: string | null;
+  expertEvidenceUrls: string[];
+  expertRespondedAt?: string | null;
+  expertResponseDeadline?: string | null;
+  expertRemainingSeconds?: number | null;
+  adminDecisionType?: 'FULL_REFUND' | 'SETTLE_EXPERT' | 'PARTIAL' | string | null;
+  adminResolution?: string | null;
+  refundRatePercent?: number | null;
+  userRefundAmount: number;
+  expertSettlementAmount: number;
+  platformFeeAmount: number;
+  adminNotes?: string | null;
+  resolvedBy?: string | null;
+  resolvedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DisputeEligibilityResponse {
+  canDispute: boolean;
+  alreadyDisputed: boolean;
+  disputeDeadline?: string | null;
+  remainingSeconds?: number | null;
+  message?: string | null;
+}
+
+export const formatDisputeReason = (reason: string): string => {
+  switch (reason) {
+    case 'WRONG_TAX_LAW_ADVICE':
+      return 'Tư vấn sai luật thuế / gây rủi ro pháp lý';
+    case 'UNPROFESSIONAL_BEHAVIOR':
+      return 'Thái độ thiếu chuyên nghiệp / xúc phạm';
+    case 'EARLY_DISCONNECT':
+      return 'Chuyên gia rời phòng sớm / không đủ thời lượng';
+    case 'NETWORK_ISSUE':
+      return 'Sự cố kết nối từ phía chuyên gia';
+    case 'OTHER':
+    default:
+      return 'Lý do khác';
+  }
+};
+
+export const formatDisputeStatus = (
+  status?: string | null
+): { label: string; color: string; bg: string } => {
+  switch (status) {
+    case 'PENDING_EXPERT_RESPONSE':
+      return { label: 'Chờ chuyên gia giải trình', color: '#D97706', bg: '#FEF3C7' };
+    case 'PENDING_ADMIN_REVIEW':
+      return { label: 'Ban quản trị đang xử lý', color: '#2563EB', bg: '#EFF6FF' };
+    case 'RESOLVED':
+      return { label: 'Đã giải quyết', color: '#059669', bg: '#ECFDF5' };
+    default:
+      return { label: status || 'Đang xử lý', color: '#6B7280', bg: '#F3F4F6' };
+  }
+};
 
 

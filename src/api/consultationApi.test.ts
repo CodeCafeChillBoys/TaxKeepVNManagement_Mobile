@@ -316,6 +316,31 @@ describe('consultationApi', () => {
       expect(res).toEqual(mockEscrow);
     });
 
+    it('handleVnPayReturn calls GET /api/v1/payments/vnpay-return', async () => {
+      const mockResult = {
+        id: 'escrow-1',
+        bookingId: 'b-1',
+        amount: 300000,
+        escrowStatus: 'HeldInEscrow',
+        commissionRate: 10,
+      };
+      mockGet.mockResolvedValueOnce({
+        data: { success: true, data: mockResult },
+      });
+
+      const res = await consultationApi.handleVnPayReturn({
+        vnp_ResponseCode: '00',
+        vnp_TxnRef: '123456',
+      });
+      expect(mockGet).toHaveBeenCalledWith('/api/v1/payments/vnpay-return', {
+        params: {
+          vnp_ResponseCode: '00',
+          vnp_TxnRef: '123456',
+        },
+      });
+      expect(res).toEqual(mockResult);
+    });
+
     it('joinConsultation calls POST /api/v1/consultations/{id}/join', async () => {
       const mockJoin = {
         sessionId: 's-1',
@@ -500,6 +525,84 @@ describe('consultationApi', () => {
 
       await consultationApi.deleteSlot('slot-1');
       expect(apiClient.delete).toHaveBeenCalledWith('/api/v1/expert/slots/slot-1');
+    });
+  });
+
+  describe('Review and Feedback Flow (Đặc tả 6)', () => {
+    it('checkReviewEligibility calls GET /api/v1/bookings/{id}/review-eligibility', async () => {
+      const mockElig = { canReview: true, alreadyReviewed: false };
+      mockGet.mockResolvedValueOnce({ data: { success: true, data: mockElig } });
+      const res = await consultationApi.checkReviewEligibility('b-1');
+      expect(mockGet).toHaveBeenCalledWith('/api/v1/bookings/b-1/review-eligibility');
+      expect(res).toEqual(mockElig);
+    });
+
+    it('submitReview calls POST /api/v1/bookings/{id}/reviews', async () => {
+      const req = {
+        rating: 5,
+        comment: 'Chuyên gia tư vấn rất nhiệt tình và chính xác.',
+      };
+      const mockReview = { id: 'rev-1', bookingId: 'b-1', rating: 5 };
+      mockPost.mockResolvedValueOnce({ data: { success: true, data: mockReview } });
+      const res = await consultationApi.submitReview('b-1', req);
+      expect(mockPost).toHaveBeenCalledWith('/api/v1/bookings/b-1/reviews', req);
+      expect(res).toEqual(mockReview);
+    });
+
+    it('getBookingReview calls GET /api/v1/bookings/{id}/review', async () => {
+      const mockReview = { id: 'rev-1', rating: 5, comment: 'Tuyệt vời' };
+      mockGet.mockResolvedValueOnce({ data: { success: true, data: mockReview } });
+      const res = await consultationApi.getBookingReview('b-1');
+      expect(mockGet).toHaveBeenCalledWith('/api/v1/bookings/b-1/review');
+      expect(res).toEqual(mockReview);
+    });
+  });
+
+  describe('Disbursement and Dispute Flow (Đặc tả 7)', () => {
+    it('confirmSatisfaction calls POST /api/v1/bookings/{id}/confirm-satisfaction', async () => {
+      mockPost.mockResolvedValueOnce({
+        data: { success: true, message: 'Xác nhận hài lòng thành công.' },
+      });
+      const res = await consultationApi.confirmSatisfaction('b-1');
+      expect(mockPost).toHaveBeenCalledWith('/api/v1/bookings/b-1/confirm-satisfaction');
+      expect(res).toBe('Xác nhận hài lòng thành công.');
+    });
+
+    it('checkDisputeEligibility calls GET /api/v1/bookings/{id}/dispute-eligibility', async () => {
+      const mockElig = { canDispute: true, alreadyDisputed: false };
+      mockGet.mockResolvedValueOnce({ data: { success: true, data: mockElig } });
+      const res = await consultationApi.checkDisputeEligibility('b-1');
+      expect(mockGet).toHaveBeenCalledWith('/api/v1/bookings/b-1/dispute-eligibility');
+      expect(res).toEqual(mockElig);
+    });
+
+    it('submitDispute calls POST /api/v1/bookings/{id}/disputes', async () => {
+      const req = {
+        reason: 'WRONG_TAX_LAW_ADVICE',
+        description: 'Chuyên gia hướng dẫn sai quy định thuế TNCN 2026.',
+      };
+      const mockDispute = { id: 'disp-1', bookingId: 'b-1', status: 'PENDING_EXPERT_RESPONSE' };
+      mockPost.mockResolvedValueOnce({ data: { success: true, data: mockDispute } });
+      const res = await consultationApi.submitDispute('b-1', req);
+      expect(mockPost).toHaveBeenCalledWith('/api/v1/bookings/b-1/disputes', req);
+      expect(res).toEqual(mockDispute);
+    });
+
+    it('getBookingDispute calls GET /api/v1/bookings/{id}/dispute', async () => {
+      const mockDispute = { id: 'disp-1', status: 'PENDING_ADMIN_REVIEW' };
+      mockGet.mockResolvedValueOnce({ data: { success: true, data: mockDispute } });
+      const res = await consultationApi.getBookingDispute('b-1');
+      expect(mockGet).toHaveBeenCalledWith('/api/v1/bookings/b-1/dispute');
+      expect(res).toEqual(mockDispute);
+    });
+
+    it('expertRespondDispute calls POST /api/v1/expert/disputes/{id}/respond', async () => {
+      const req = { response: 'Tôi đã giải thích đầy đủ các điều khoản luật.' };
+      const mockDisp = { id: 'disp-1', status: 'PENDING_ADMIN_REVIEW' };
+      mockPost.mockResolvedValueOnce({ data: { success: true, data: mockDisp } });
+      const res = await consultationApi.expertRespondDispute('disp-1', req);
+      expect(mockPost).toHaveBeenCalledWith('/api/v1/expert/disputes/disp-1/respond', req);
+      expect(res).toEqual(mockDisp);
     });
   });
 });

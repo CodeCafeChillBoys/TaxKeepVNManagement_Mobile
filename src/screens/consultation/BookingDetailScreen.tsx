@@ -50,6 +50,7 @@ import {
   canUserReview,
   canUserDispute,
   canConfirmSatisfaction,
+  canExpertComplete,
   validateReviewInput,
   validateDisputeInput,
   validateExpertResponse,
@@ -1534,15 +1535,17 @@ export const BookingDetailScreen: React.FC = () => {
                   <Text style={styles.dossierBtnText}>Hồ sơ thuế chia sẻ</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity
-                  style={styles.completeBtn}
-                  onPress={() => setCompleteModalVisible(true)}
-                  accessibilityRole="button"
-                  accessibilityLabel="Biên bản & Hoàn thành"
-                >
-                  <Ionicons name="checkmark-done-circle-outline" size={16} color="#059669" />
-                  <Text style={styles.completeBtnText}>Biên bản & Kết thúc</Text>
-                </TouchableOpacity>
+                {canExpertComplete(booking.status, isExpertView) && (
+                  <TouchableOpacity
+                    style={styles.completeBtn}
+                    onPress={() => setCompleteModalVisible(true)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Biên bản & Hoàn thành"
+                  >
+                    <Ionicons name="checkmark-done-circle-outline" size={16} color="#059669" />
+                    <Text style={styles.completeBtnText}>Biên bản & Kết thúc</Text>
+                  </TouchableOpacity>
+                )}
               </View>
 
               <TouchableOpacity
@@ -2021,70 +2024,72 @@ export const BookingDetailScreen: React.FC = () => {
       </Modal>
 
       {/* ── MODAL BIÊN BẢN & KẾT THÚC CA (EXPERT) ── */}
-      <Modal
-        visible={completeModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setCompleteModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.cancelModalBox}>
-            <View style={styles.cancelModalHeader}>
-              <Ionicons name="checkmark-done-circle" size={28} color="#059669" />
-              <Text style={[styles.cancelModalTitle, { color: '#065F46' }]}>
-                Hoàn tất & Lưu biên bản ca tư vấn
+      {canExpertComplete(booking.status, isExpertView) && (
+        <Modal
+          visible={completeModalVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setCompleteModalVisible(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.cancelModalBox}>
+              <View style={styles.cancelModalHeader}>
+                <Ionicons name="checkmark-done-circle" size={28} color="#059669" />
+                <Text style={[styles.cancelModalTitle, { color: '#065F46' }]}>
+                  Hoàn tất & Lưu biên bản ca tư vấn
+                </Text>
+              </View>
+
+              <Text style={styles.cancelModalDesc}>
+                Nhập tóm tắt kết quả tư vấn cho khách hàng. Biên bản này sẽ được lưu vào hồ sơ và hiển thị cho khách hàng.
               </Text>
-            </View>
 
-            <Text style={styles.cancelModalDesc}>
-              Nhập tóm tắt kết quả tư vấn cho khách hàng. Biên bản này sẽ được lưu vào hồ sơ và hiển thị cho khách hàng.
-            </Text>
-
-            <Text style={styles.reasonInputLabel}>
-              Biên bản tóm tắt kết quả tư vấn (tối thiểu 10 ký tự) *:
-            </Text>
-            <TextInput
-              style={styles.reasonInput}
-              placeholder="VD: Đã tư vấn hướng dẫn kê khai giảm trừ người phụ thuộc theo TT87, khách cần bổ sung giấy khai sinh..."
-              placeholderTextColor="#999999"
-              value={sharedNotes}
-              onChangeText={setSharedNotes}
-              multiline
-              numberOfLines={4}
-              textAlignVertical="top"
-            />
-
-            <View style={[styles.escrowNoticeBox, { marginBottom: 14 }]}>
-              <Ionicons name="information-circle" size={16} color="#B45309" />
-              <Text style={[styles.escrowNoticeText, { color: '#92400E' }]}>
-                Sau khi kết thúc, tiền ký quỹ sẽ chuyển sang trạng thái Chờ kết toán 24 giờ để bảo vệ quyền lợi hai bên trước khi giải ngân vào ví.
+              <Text style={styles.reasonInputLabel}>
+                Biên bản tóm tắt kết quả tư vấn (tối thiểu 10 ký tự) *:
               </Text>
-            </View>
+              <TextInput
+                style={styles.reasonInput}
+                placeholder="VD: Đã tư vấn hướng dẫn kê khai giảm trừ người phụ thuộc theo TT87, khách cần bổ sung giấy khai sinh..."
+                placeholderTextColor="#999999"
+                value={sharedNotes}
+                onChangeText={setSharedNotes}
+                multiline
+                numberOfLines={4}
+                textAlignVertical="top"
+              />
 
-            <View style={styles.cancelModalBtnRow}>
-              <TouchableOpacity
-                style={styles.cancelModalCloseBtn}
-                onPress={() => setCompleteModalVisible(false)}
-                disabled={completing}
-              >
-                <Text style={styles.cancelModalCloseBtnText}>Đóng</Text>
-              </TouchableOpacity>
+              <View style={[styles.escrowNoticeBox, { marginBottom: 14 }]}>
+                <Ionicons name="information-circle" size={16} color="#B45309" />
+                <Text style={[styles.escrowNoticeText, { color: '#92400E' }]}>
+                  Sau khi kết thúc, tiền ký quỹ sẽ chuyển sang trạng thái Chờ kết toán 24 giờ để bảo vệ quyền lợi hai bên trước khi giải ngân vào ví.
+                </Text>
+              </View>
 
-              <TouchableOpacity
-                style={[styles.cancelModalSubmitBtn, { backgroundColor: '#059669' }]}
-                onPress={handleConfirmComplete}
-                disabled={completing || sharedNotes.trim().length < 10}
-              >
-                {completing ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.cancelModalSubmitBtnText}>Xác nhận hoàn tất</Text>
-                )}
-              </TouchableOpacity>
+              <View style={styles.cancelModalBtnRow}>
+                <TouchableOpacity
+                  style={styles.cancelModalCloseBtn}
+                  onPress={() => setCompleteModalVisible(false)}
+                  disabled={completing}
+                >
+                  <Text style={styles.cancelModalCloseBtnText}>Đóng</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.cancelModalSubmitBtn, { backgroundColor: '#059669' }]}
+                  onPress={handleConfirmComplete}
+                  disabled={completing || sharedNotes.trim().length < 10}
+                >
+                  {completing ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.cancelModalSubmitBtnText}>Xác nhận hoàn tất</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
-        </View>
-      </Modal>
+        </Modal>
+      )}
 
       {/* ── MODAL BÁO VẮNG MẶT (NO-SHOW) ── */}
       <Modal

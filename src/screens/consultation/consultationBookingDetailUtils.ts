@@ -50,6 +50,18 @@ export function canConfirmSatisfaction(
 }
 
 /**
+ * Kiểm tra xem người dùng hiện tại có quyền lập biên bản và hoàn tất ca tư vấn hay không.
+ * Chỉ chuyên gia phụ trách ca tư vấn mới thấy và sử dụng chức năng này khi ca đang diễn ra hoặc đã xác nhận.
+ */
+export function canExpertComplete(
+  status: BookingStatus | string,
+  isExpertView: boolean
+): boolean {
+  if (!isExpertView) return false;
+  return status === 'CONFIRMED' || status === 'IN_PROGRESS';
+}
+
+/**
  * Kiểm tra hợp lệ dữ liệu đánh giá trước khi gửi lên API
  */
 export function validateReviewInput(

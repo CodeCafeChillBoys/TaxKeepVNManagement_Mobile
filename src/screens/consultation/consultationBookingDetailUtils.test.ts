@@ -2,6 +2,7 @@ import {
   canUserReview,
   canUserDispute,
   canConfirmSatisfaction,
+  canExpertComplete,
   validateReviewInput,
   validateDisputeInput,
   validateExpertResponse,
@@ -53,6 +54,26 @@ describe('consultationBookingDetailUtils', () => {
     it('returns true when status is COMPLETED and canDispute is true', () => {
       expect(canUserDispute('COMPLETED', false, { canDispute: true, alreadyDisputed: false })).toBe(true);
       expect(canConfirmSatisfaction('COMPLETED', false, { canDispute: true, alreadyDisputed: false })).toBe(true);
+    });
+  });
+
+  describe('canExpertComplete', () => {
+    it('returns false for customer view (isExpertView = false)', () => {
+      expect(canExpertComplete('CONFIRMED', false)).toBe(false);
+      expect(canExpertComplete('IN_PROGRESS', false)).toBe(false);
+      expect(canExpertComplete('COMPLETED', false)).toBe(false);
+    });
+
+    it('returns true for expert view when status is CONFIRMED or IN_PROGRESS', () => {
+      expect(canExpertComplete('CONFIRMED', true)).toBe(true);
+      expect(canExpertComplete('IN_PROGRESS', true)).toBe(true);
+    });
+
+    it('returns false for expert view when status is already COMPLETED or other statuses', () => {
+      expect(canExpertComplete('COMPLETED', true)).toBe(false);
+      expect(canExpertComplete('SETTLED', true)).toBe(false);
+      expect(canExpertComplete('CANCELLED', true)).toBe(false);
+      expect(canExpertComplete('AWAITING_EXPERT_APPROVAL', true)).toBe(false);
     });
   });
 

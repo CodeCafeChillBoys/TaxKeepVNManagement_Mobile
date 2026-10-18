@@ -105,6 +105,14 @@ function formatTime(t: string) {
   return t.slice(0, 5);
 }
 
+function toIsoTime(timeStr: string): string {
+  if (!timeStr) return '';
+  const [h, m, s] = timeStr.split(':');
+  const d = new Date();
+  d.setHours(Number(h) || 0, Number(m) || 0, Number(s) || 0, 0);
+  return d.toTimeString().slice(0, 8);
+}
+
 export const ExpertSlotsScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
 
@@ -161,9 +169,11 @@ export const ExpertSlotsScreen: React.FC = () => {
     const dates: { dateStr: string; label: string }[] = [];
     const today = new Date();
     for (let i = 0; i < 21; i++) {
-      const d = new Date(today);
-      d.setDate(d.getDate() + i);
-      const dateStr = d.toISOString().split('T')[0];
+      const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i);
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      const dateStr = `${y}-${m}-${day}`;
       const dayNames = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
       const label = i === 0 ? 'Hôm nay' : i === 1 ? 'Ngày mai' : `${dayNames[d.getDay()]}, ${d.getDate()}/${d.getMonth() + 1}`;
       dates.push({ dateStr, label });
@@ -290,16 +300,16 @@ export const ExpertSlotsScreen: React.FC = () => {
       if (modalMode === 'create') {
         const req: CreateExpertSlotRequest = {
           slotDate: selectedDate,
-          startTime,
-          endTime,
+          startTime: toIsoTime(startTime),
+          endTime: toIsoTime(endTime),
           sessionType,
         };
         await consultationApi.createSlot(req);
       } else if (editingSlot) {
         const req: UpdateExpertSlotRequest = {
           slotDate: selectedDate,
-          startTime,
-          endTime,
+          startTime: toIsoTime(startTime),
+          endTime: toIsoTime(endTime),
           sessionType,
           isActive,
         };

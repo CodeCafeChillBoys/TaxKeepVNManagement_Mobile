@@ -40,6 +40,13 @@ export function toFriendlyConsultationError(
     };
   }
 
+  if (upperCode === 'MAX_DAILY_SLOTS_EXCEEDED' || upperMsg.includes('MAX_DAILY_SLOTS_EXCEEDED') || upperMsg.includes('GIỚI HẠN TỐI ĐA')) {
+    return {
+      title: 'Đạt giới hạn trong ngày',
+      message: cleanRawTechnicalStrings(rawMsg) || 'Bạn đã đạt giới hạn số lượng khung giờ làm việc tối đa trong ngày theo chính sách của sàn.',
+    };
+  }
+
   if (upperCode === 'SLOT_ALREADY_BOOKED' || upperMsg.includes('SLOT_ALREADY_BOOKED') || upperMsg.includes('ĐÃ CÓ KHÁCH HÀNG ĐẶT')) {
     return {
       title: 'Khung giờ đã có khách',
@@ -58,6 +65,13 @@ export function toFriendlyConsultationError(
     return {
       title: 'Không hợp lệ',
       message: 'Bạn không thể tự đặt lịch tư vấn với chính mình.',
+    };
+  }
+
+  if (upperCode === 'INTERNAL_SERVER_ERROR' || err?.response?.status === 500) {
+    return {
+      title: defaultTitle,
+      message: 'Hệ thống đang gặp sự cố tạm thời khi xử lý yêu cầu. Vui lòng thử lại sau giây lát.',
     };
   }
 

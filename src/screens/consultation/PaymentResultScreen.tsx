@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   ScrollView,
   ActivityIndicator,
+  BackHandler,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRoute, useNavigation, RouteProp } from '@react-navigation/native';
@@ -50,86 +51,91 @@ export const PaymentResultScreen: React.FC = () => {
         const responseCode = vnp_ResponseCode || vnpParams?.vnp_ResponseCode;
         const codeSuccess = responseCode === '00';
 
-        // 1. Chỉ gọi backend xử lý signature VNPay khi:
-        // - Chưa được xác nhận thành công qua Web hoặc route param
-        // - Có chứa thông số chữ ký vnp_SecureHash
-        if (
-          !passedSuccess &&
-          !codeSuccess &&
-          vnpParams &&
-          Object.keys(vnpParams).length > 0 &&
-          vnpParams.vnp_SecureHash
-        ) {
-          try {
-            const escrowRes = await consultationApi.handleVnPayReturn(vnpParams);
-            if (isMounted && escrowRes) {
-              setEscrow(escrowRes);
-            }
-          } catch (err: any) {
-            // Không bắn console.warn để tránh kích hoạt LogBox popup gây hoang mang
-            if (__DEV__ && !bookingId) {
-              console.log('handleVnPayReturn verification note:', err?.message);
-            }
-          }
-        }
-
-        // 2. Tải thông tin booking và escrow mới nhất để đối soát trực tiếp từ DB
         const effectiveBookingId =
           bookingId || escrow?.bookingId || (route.params as any)?.bookingId;
+
+        // 1. Tải thông tin booking và escrow từ DB trước
+        let isPaidBooking = false;
         if (effectiveBookingId) {
           const [bookingRes, escrowRes] = await Promise.allSettled([
             consultationApi.getBookingDetail(effectiveBookingId),
             consultationApi.getBookingEscrow(effectiveBookingId),
           ]);
 
-          let verifiedPaid = false;
-
           if (isMounted && bookingRes.status === 'fulfilled') {
             setBooking(bookingRes.value);
             const b = bookingRes.value;
-            const isPaidBooking =
+            if (
               Boolean(b.paidAt) ||
               b.status === 'AWAITING_EXPERT_APPROVAL' ||
               b.status === 'CONFIRMED' ||
-              b.status === 'IN_PROGRESS';
-
-            if (isPaidBooking || codeSuccess || passedSuccess) {
-              setIsSuccess(true);
-              verifiedPaid = true;
-            } else if (responseCode && responseCode !== '00') {
-              setIsSuccess(false);
+              b.status === 'IN_PROGRESS'
+            ) {
+              isPaidBooking = true;
             }
           }
 
           if (isMounted && escrowRes.status === 'fulfilled') {
             setEscrow(escrowRes.value);
             if (escrowRes.value.escrowStatus === 'HeldInEscrow') {
-              setIsSuccess(true);
-              verifiedPaid = true;
+              isPaidBooking = true;
             }
           }
-
-          // Nếu chưa tải được booking nhưng đã có cờ thành công từ Web
-          if (!verifiedPaid && (codeSuccess || passedSuccess)) {
-            setIsSuccess(true);
-          }
-        } else {
-          setIsSuccess(codeSuccess || passedSuccess);
         }
 
-        // 3. Diễn giải mã phản hồi nếu chưa thành công
-        if (responseCode && responseCode !== '00' && !passedSuccess && !codeSuccess) {
-          let errText = 'Giao dịch chưa hoàn tất.';
-          if (responseCode === '24') {
-            errText = 'Bạn đã hủy giao dịch.';
-          } else if (responseCode === '09') {
-            errText = 'Thẻ chưa kích hoạt thanh toán trực tuyến.';
-          } else if (responseCode === '51') {
-            errText = 'Số dư tài khoản không đủ.';
-          } else if (responseCode === '79') {
-            errText = 'Nhập sai mật khẩu quá số lần quy định.';
+        // 2. Nếu DB CHƯA ghi nhận thanh toán, nhưng có vnpParams và vnp_SecureHash:
+        // Kích hoạt gọi Backend đối soát (đóng vai trò fail-safe nếu Web chưa gọi hoặc bị lỗi mạng)
+        if (!isPaidBooking && vnpParams && Object.keys(vnpParams).length > 0 && vnpParams.vnp_SecureHash) {
+          try {
+            const escrowRes = await consultationApi.handleVnPayReturn(vnpParams);
+            if (isMounted && escrowRes) {
+              setEscrow(escrowRes);
+              if (escrowRes.escrowStatus === 'HeldInEscrow') {
+                isPaidBooking = true;
+              }
+            }
+            if (effectiveBookingId) {
+              const bRes = await consultationApi.getBookingDetail(effectiveBookingId);
+              if (isMounted) {
+                setBooking(bRes);
+                if (Boolean(bRes.paidAt) || bRes.status === 'AWAITING_EXPERT_APPROVAL') {
+                  isPaidBooking = true;
+                }
+              }
+            }
+          } catch (err: any) {
+            if (__DEV__) {
+              console.log('Mobile fallback handleVnPayReturn note:', err?.message);
+            }
           }
-          if (isMounted) setStatusMessage(errText);
+        }
+
+        // 3. Quyết định trạng thái hiển thị
+        if (isPaidBooking) {
+          setIsSuccess(true);
+        } else if (codeSuccess || passedSuccess) {
+          // VNPay báo thành công nhưng Backend DB chưa kịp ghi nhận
+          setIsSuccess(false);
+          if (isMounted) {
+            setStatusMessage(
+              'VNPay đã trừ tiền thành công nhưng hệ thống đang đồng bộ dữ liệu. Bạn vui lòng bấm "Thử lại" hoặc kiểm tra lại sau ít giây.'
+            );
+          }
+        } else {
+          setIsSuccess(false);
+          if (responseCode && responseCode !== '00') {
+            let errText = 'Giao dịch chưa hoàn tất.';
+            if (responseCode === '24') {
+              errText = 'Bạn đã hủy giao dịch.';
+            } else if (responseCode === '09') {
+              errText = 'Thẻ chưa kích hoạt thanh toán trực tuyến.';
+            } else if (responseCode === '51') {
+              errText = 'Số dư tài khoản không đủ.';
+            } else if (responseCode === '79') {
+              errText = 'Nhập sai mật khẩu quá số lần quy định.';
+            }
+            if (isMounted) setStatusMessage(errText);
+          }
         }
       } catch (err: any) {
         if (isMounted) {
@@ -146,6 +152,20 @@ export const PaymentResultScreen: React.FC = () => {
       isMounted = false;
     };
   }, [bookingId, vnp_ResponseCode, vnpParams]);
+
+  useEffect(() => {
+    const onBackPress = () => {
+      const targetId = bookingId || booking?.id;
+      if (targetId) {
+        navigation.replace('BookingDetail', { bookingId: targetId });
+        return true;
+      }
+      return false;
+    };
+
+    const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+    return () => sub.remove();
+  }, [bookingId, booking?.id, navigation]);
 
   const sessionInfo = useMemo(() => {
     if (!booking) return null;
@@ -170,8 +190,9 @@ export const PaymentResultScreen: React.FC = () => {
       <View style={styles.header}>
         <TouchableOpacity
           onPress={() => {
-            if (bookingId) {
-              navigation.replace('BookingDetail', { bookingId });
+            const targetId = bookingId || booking?.id;
+            if (targetId) {
+              navigation.replace('BookingDetail', { bookingId: targetId });
             } else {
               navigation.navigate('MyBookings');
             }
@@ -324,16 +345,24 @@ export const PaymentResultScreen: React.FC = () => {
             </>
           ) : (
             <>
+              <TouchableOpacity
+                style={styles.primaryBtn}
+                onPress={processPaymentResult}
+                activeOpacity={0.85}
+              >
+                <Ionicons name="refresh-outline" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
+                <Text style={styles.primaryBtnText}>Kiểm tra lại kết quả</Text>
+              </TouchableOpacity>
+
               {bookingId || booking?.id ? (
                 <TouchableOpacity
-                  style={styles.primaryBtn}
+                  style={styles.secondaryBtn}
                   onPress={() => {
                     navigation.replace('BookingDetail', { bookingId: (bookingId || booking?.id)! });
                   }}
-                  activeOpacity={0.85}
+                  activeOpacity={0.8}
                 >
-                  <Ionicons name="refresh-outline" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
-                  <Text style={styles.primaryBtnText}>Thử lại</Text>
+                  <Text style={styles.secondaryBtnText}>Chi tiết lịch hẹn</Text>
                 </TouchableOpacity>
               ) : null}
 

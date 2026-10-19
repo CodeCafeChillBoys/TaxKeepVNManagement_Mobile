@@ -13,7 +13,7 @@ import {
   AppState,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect, RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
@@ -183,8 +183,10 @@ export const BookingDetailScreen: React.FC = () => {
     return () => clearInterval(timer);
   }, []);
 
-  const fetchDetail = useCallback(async () => {
-    setLoading(true);
+  const fetchDetail = useCallback(async (silent: boolean = false) => {
+    if (!silent) {
+      setLoading(true);
+    }
     setError(null);
     try {
       const data = await consultationApi.getBookingDetail(bookingId);
@@ -219,13 +221,18 @@ export const BookingDetailScreen: React.FC = () => {
     } catch (err: any) {
       setError(err?.response?.data?.message || err?.message || 'Không thể tải chi tiết lịch hẹn.');
     } finally {
-      setLoading(false);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   }, [bookingId]);
 
-  useEffect(() => {
-    fetchDetail();
-  }, [fetchDetail]);
+  useFocusEffect(
+    useCallback(() => {
+      // Tự động tải lại thông tin mới nhất mỗi khi quay lại màn hình (ví dụ sau khi ấn back từ thanh toán)
+      fetchDetail(Boolean(booking));
+    }, [fetchDetail, Boolean(booking)])
+  );
 
   // Handle Cancel Booking
   const handleConfirmCancel = async () => {
@@ -483,11 +490,11 @@ export const BookingDetailScreen: React.FC = () => {
           }
 
           setPaymentModalVisible(false);
-          const effectiveSuccess = params.isSuccess === 'true' || params.vnp_ResponseCode === '00';
+          const effectiveSuccess = params.isSuccess === 'true';
           navigation.navigate('PaymentResult', {
             bookingId: params.bookingId || bookingId,
             vnp_ResponseCode: params.vnp_ResponseCode,
-            vnpParams: params.vnp_SecureHash && !effectiveSuccess ? params : undefined,
+            vnpParams: params.vnp_SecureHash ? params : undefined,
             isSuccess: effectiveSuccess,
           });
         }

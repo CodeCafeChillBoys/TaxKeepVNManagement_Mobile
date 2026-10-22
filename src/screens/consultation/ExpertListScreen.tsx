@@ -27,7 +27,7 @@ import type {
   ExpertSortBy,
   ExpertTimeFilter,
 } from '../../types/consultation';
-import { formatVnd, formatVietnameseDate } from '../../types/consultation';
+import { formatVnd, formatVietnameseDate, isValidAvatarUrl } from '../../types/consultation';
 
 const TIME_FILTERS: { key: ExpertTimeFilter; label: string }[] = [
   { key: 'All', label: 'Tất cả lịch' },
@@ -53,9 +53,7 @@ interface ExpertListItemCardProps {
 
 const ExpertListItemCard: React.FC<ExpertListItemCardProps> = ({ item, onPress }) => {
   const [imgError, setImgError] = useState(false);
-  const isValidHttp = Boolean(
-    item.avatarUrl && (item.avatarUrl.startsWith('http://') || item.avatarUrl.startsWith('https://'))
-  );
+  const isValidHttp = isValidAvatarUrl(item.avatarUrl);
   const nameParts = (item.fullName || 'Chuyên gia').trim().split(/\s+/);
   const displayInitial = (nameParts[nameParts.length - 1]?.charAt(0) || 'C').toUpperCase();
 
@@ -192,6 +190,8 @@ export const ExpertListScreen: React.FC = () => {
   const [selectedSpecId, setSelectedSpecId] = useState<number | null>(null);
   const [timeFilter, setTimeFilter] = useState<ExpertTimeFilter>('All');
   const [sortBy, setSortBy] = useState<ExpertSortBy>('Recommended');
+  const [dynamicSortOptions, setDynamicSortOptions] = useState<{ key: ExpertSortBy; label: string }[]>(SORT_OPTIONS);
+  const [defaultSortKey, setDefaultSortKey] = useState<ExpertSortBy>('Recommended');
   const [sortModalVisible, setSortModalVisible] = useState(false);
   const [specModalVisible, setSpecModalVisible] = useState(false);
   const [timeModalVisible, setTimeModalVisible] = useState(false);
@@ -237,21 +237,35 @@ export const ExpertListScreen: React.FC = () => {
     return featuredExperts.filter((e) => !isSelfExpert(e));
   }, [featuredExperts, isSelfExpert]);
 
-  // Tải danh mục lĩnh vực & chuyên gia nổi bật ban đầu
+  // Tải danh mục lĩnh vực, chuyên gia nổi bật & cấu hình sắp xếp tìm kiếm từ Admin ban đầu
   useEffect(() => {
     let mounted = true;
     (async () => {
       try {
-        const [specs, featured] = await Promise.all([
+        const [specs, featured, sortConfig] = await Promise.all([
           consultationApi.getSpecializations(true),
           consultationApi.getFeaturedExperts(5),
+          consultationApi.getExpertSortOptions().catch(() => null),
         ]);
         if (mounted) {
           setSpecializations(specs);
           setFeaturedExperts(featured);
+          if (sortConfig?.options && sortConfig.options.length > 0) {
+            setDynamicSortOptions(
+              sortConfig.options.map((opt) => ({
+                key: opt.value as ExpertSortBy,
+                label: opt.label,
+              }))
+            );
+            if (sortConfig.defaultSortBy) {
+              const defKey = sortConfig.defaultSortBy as ExpertSortBy;
+              setDefaultSortKey(defKey);
+              setSortBy(defKey);
+            }
+          }
         }
       } catch (e) {
-        console.warn('Load specs/featured error:', e);
+        console.warn('Load specs/featured/sortConfig error:', e);
       }
     })();
     return () => {
@@ -313,12 +327,16 @@ export const ExpertListScreen: React.FC = () => {
     setKeyword('');
     setSelectedSpecId(null);
     setTimeFilter('All');
-    setSortBy('Recommended');
+    setSortBy(defaultSortKey);
   };
 
   const currentSortLabel = useMemo(() => {
-    return SORT_OPTIONS.find((s) => s.key === sortBy)?.label || 'Sắp xếp';
-  }, [sortBy]);
+    return (
+      dynamicSortOptions.find((s) => s.key === sortBy)?.label ||
+      SORT_OPTIONS.find((s) => s.key === sortBy)?.label ||
+      'Sắp xếp'
+    );
+  }, [sortBy, dynamicSortOptions]);
 
   const selectedSpecName = useMemo(() => {
     if (!selectedSpecId) return 'Tất cả lĩnh vực';
@@ -330,7 +348,7 @@ export const ExpertListScreen: React.FC = () => {
   }, [timeFilter]);
 
   const hasActiveFilters = Boolean(
-    selectedSpecId !== null || timeFilter !== 'All' || sortBy !== 'Recommended'
+    selectedSpecId !== null || timeFilter !== 'All' || sortBy !== defaultSortKey
   );
 
   return (
@@ -452,7 +470,7 @@ export const ExpertListScreen: React.FC = () => {
           <TouchableOpacity
             style={[
               styles.filterDropdownBtn,
-              sortBy !== 'Recommended' && styles.filterDropdownBtnActive,
+              sortBy !== defaultSortKey && styles.filterDropdownBtnActive,
             ]}
             onPress={() => setSortModalVisible(true)}
             accessibilityRole="button"
@@ -461,12 +479,12 @@ export const ExpertListScreen: React.FC = () => {
             <Ionicons
               name="swap-vertical"
               size={13}
-              color={sortBy !== 'Recommended' ? '#FFFFFF' : theme.colors.primary}
+              color={sortBy !== defaultSortKey ? '#FFFFFF' : theme.colors.primary}
             />
             <Text
               style={[
                 styles.filterDropdownText,
-                sortBy !== 'Recommended' && styles.filterDropdownTextActive,
+                sortBy !== defaultSortKey && styles.filterDropdownTextActive,
               ]}
               numberOfLines={1}
             >
@@ -475,7 +493,7 @@ export const ExpertListScreen: React.FC = () => {
             <Ionicons
               name="chevron-down"
               size={12}
-              color={sortBy !== 'Recommended' ? '#FFFFFF' : '#6B7280'}
+              color={sortBy !== defaultSortKey ? '#FFFFFF' : '#6B7280'}
             />
           </TouchableOpacity>
         </View>
@@ -502,10 +520,10 @@ export const ExpertListScreen: React.FC = () => {
                 </TouchableOpacity>
               </View>
             )}
-            {sortBy !== 'Recommended' && (
+            {sortBy !== defaultSortKey && (
               <View style={styles.activeFilterPill}>
                 <Text style={styles.activeFilterPillText}>{currentSortLabel}</Text>
-                <TouchableOpacity onPress={() => setSortBy('Recommended')}>
+                <TouchableOpacity onPress={() => setSortBy(defaultSortKey)}>
                   <Ionicons name="close-circle" size={13} color="#8B1E1E" />
                 </TouchableOpacity>
               </View>
@@ -571,8 +589,8 @@ export const ExpertListScreen: React.FC = () => {
                         }
                       >
                         <View style={styles.featuredAvatarWrap}>
-                          {exp.avatarUrl ? (
-                            <Image source={{ uri: exp.avatarUrl }} style={styles.featuredAvatar} />
+                          {isValidAvatarUrl(exp.avatarUrl) ? (
+                            <Image source={{ uri: exp.avatarUrl! }} style={styles.featuredAvatar} />
                           ) : (
                             <View style={styles.avatarPlaceholder}>
                               <Text style={styles.avatarLetter}>
@@ -794,7 +812,7 @@ export const ExpertListScreen: React.FC = () => {
             </View>
             <GoldDoubleRule style={{ marginVertical: 8 }} />
 
-            {SORT_OPTIONS.map((opt) => {
+            {dynamicSortOptions.map((opt) => {
               const selected = sortBy === opt.key;
               return (
                 <TouchableOpacity

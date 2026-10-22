@@ -11,7 +11,7 @@ import {
   TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect, RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
@@ -19,6 +19,7 @@ import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
 import { Dialog } from '../../components/common/Dialog';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { consultationApi } from '../../api/consultationApi';
+import { walletApi, WalletResponse } from '../../api/walletApi';
 import { toFriendlyConsultationError } from '../../utils/consultationFriendlyErrors';
 import type { BookingListItemResponse } from '../../types/consultation';
 import {
@@ -39,6 +40,7 @@ export const ExpertBookingsScreen: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabKey>(initialTab);
   const [pendingBookings, setPendingBookings] = useState<BookingListItemResponse[]>([]);
   const [allBookings, setAllBookings] = useState<BookingListItemResponse[]>([]);
+  const [expertWallet, setExpertWallet] = useState<WalletResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -79,17 +81,29 @@ export const ExpertBookingsScreen: React.FC = () => {
     setError(null);
 
     try {
-      if (activeTab === 'PENDING') {
-        const res = await consultationApi.getExpertPendingBookings({ page: 1, size: 20 });
-        setPendingBookings(res.items || []);
+      const [walletRes, bookingsRes] = await Promise.allSettled([
+        walletApi.getMyWallet('EXPERT'),
+        activeTab === 'PENDING'
+          ? consultationApi.getExpertPendingBookings({ page: 1, size: 20 })
+          : consultationApi.getExpertBookings({
+              status: statusFilter === 'ALL' ? undefined : statusFilter,
+              page: 1,
+              size: 30,
+            }),
+      ]);
+
+      if (walletRes.status === 'fulfilled') {
+        setExpertWallet(walletRes.value);
+      }
+
+      if (bookingsRes.status === 'fulfilled') {
+        if (activeTab === 'PENDING') {
+          setPendingBookings(bookingsRes.value.items || []);
+        } else {
+          setAllBookings(bookingsRes.value.items || []);
+        }
       } else {
-        const filterParam = statusFilter === 'ALL' ? undefined : statusFilter;
-        const res = await consultationApi.getExpertBookings({
-          status: filterParam,
-          page: 1,
-          size: 30,
-        });
-        setAllBookings(res.items || []);
+        throw bookingsRes.reason;
       }
     } catch (err: any) {
       setError(err?.response?.data?.message || err?.message || 'Không thể tải danh sách ca tư vấn.');
@@ -102,6 +116,12 @@ export const ExpertBookingsScreen: React.FC = () => {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchData(true);
+    }, [fetchData])
+  );
 
   // Handle Accept
   const handleAccept = (booking: BookingListItemResponse) => {
@@ -237,7 +257,7 @@ export const ExpertBookingsScreen: React.FC = () => {
             <Ionicons name="time-outline" size={13} color="#444444" />
             <Text style={styles.pillText}>{formatTimeRange(item.startTime, item.endTime)}</Text>
           </View>
-          {item.attachmentCount > 0 && (
+          {Boolean(item.attachmentCount && item.attachmentCount > 0) && (
             <View style={styles.pill}>
               <Ionicons name="attach" size={13} color="#444444" />
               <Text style={styles.pillText}>{item.attachmentCount} tệp</Text>
@@ -336,7 +356,7 @@ export const ExpertBookingsScreen: React.FC = () => {
       {/* ── HEADER ── */}
       <View style={styles.header}>
         <TouchableOpacity
-          onPress={() => navigation.goBack()}
+          onPress={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('Home'))}
           style={styles.backBtn}
           accessibilityRole="button"
           accessibilityLabel="Quay lại"
@@ -354,6 +374,28 @@ export const ExpertBookingsScreen: React.FC = () => {
         </TouchableOpacity>
       </View>
       <GoldDoubleRule />
+
+      {/* ── REVENUE & WALLET KPI CARD ── */}
+      <View style={styles.kpiRevenueCard}>
+        <View style={styles.kpiRevenueLeft}>
+          <Text style={styles.kpiRevenueLabel}>Tổng thu nhập tích lũy</Text>
+          <Text style={styles.kpiRevenueValue}>{formatVnd(expertWallet?.totalEarned ?? 0)}</Text>
+          <Text style={styles.kpiAvailableSub}>
+            Số dư ví khả dụng: <Text style={{ fontFamily: fonts.bodyBold, color: '#059669' }}>{formatVnd(expertWallet?.availableBalance ?? 0)}</Text>
+          </Text>
+        </View>
+
+        <TouchableOpacity
+          style={styles.kpiWalletBtn}
+          activeOpacity={0.85}
+          onPress={() => navigation.navigate('Wallet', { walletType: 'EXPERT' })}
+          accessibilityRole="button"
+          accessibilityLabel="Ví & Rút tiền"
+        >
+          <Ionicons name="wallet-outline" size={16} color="#FFFFFF" />
+          <Text style={styles.kpiWalletBtnText}>Ví & Rút tiền</Text>
+        </TouchableOpacity>
+      </View>
 
       {/* ── TAB SELECTOR ── */}
       <View style={styles.tabContainer}>
@@ -926,6 +968,57 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.error,
   },
   modalSubmitBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12,
+    color: '#FFFFFF',
+  },
+  kpiRevenueCard: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 4,
+    backgroundColor: '#1E293B',
+    borderRadius: 14,
+    padding: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  kpiRevenueLeft: {
+    flex: 1,
+    marginRight: 10,
+  },
+  kpiRevenueLabel: {
+    fontFamily: fonts.body,
+    fontSize: 11,
+    color: '#94A3B8',
+  },
+  kpiRevenueValue: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 20,
+    color: '#F8FAFC',
+    marginTop: 2,
+  },
+  kpiAvailableSub: {
+    fontFamily: fonts.body,
+    fontSize: 11,
+    color: '#CBD5E1',
+    marginTop: 3,
+  },
+  kpiWalletBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: theme.colors.primary,
+    paddingVertical: 9,
+    paddingHorizontal: 13,
+    borderRadius: 8,
+  },
+  kpiWalletBtnText: {
     fontFamily: fonts.bodyBold,
     fontSize: 12,
     color: '#FFFFFF',

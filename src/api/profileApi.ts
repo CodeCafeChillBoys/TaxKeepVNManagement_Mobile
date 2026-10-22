@@ -102,36 +102,25 @@ const saveCachedProfile = async (profile: UserProfileResponse) => {
 export const profileApi = {
   // Lấy thông tin cá nhân của người dùng đang đăng nhập
   getProfile: async (): Promise<UserProfileResponse> => {
-    // 1. Thử endpoint theo đặc tả v1: /api/v1/users/profile
-    try {
-      const response = await apiClient.get<ApiResponse<UserProfileResponse>>('/api/v1/users/profile');
-      if (response.data?.data) {
-        await saveCachedProfile(response.data.data);
-        return response.data.data;
-      }
-    } catch (e1: any) {
-      // Tiếp tục fallback
-    }
-
-    // 2. Thử endpoint legacy: /api/profile
+    // 1. Gọi trực tiếp theo hệ thống Backend: /api/profile
     try {
       const response = await apiClient.get<ApiResponse<UserProfileResponse>>('/api/profile');
       if (response.data?.data) {
         await saveCachedProfile(response.data.data);
         return response.data.data;
       }
-    } catch (e2: any) {}
+    } catch (e1: any) {}
 
-    // 3. Thử endpoint theo task 1.3.T3: /api/Profile/me
+    // 2. Dự phòng: /api/v1/profile
     try {
-      const response = await apiClient.get<ApiResponse<UserProfileResponse>>('/api/Profile/me');
+      const response = await apiClient.get<ApiResponse<UserProfileResponse>>('/api/v1/profile');
       if (response.data?.data) {
         await saveCachedProfile(response.data.data);
         return response.data.data;
       }
-    } catch (e3: any) {}
+    } catch (e2: any) {}
 
-    // 4. Fallback đọc từ cache nội bộ
+    // 3. Đọc từ bộ nhớ máy nếu chưa kết nối được
     return await getCachedProfile();
   },
 
@@ -139,28 +128,20 @@ export const profileApi = {
   updateProfile: async (data: UpdateProfileRequest): Promise<UserProfileResponse> => {
     let updatedProfile: UserProfileResponse | null = null;
 
-    // 1. Thử /api/v1/users/profile
+    // 1. Gọi trực tiếp theo hệ thống Backend: /api/profile
     try {
-      const response = await apiClient.put<ApiResponse<UserProfileResponse>>('/api/v1/users/profile', data);
+      const response = await apiClient.put<ApiResponse<UserProfileResponse>>('/api/profile', data);
       if (response.data?.data) {
         updatedProfile = response.data.data;
       }
     } catch (e1: any) {
-      // 2. Thử /api/profile
+      // 2. Dự phòng: /api/v1/profile
       try {
-        const response = await apiClient.put<ApiResponse<UserProfileResponse>>('/api/profile', data);
+        const response = await apiClient.put<ApiResponse<UserProfileResponse>>('/api/v1/profile', data);
         if (response.data?.data) {
           updatedProfile = response.data.data;
         }
-      } catch (e2: any) {
-        // 3. Thử /api/Profile
-        try {
-          const response = await apiClient.put<ApiResponse<UserProfileResponse>>('/api/Profile', data);
-          if (response.data?.data) {
-            updatedProfile = response.data.data;
-          }
-        } catch (e3: any) {}
-      }
+      } catch (e2: any) {}
     }
 
     // Nếu Backend chưa có endpoint (hoặc lỗi 404), cập nhật vào bộ nhớ cache để người dùng không bị gián đoạn

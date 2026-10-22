@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import {
   TextInput,
   Linking,
   AppState,
+  BackHandler,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, useFocusEffect, RouteProp } from '@react-navigation/native';
@@ -45,6 +46,7 @@ import {
   formatEscrowStatus,
   formatDisputeReason,
   formatDisputeStatus,
+  isValidAvatarUrl,
 } from '../../types/consultation';
 import {
   canUserReview,
@@ -96,6 +98,45 @@ export const BookingDetailScreen: React.FC = () => {
   const [booking, setBooking] = useState<BookingDetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Xác định xem màn hình đang được xem từ phía Chuyên gia hay Người nộp thuế
+  const isExpertView = useMemo(() => {
+    return (
+      Boolean(isExpertViewParam) ||
+      Boolean(
+        isExpertRole &&
+          booking &&
+          ((currentUser?.id && String(booking.userId).toLowerCase() !== String(currentUser.id).toLowerCase()) ||
+            (currentUser?.fullName &&
+              booking.expertFullName &&
+              currentUser.fullName.trim().toLowerCase() === booking.expertFullName.trim().toLowerCase()))
+      )
+    );
+  }, [isExpertViewParam, isExpertRole, booking, currentUser?.id, currentUser?.fullName]);
+
+  const handleBack = useCallback(() => {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+    } else {
+      if (isExpertView || isExpertRole) {
+        navigation.navigate('ExpertBookings');
+      } else {
+        navigation.navigate('MyBookings');
+      }
+    }
+  }, [navigation, isExpertView, isExpertRole]);
+
+  useEffect(() => {
+    const onBackPress = () => {
+      if (!navigation.canGoBack()) {
+        handleBack();
+        return true;
+      }
+      return false;
+    };
+    const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+    return () => sub.remove();
+  }, [handleBack, navigation]);
 
   // Countdown timer state
   const [currentTimeMs, setCurrentTimeMs] = useState(Date.now());
@@ -276,6 +317,16 @@ export const BookingDetailScreen: React.FC = () => {
 
   // Handle Accept Booking (Expert)
   const handleAcceptBooking = () => {
+    if (!booking?.paidAt) {
+      setDialog({
+        title: 'Chưa thanh toán',
+        message: 'Khách hàng chưa hoàn tất thanh toán cho ca tư vấn này. Theo quy định, chuyên gia chỉ được phép tiếp nhận sau khi khách hàng đã thanh toán thành công.',
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
+      return;
+    }
+
     setDialog({
       title: 'Tiếp nhận ca tư vấn',
       message: `Bạn đồng ý tiếp nhận ca tư vấn của khách hàng ${booking?.userFullName}?`,
@@ -463,14 +514,18 @@ export const BookingDetailScreen: React.FC = () => {
   // Tự động kiểm tra trạng thái thanh toán khi người dùng quay lại app từ trình duyệt
   useEffect(() => {
     const sub = AppState.addEventListener('change', (nextState) => {
-      if (nextState === 'active' && paymentModalVisible && !checkingPayment) {
-        handleCheckPaymentResult(true);
+      if (nextState === 'active') {
+        if (paymentModalVisible && !checkingPayment) {
+          handleCheckPaymentResult(true);
+        } else {
+          fetchDetail(true);
+        }
       }
     });
     return () => {
       sub.remove();
     };
-  }, [paymentModalVisible, checkingPayment]);
+  }, [paymentModalVisible, checkingPayment, fetchDetail]);
 
   // Listen to incoming deep links (vnpay-return)
   useEffect(() => {
@@ -539,6 +594,59 @@ export const BookingDetailScreen: React.FC = () => {
       });
     } finally {
       setJoiningMeeting(false);
+    }
+  };
+
+  const formatDossierRelationship = (rel?: string): string => {
+    if (!rel) return '—';
+    switch (rel.trim().toUpperCase()) {
+      case 'CHILD':
+        return 'Con';
+      case 'SPOUSE':
+        return 'Vợ / Chồng';
+      case 'PARENT':
+        return 'Cha / Mẹ';
+      case 'PARENT_IN_LAW':
+        return 'Cha / Mẹ kế (vợ/chồng)';
+      case 'OTHER_DEPENDENT':
+      case 'OTHER':
+      case 'OTHER_HELPLESS':
+        return 'Cá nhân khác';
+      default:
+        return rel;
+    }
+  };
+
+  const formatDossierGroup = (group?: string): string => {
+    if (!group) return '—';
+    switch (group.trim().toUpperCase()) {
+      case 'CHILD_UNDER_18':
+        return 'Con dưới 18 tuổi';
+      case 'CHILD_OVER_18_STUDYING':
+      case 'CHILD_OVER_18_STUDENT':
+      case 'CHILD_STUDYING':
+        return 'Con ≥ 18 tuổi đang đi học';
+      case 'CHILD_OVER_18_DISABLED':
+      case 'CHILD_DISABLED':
+      case 'DISABLED_DEPENDENT':
+        return 'Con khuyết tật / mất khả năng lao động';
+      case 'SPOUSE_RETIRED':
+        return 'Vợ / Chồng hết tuổi lao động';
+      case 'SPOUSE_DISABLED':
+        return 'Vợ / Chồng khuyết tật';
+      case 'PARENT_RETIRED':
+        return 'Cha / Mẹ hết tuổi lao động';
+      case 'PARENT_DISABLED':
+        return 'Cha / Mẹ khuyết tật';
+      case 'SPOUSE_OR_PARENTS':
+      case 'PARENT':
+      case 'SPOUSE':
+        return 'Vợ / Chồng hoặc Cha / Mẹ';
+      case 'OTHER_HELPLESS':
+      case 'OTHER_DEPENDENT':
+        return 'Cá nhân không nơi nương tựa';
+      default:
+        return group;
     }
   };
 
@@ -755,9 +863,9 @@ export const BookingDetailScreen: React.FC = () => {
   // Handle Confirm Satisfaction & Early Escrow Disbursement (Khách hàng)
   const handleConfirmSatisfaction = () => {
     setDialog({
-      title: 'Xác nhận hài lòng & Giải ngân sớm',
-      message: `Bạn xác nhận hài lòng với kết quả tư vấn và đồng ý giải ngân ngay số tiền tạm giữ cho chuyên gia ${booking?.expertFullName} mà không cần chờ hết 24 giờ bảo chứng?`,
-      primaryLabel: 'Xác nhận giải ngân',
+      title: 'Xác nhận giải ngân',
+      message: `Chuyển ngay thù lao cho chuyên gia ${booking?.expertFullName || ''}?`,
+      primaryLabel: 'Xác nhận',
       secondaryLabel: 'Để sau',
       onSecondary: () => setDialog(null),
       onPrimary: async () => {
@@ -766,8 +874,8 @@ export const BookingDetailScreen: React.FC = () => {
         try {
           await consultationApi.confirmSatisfaction(bookingId);
           setDialog({
-            title: 'Giải ngân thành công',
-            message: 'Thù lao ca tư vấn đã được giải ngân ngay vào ví của chuyên gia. Cảm ơn bạn đã sử dụng dịch vụ!',
+            title: 'Thành công',
+            message: 'Đã chuyển thù lao cho chuyên gia. Cảm ơn bạn đã sử dụng dịch vụ!',
             primaryLabel: 'Đóng',
             onPrimary: () => setDialog(null),
           });
@@ -814,8 +922,8 @@ export const BookingDetailScreen: React.FC = () => {
       setDisputeModalVisible(false);
       setDisputeDescription('');
       setDialog({
-        title: 'Đã gửi khiếu nại thành công',
-        message: 'Số tiền ký quỹ đã được ĐÓNG BĂNG NGAY LẬP TỨC để bảo vệ quyền lợi của bạn. Chuyên gia có 24 giờ để gửi giải trình trước khi Ban quản trị TaxKeepVN phán quyết.',
+        title: 'Đã gửi khiếu nại',
+        message: 'Khoản tiền đã được tạm giữ an toàn. Chuyên gia có 24 giờ để gửi phản hồi trước khi TaxKeepVN giải quyết.',
         primaryLabel: 'Đã hiểu',
         onPrimary: () => setDialog(null),
       });
@@ -888,7 +996,7 @@ export const BookingDetailScreen: React.FC = () => {
     return (
       <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+          <TouchableOpacity onPress={handleBack} style={styles.backBtn} accessibilityRole="button" accessibilityLabel="Quay lại">
             <Ionicons name="arrow-back" size={24} color={theme.colors.textPrimary} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Chi tiết lịch hẹn</Text>
@@ -907,7 +1015,7 @@ export const BookingDetailScreen: React.FC = () => {
     return (
       <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+          <TouchableOpacity onPress={handleBack} style={styles.backBtn} accessibilityRole="button" accessibilityLabel="Quay lại">
             <Ionicons name="arrow-back" size={24} color={theme.colors.textPrimary} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Chi tiết lịch hẹn</Text>
@@ -918,7 +1026,7 @@ export const BookingDetailScreen: React.FC = () => {
           <Ionicons name="alert-circle-outline" size={48} color={theme.colors.error} />
           <Text style={styles.errorTitle}>Lỗi tải dữ liệu</Text>
           <Text style={styles.errorMsg}>{error || 'Không tìm thấy lịch hẹn này.'}</Text>
-          <TouchableOpacity style={styles.retryBtn} onPress={fetchDetail}>
+          <TouchableOpacity style={styles.retryBtn} onPress={() => fetchDetail()}>
             <Text style={styles.retryBtnText}>Thử lại</Text>
           </TouchableOpacity>
         </View>
@@ -928,18 +1036,6 @@ export const BookingDetailScreen: React.FC = () => {
 
   const statusInfo = formatBookingStatus(booking.status);
   const sessionInfo = formatSessionType(booking.sessionType);
-
-  // Xác định xem màn hình đang được xem từ phía Chuyên gia hay Người nộp thuế
-  const isExpertView =
-    Boolean(isExpertViewParam) ||
-    Boolean(
-      isExpertRole &&
-        booking &&
-        ((currentUser?.id && String(booking.userId).toLowerCase() !== String(currentUser.id).toLowerCase()) ||
-          (currentUser?.fullName &&
-            booking.expertFullName &&
-            currentUser.fullName.trim().toLowerCase() === booking.expertFullName.trim().toLowerCase()))
-    );
 
   // Can user cancel this booking? (Chỉ người nộp thuế mới có thao tác hủy lịch tại đây)
   const canCancel =
@@ -966,7 +1062,7 @@ export const BookingDetailScreen: React.FC = () => {
       {/* ── HEADER ── */}
       <View style={styles.header}>
         <TouchableOpacity
-          onPress={() => navigation.goBack()}
+          onPress={handleBack}
           style={styles.backBtn}
           accessibilityRole="button"
           accessibilityLabel="Quay lại"
@@ -976,7 +1072,7 @@ export const BookingDetailScreen: React.FC = () => {
         <Text style={styles.headerTitle}>Chi tiết lịch hẹn</Text>
         <TouchableOpacity
           style={styles.refreshBtn}
-          onPress={fetchDetail}
+          onPress={() => fetchDetail()}
           accessibilityRole="button"
           accessibilityLabel="Làm mới"
         >
@@ -1103,8 +1199,8 @@ export const BookingDetailScreen: React.FC = () => {
             <Text style={styles.sectionHeaderTitle}>Chuyên gia tư vấn</Text>
             <View style={styles.expertRow}>
               <View style={styles.expertAvatarWrap}>
-                {booking.expertAvatarUrl ? (
-                  <Image source={{ uri: booking.expertAvatarUrl }} style={styles.expertAvatar} />
+                {isValidAvatarUrl(booking.expertAvatarUrl) ? (
+                  <Image source={{ uri: booking.expertAvatarUrl! }} style={styles.expertAvatar} />
                 ) : (
                   <View style={styles.expertAvatarPlaceholder}>
                     <Text style={styles.expertAvatarLetter}>
@@ -1451,11 +1547,21 @@ export const BookingDetailScreen: React.FC = () => {
           {isExpertView && booking.status === 'AWAITING_EXPERT_APPROVAL' && (
             <View style={styles.expertActionBlock}>
               <Text style={styles.expertActionTitle}>Quyết định tiếp nhận ca tư vấn</Text>
+
+              {!booking.paidAt && (
+                <View style={styles.unpaidWarningBox}>
+                  <Ionicons name="alert-circle-outline" size={16} color="#D97706" />
+                  <Text style={styles.unpaidWarningText}>
+                    Lịch hẹn chưa được thanh toán thành công. Theo quy định bảo đảm quyền lợi, chuyên gia chỉ được tiếp nhận sau khi khách hàng đã thanh toán hoàn tất.
+                  </Text>
+                </View>
+              )}
+
               <View style={styles.expertBtnRow}>
                 <TouchableOpacity
-                  style={styles.acceptBtn}
+                  style={[styles.acceptBtn, !booking.paidAt && styles.acceptBtnDisabled]}
                   onPress={handleAcceptBooking}
-                  disabled={accepting}
+                  disabled={accepting || !booking.paidAt}
                   accessibilityRole="button"
                   accessibilityLabel="Tiếp nhận ca"
                 >
@@ -1599,10 +1705,10 @@ export const BookingDetailScreen: React.FC = () => {
                 <View style={styles.escrowCooldownActionCard}>
                   <View style={styles.escrowCooldownHeader}>
                     <Ionicons name="shield-checkmark" size={18} color="#B45309" />
-                    <Text style={styles.escrowCooldownTitle}>Bảo chứng thanh toán 24 giờ</Text>
+                    <Text style={styles.escrowCooldownTitle}>Bảo chứng thanh toán 24h</Text>
                   </View>
                   <Text style={styles.escrowCooldownDesc}>
-                    Khoản tiền đang được tạm giữ an toàn tại TaxKeepVN. Nếu bạn hoàn toàn hài lòng với buổi tư vấn, bạn có thể xác nhận sớm để chuyển thù lao ngay cho chuyên gia mà không cần chờ hết 24 giờ.
+                    Khoản tiền được giữ an toàn 24h. Bạn có thể xác nhận hài lòng để gửi thù lao sớm cho chuyên gia.
                   </Text>
                   <View style={styles.escrowCooldownBtnRow}>
                     <TouchableOpacity
@@ -1617,7 +1723,7 @@ export const BookingDetailScreen: React.FC = () => {
                       ) : (
                         <>
                           <Ionicons name="checkmark-done" size={16} color="#FFFFFF" />
-                          <Text style={styles.confirmSatisfactionBtnText}>Hài lòng & Giải ngân sớm</Text>
+                          <Text style={styles.confirmSatisfactionBtnText}>Xác nhận hài lòng</Text>
                         </>
                       )}
                     </TouchableOpacity>
@@ -1637,26 +1743,6 @@ export const BookingDetailScreen: React.FC = () => {
             </View>
           )}
 
-          {/* Nút xem Ký quỹ bảo đảm: Chỉ hiển thị khi có liên quan tới thanh toán */}
-          {(Boolean(booking.paidAt) || booking.status === 'PENDING_PAYMENT' || (booking.refundStatus && booking.refundStatus !== 'NONE')) && (
-            <TouchableOpacity
-              style={styles.escrowViewBtn}
-              onPress={handleOpenEscrow}
-              disabled={escrowLoading}
-              accessibilityRole="button"
-              accessibilityLabel="Xem ký quỹ bảo đảm"
-            >
-              {escrowLoading ? (
-                <ActivityIndicator size="small" color={theme.colors.primary} />
-              ) : (
-                <>
-                  <Ionicons name="shield-checkmark-outline" size={16} color={theme.colors.primary} />
-                  <Text style={styles.escrowViewBtnText}>Xem chi tiết ký quỹ bảo đảm</Text>
-                </>
-              )}
-            </TouchableOpacity>
-          )}
-
           {canCancel && (
             <TouchableOpacity
               style={styles.cancelBookingBtn}
@@ -1666,18 +1752,6 @@ export const BookingDetailScreen: React.FC = () => {
             >
               <Ionicons name="close-circle-outline" size={18} color={theme.colors.error} />
               <Text style={styles.cancelBookingBtnText}>Hủy lịch hẹn này</Text>
-            </TouchableOpacity>
-          )}
-
-          {!isExpertView && (
-            <TouchableOpacity
-              style={styles.bookAnotherBtn}
-              onPress={() => navigation.navigate('ExpertList')}
-              accessibilityRole="button"
-              accessibilityLabel="Đặt lịch khác"
-            >
-              <Ionicons name="search" size={18} color={theme.colors.primary} />
-              <Text style={styles.bookAnotherBtnText}>Tìm chuyên gia khác</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -1799,7 +1873,10 @@ export const BookingDetailScreen: React.FC = () => {
         visible={paymentModalVisible}
         transparent
         animationType="slide"
-        onRequestClose={() => setPaymentModalVisible(false)}
+        onRequestClose={() => {
+          setPaymentModalVisible(false);
+          fetchDetail(true);
+        }}
       >
         <View style={styles.modalOverlay}>
           <View style={styles.paymentModalBox}>
@@ -1813,7 +1890,10 @@ export const BookingDetailScreen: React.FC = () => {
                   Thanh toán an toàn qua cổng ngân hàng
                 </Text>
               </View>
-              <TouchableOpacity onPress={() => setPaymentModalVisible(false)}>
+              <TouchableOpacity onPress={() => {
+                setPaymentModalVisible(false);
+                fetchDetail(true);
+              }}>
                 <Ionicons name="close" size={24} color="#777777" />
               </TouchableOpacity>
             </View>
@@ -1976,7 +2056,7 @@ export const BookingDetailScreen: React.FC = () => {
                       <View key={idx} style={styles.dossierItemBox}>
                         <Text style={styles.dossierItemName}>{dep.fullName}</Text>
                         <Text style={styles.dossierItemSub}>
-                          Quan hệ: {dep.relationship} • Nhóm: {dep.currentGroup || '—'}
+                          Quan hệ: {formatDossierRelationship(dep.relationship)} • Nhóm: {formatDossierGroup(dep.currentGroup)}
                         </Text>
                       </View>
                     ))
@@ -2535,14 +2615,6 @@ export const BookingDetailScreen: React.FC = () => {
             </View>
 
             <ScrollView style={{ maxHeight: 460 }} showsVerticalScrollIndicator={false}>
-              {/* Escrow Freeze Warning */}
-              <View style={styles.disputeWarningAlert}>
-                <Ionicons name="alert-circle" size={20} color="#B91C1C" />
-                <Text style={styles.disputeWarningText}>
-                  Khiếu nại sẽ <Text style={{ fontFamily: fonts.bodyBold }}>ĐÓNG BĂNG NGAY LẬP TỨC</Text> số tiền ký quỹ Escrow. Ban quản trị TaxKeepVN sẽ yêu cầu chuyên gia giải trình và xử lý đối soát minh bạch.
-                </Text>
-              </View>
-
               {/* Dispute Reasons Radio List */}
               <Text style={styles.ratingSectionTitle}>Chọn lý do khiếu nại *:</Text>
               <View style={{ gap: 8, marginVertical: 8 }}>
@@ -3255,6 +3327,28 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bodyBold,
     fontSize: 13,
     color: '#FFFFFF',
+  },
+  acceptBtnDisabled: {
+    backgroundColor: '#9CA3AF',
+    opacity: 0.65,
+  },
+  unpaidWarningBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#FEF3C7',
+    borderWidth: 1,
+    borderColor: '#FCD34D',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 10,
+  },
+  unpaidWarningText: {
+    flex: 1,
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: '#92400E',
+    lineHeight: 16,
   },
   rejectBtn: {
     flex: 1,

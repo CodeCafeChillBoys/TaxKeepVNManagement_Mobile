@@ -12,8 +12,6 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
-import * as DocumentPicker from 'expo-document-picker';
-import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
@@ -34,18 +32,8 @@ import {
   formatSessionType,
   formatVietnameseDate,
   formatTimeRange,
+  isValidAvatarUrl,
 } from '../../types/consultation';
-
-const MAX_ATTACHMENTS = 5;
-const MAX_TOTAL_SIZE_MB = 25;
-
-interface SelectedFile {
-  uri: string;
-  name: string;
-  size: number;
-  type: string;
-  blob?: any;
-}
 
 export const BookingCreateScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
@@ -63,7 +51,6 @@ export const BookingCreateScreen: React.FC = () => {
   const [selectedSpecId, setSelectedSpecId] = useState<number>(initialSpecId || 0);
   const [topicTitle, setTopicTitle] = useState('');
   const [problemDescription, setProblemDescription] = useState('');
-  const [attachments, setAttachments] = useState<SelectedFile[]>([]);
 
   // Loading & Preview states
   const [loadingInitial, setLoadingInitial] = useState(true);
@@ -294,137 +281,6 @@ const getSlotDurationMinutes = (startTime?: string, endTime?: string): number =>
     }
   }, [selectedSlotId, selectedSpecId, runPreview]);
 
-  // Pick Document (PDF, Word, Images)
-  const handlePickDocument = async () => {
-    if (attachments.length >= MAX_ATTACHMENTS) {
-      setDialog({
-        title: 'Giới hạn tệp đính kèm',
-        message: `Bạn chỉ được đính kèm tối đa ${MAX_ATTACHMENTS} tệp tin cho một buổi tư vấn.`,
-        primaryLabel: 'Đã hiểu',
-        onPrimary: () => setDialog(null),
-      });
-      return;
-    }
-
-    try {
-      const res = await DocumentPicker.getDocumentAsync({
-        type: ['application/pdf', 'image/*', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
-        multiple: true,
-        copyToCacheDirectory: true,
-      });
-
-      if (!res.canceled && res.assets) {
-        const newFiles: SelectedFile[] = [];
-        let currentTotalBytes = attachments.reduce((sum, f) => sum + f.size, 0);
-
-        for (const asset of res.assets) {
-          if (attachments.length + newFiles.length >= MAX_ATTACHMENTS) {
-            setDialog({
-              title: 'Giới hạn tệp đính kèm',
-              message: `Đã đạt giới hạn tối đa ${MAX_ATTACHMENTS} tệp tin.`,
-              primaryLabel: 'Đã hiểu',
-              onPrimary: () => setDialog(null),
-            });
-            break;
-          }
-
-          const fileSize = asset.size || 0;
-          if ((currentTotalBytes + fileSize) / (1024 * 1024) > MAX_TOTAL_SIZE_MB) {
-            setDialog({
-              title: 'Vượt dung lượng cho phép',
-              message: `Tổng dung lượng tài liệu không được vượt quá ${MAX_TOTAL_SIZE_MB}MB.`,
-              primaryLabel: 'Đã hiểu',
-              onPrimary: () => setDialog(null),
-            });
-            break;
-          }
-
-          currentTotalBytes += fileSize;
-          newFiles.push({
-            uri: asset.uri,
-            name: asset.name || 'document',
-            size: fileSize,
-            type: asset.mimeType || 'application/octet-stream',
-            blob: (asset as any).file,
-          });
-        }
-
-        setAttachments((prev) => [...prev, ...newFiles]);
-      }
-    } catch (err) {
-      console.warn('Pick document error:', err);
-    }
-  };
-
-  // Pick Image from photo library
-  const handlePickImage = async () => {
-    if (attachments.length >= MAX_ATTACHMENTS) {
-      setDialog({
-        title: 'Giới hạn tệp đính kèm',
-        message: `Bạn chỉ được đính kèm tối đa ${MAX_ATTACHMENTS} tệp tin.`,
-        primaryLabel: 'Đã hiểu',
-        onPrimary: () => setDialog(null),
-      });
-      return;
-    }
-
-    try {
-      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!perm.granted) {
-        setDialog({
-          title: 'Yêu cầu quyền truy cập',
-          message: 'Vui lòng cho phép ứng dụng truy cập thư viện ảnh để đính kèm chứng từ.',
-          primaryLabel: 'Đã hiểu',
-          onPrimary: () => setDialog(null),
-        });
-        return;
-      }
-
-      const res = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        allowsMultipleSelection: true,
-        quality: 0.8,
-      });
-
-      if (!res.canceled && res.assets) {
-        const newFiles: SelectedFile[] = [];
-        let currentTotalBytes = attachments.reduce((sum, f) => sum + f.size, 0);
-
-        for (const asset of res.assets) {
-          if (attachments.length + newFiles.length >= MAX_ATTACHMENTS) break;
-
-          const fileSize = asset.fileSize || 500 * 1024; // fallback approx
-          if ((currentTotalBytes + fileSize) / (1024 * 1024) > MAX_TOTAL_SIZE_MB) {
-            setDialog({
-              title: 'Vượt dung lượng cho phép',
-              message: `Tổng dung lượng tài liệu không được vượt quá ${MAX_TOTAL_SIZE_MB}MB.`,
-              primaryLabel: 'Đã hiểu',
-              onPrimary: () => setDialog(null),
-            });
-            break;
-          }
-
-          currentTotalBytes += fileSize;
-          const fileName = asset.fileName || `anh_chung_tu_${Date.now()}.jpg`;
-          newFiles.push({
-            uri: asset.uri,
-            name: fileName,
-            size: fileSize,
-            type: asset.mimeType || 'image/jpeg',
-          });
-        }
-
-        setAttachments((prev) => [...prev, ...newFiles]);
-      }
-    } catch (err) {
-      console.warn('Pick image error:', err);
-    }
-  };
-
-  const handleRemoveAttachment = (index: number) => {
-    setAttachments((prev) => prev.filter((_, i) => i !== index));
-  };
-
   // Submit Booking
   const handleSubmitBooking = async () => {
     if (!selectedSlotId) {
@@ -480,7 +336,6 @@ const getSlotDurationMinutes = (startTime?: string, endTime?: string): number =>
         specializationId: selectedSpecId,
         topicTitle: topicTitle.trim(),
         problemDescription: problemDescription.trim(),
-        attachments,
       });
 
       setDialog({
@@ -513,16 +368,16 @@ const getSlotDurationMinutes = (startTime?: string, endTime?: string): number =>
     return availableSlots.find((s) => s.id === selectedSlotId);
   }, [availableSlots, selectedSlotId]);
 
-  const totalAttachmentMb = useMemo(() => {
-    const bytes = attachments.reduce((sum, f) => sum + f.size, 0);
-    return (bytes / (1024 * 1024)).toFixed(2);
-  }, [attachments]);
-
   if (loadingInitial) {
     return (
       <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+          <TouchableOpacity
+            onPress={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('ExpertList'))}
+            style={styles.backBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Quay lại"
+          >
             <Ionicons name="arrow-back" size={24} color={theme.colors.textPrimary} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Đặt lịch tư vấn</Text>
@@ -550,7 +405,7 @@ const getSlotDurationMinutes = (startTime?: string, endTime?: string): number =>
       {/* ── HEADER ── */}
       <View style={styles.header}>
         <TouchableOpacity
-          onPress={() => navigation.goBack()}
+          onPress={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('ExpertList'))}
           style={styles.backBtn}
           accessibilityRole="button"
           accessibilityLabel="Quay lại"
@@ -567,8 +422,8 @@ const getSlotDurationMinutes = (startTime?: string, endTime?: string): number =>
         {expert && (
           <View style={styles.expertSummaryCard}>
             <View style={styles.expertSummaryAvatarWrap}>
-              {expert.avatarUrl ? (
-                <Image source={{ uri: expert.avatarUrl }} style={styles.expertSummaryAvatar} />
+              {isValidAvatarUrl(expert.avatarUrl) ? (
+                <Image source={{ uri: expert.avatarUrl! }} style={styles.expertSummaryAvatar} />
               ) : (
                 <View style={styles.expertSummaryAvatarPlaceholder}>
                   <Text style={styles.expertSummaryAvatarLetter}>
@@ -902,70 +757,7 @@ const getSlotDurationMinutes = (startTime?: string, endTime?: string): number =>
           />
         </View>
 
-        {/* ── 5. ĐÍNH KÈM CHỨNG TỪ MẪU (TỐI ĐA 5 FILE, <= 25MB) ── */}
-        <View style={styles.formSection}>
-          <View style={styles.sectionTitleRow}>
-            <Ionicons name="attach" size={18} color={theme.colors.primary} />
-            <Text style={styles.sectionTitle}>Tài liệu / Chứng từ đính kèm</Text>
-            <Text style={styles.sectionCounter}>
-              ({attachments.length}/{MAX_ATTACHMENTS})
-            </Text>
-          </View>
-          <Text style={styles.sectionHint}>
-            Hỗ trợ file PDF, Ảnh chứng từ, Word (tối đa 5 tệp, tổng dung lượng &le; 25MB).
-          </Text>
-
-          {/* Action buttons to pick file */}
-          <View style={styles.uploadBtnRow}>
-            <TouchableOpacity style={styles.uploadPickBtn} onPress={handlePickDocument}>
-              <Ionicons name="document-attach-outline" size={18} color={theme.colors.primary} />
-              <Text style={styles.uploadPickBtnText}>Chọn tài liệu (PDF, Word)</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={styles.uploadPickBtn} onPress={handlePickImage}>
-              <Ionicons name="image-outline" size={18} color={theme.colors.primary} />
-              <Text style={styles.uploadPickBtnText}>Chọn hình ảnh</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Attachments List */}
-          {attachments.length > 0 && (
-            <View style={styles.attachmentsListWrap}>
-              <View style={styles.totalSizeRow}>
-                <Text style={styles.totalSizeText}>
-                  Tổng dung lượng: <Text style={styles.boldText}>{totalAttachmentMb} MB</Text> / 25 MB
-                </Text>
-              </View>
-
-              {attachments.map((file, idx) => (
-                <View key={idx} style={styles.fileChipRow}>
-                  <Ionicons
-                    name={file.type.includes('image') ? 'image' : 'document-text'}
-                    size={20}
-                    color={theme.colors.primary}
-                    style={{ marginRight: 8 }}
-                  />
-                  <View style={styles.fileChipInfo}>
-                    <Text style={styles.fileChipName} numberOfLines={1}>
-                      {file.name}
-                    </Text>
-                    <Text style={styles.fileChipSize}>
-                      {(file.size / 1024).toFixed(1)} KB
-                    </Text>
-                  </View>
-                  <TouchableOpacity
-                    onPress={() => handleRemoveAttachment(idx)}
-                    style={styles.removeFileBtn}
-                  >
-                    <Ionicons name="trash-outline" size={18} color={theme.colors.error} />
-                  </TouchableOpacity>
-                </View>
-              ))}
-            </View>
-          )}
-        </View>
-
-        {/* ── 6. DRY-RUN PREVIEW LIVE ESTIMATE CARD ── */}
+        {/* ── 5. DRY-RUN PREVIEW LIVE ESTIMATE CARD ── */}
         <View style={styles.previewCard}>
           <View style={styles.previewCardHeader}>
             <Ionicons name="calculator-outline" size={18} color={theme.colors.gold} />
@@ -1027,20 +819,6 @@ const getSlotDurationMinutes = (startTime?: string, endTime?: string): number =>
               <View style={styles.previewFeeRow}>
                 <Text style={styles.previewFeeLabel}>Tổng chi phí phiên tư vấn:</Text>
                 <Text style={styles.previewFeeValue}>{formatVnd(previewData.totalFee)}</Text>
-              </View>
-
-              <View style={styles.feeExplanationBox}>
-                <Ionicons name="information-circle" size={16} color="#1E40AF" style={{ marginTop: 1 }} />
-                <Text style={styles.feeExplanationText}>
-                  Chi phí được tính dựa trên thời lượng thực tế của khung giờ bạn đã chọn ({previewData.durationMinutes} phút) theo bảng biểu phí niêm yết của chuyên gia.
-                </Text>
-              </View>
-
-              <View style={styles.holdNoticeBox}>
-                <Ionicons name="lock-closed-outline" size={14} color="#B45309" />
-                <Text style={styles.holdNoticeText}>
-                  Khung giờ sẽ được tạm giữ 10 phút sau khi bấm xác nhận để bạn thực hiện thanh toán.
-                </Text>
               </View>
             </View>
           ) : null}
@@ -1668,40 +1446,7 @@ const styles = StyleSheet.create({
     color: theme.colors.primary,
     fontVariant: ['tabular-nums'],
   },
-  feeExplanationBox: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    backgroundColor: '#EFF6FF',
-    padding: 8,
-    borderRadius: 6,
-    gap: 6,
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-    marginTop: 4,
-  },
-  feeExplanationText: {
-    flex: 1,
-    fontFamily: fonts.body,
-    fontSize: 11,
-    color: '#1E3A8A',
-    lineHeight: 15,
-  },
-  holdNoticeBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FEF3C7',
-    padding: 8,
-    borderRadius: 6,
-    gap: 6,
-    marginTop: 6,
-  },
-  holdNoticeText: {
-    flex: 1,
-    fontFamily: fonts.body,
-    fontSize: 11,
-    color: '#92400E',
-    lineHeight: 15,
-  },
+
 
   // Submit
   submitBtn: {

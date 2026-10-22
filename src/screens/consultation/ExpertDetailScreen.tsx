@@ -33,6 +33,7 @@ import {
   formatSessionType,
   formatVietnameseDate,
   formatTimeRange,
+  isValidAvatarUrl,
 } from '../../types/consultation';
 
 export const ExpertDetailScreen: React.FC = () => {
@@ -248,7 +249,12 @@ export const ExpertDetailScreen: React.FC = () => {
     return (
       <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+          <TouchableOpacity
+            onPress={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('ExpertList'))}
+            style={styles.backBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Quay lại"
+          >
             <Ionicons name="arrow-back" size={24} color={theme.colors.textPrimary} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Hồ sơ chuyên gia</Text>
@@ -267,7 +273,12 @@ export const ExpertDetailScreen: React.FC = () => {
     return (
       <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+          <TouchableOpacity
+            onPress={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('ExpertList'))}
+            style={styles.backBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Quay lại"
+          >
             <Ionicons name="arrow-back" size={24} color={theme.colors.textPrimary} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Hồ sơ chuyên gia</Text>
@@ -291,7 +302,7 @@ export const ExpertDetailScreen: React.FC = () => {
       {/* ── HEADER ── */}
       <View style={styles.header}>
         <TouchableOpacity
-          onPress={() => navigation.goBack()}
+          onPress={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('ExpertList'))}
           style={styles.backBtn}
           accessibilityRole="button"
           accessibilityLabel="Quay lại"
@@ -317,8 +328,8 @@ export const ExpertDetailScreen: React.FC = () => {
         <View style={styles.heroCard}>
           <View style={styles.heroTopRow}>
             <View style={styles.heroAvatarWrap}>
-              {expert.avatarUrl ? (
-                <Image source={{ uri: expert.avatarUrl }} style={styles.heroAvatar} />
+              {isValidAvatarUrl(expert.avatarUrl) ? (
+                <Image source={{ uri: expert.avatarUrl! }} style={styles.heroAvatar} />
               ) : (
                 <View style={styles.heroAvatarPlaceholder}>
                   <Text style={styles.heroAvatarLetter}>

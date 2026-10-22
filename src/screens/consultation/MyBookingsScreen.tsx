@@ -11,7 +11,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import { useNavigation, useRoute, RouteProp, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
@@ -25,6 +25,7 @@ import {
   formatSessionType,
   formatVietnameseDate,
   formatTimeRange,
+  isValidAvatarUrl,
 } from '../../types/consultation';
 
 const STATUS_TABS: { key: string; label: string; status?: BookingStatus }[] = [
@@ -92,9 +93,12 @@ export const MyBookingsScreen: React.FC = () => {
     [activeTabKey]
   );
 
-  useEffect(() => {
-    fetchBookings(false, 1);
-  }, [fetchBookings]);
+  // Tự động tải lại danh sách lịch hẹn mới nhất mỗi khi quay lại màn hình
+  useFocusEffect(
+    useCallback(() => {
+      fetchBookings(false, 1);
+    }, [fetchBookings])
+  );
 
   const handleRefresh = () => {
     fetchBookings(true, 1);
@@ -165,7 +169,7 @@ export const MyBookingsScreen: React.FC = () => {
       {/* ── HEADER ── */}
       <View style={styles.header}>
         <TouchableOpacity
-          onPress={() => navigation.goBack()}
+          onPress={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('Home'))}
           style={styles.backBtn}
           accessibilityRole="button"
           accessibilityLabel="Quay lại"
@@ -287,8 +291,8 @@ export const MyBookingsScreen: React.FC = () => {
                 {/* Expert info row */}
                 <View style={styles.expertRow}>
                   <View style={styles.expertAvatarWrap}>
-                    {item.expertAvatarUrl ? (
-                      <Image source={{ uri: item.expertAvatarUrl }} style={styles.expertAvatar} />
+                    {isValidAvatarUrl(item.expertAvatarUrl) ? (
+                      <Image source={{ uri: item.expertAvatarUrl! }} style={styles.expertAvatar} />
                     ) : (
                       <View style={styles.expertAvatarPlaceholder}>
                         <Text style={styles.expertAvatarLetter}>

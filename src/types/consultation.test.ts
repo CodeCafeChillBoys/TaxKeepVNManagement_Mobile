@@ -7,6 +7,7 @@ import {
   formatExpertApplicationStatus,
   formatCertStatus,
   formatEscrowStatus,
+  isValidAvatarUrl,
 } from './consultation';
 
 describe('consultation domain formatters', () => {
@@ -101,6 +102,16 @@ describe('consultation domain formatters', () => {
     it('formats time ranges', () => {
       expect(formatTimeRange('09:00:00', '10:00:00')).toBe('09:00 - 10:00');
       expect(formatTimeRange(undefined, undefined)).toBe('');
+    });
+  });
+
+  describe('isValidAvatarUrl', () => {
+    it('rejects fake or dummy storage domains', () => {
+      expect(isValidAvatarUrl('https://storage.taxkeep.vn/avatars/expert_sample.jpg')).toBe(false);
+      expect(isValidAvatarUrl('http://example.com/pic.jpg')).toBe(false);
+      expect(isValidAvatarUrl('')).toBe(false);
+      expect(isValidAvatarUrl(null)).toBe(false);
+      expect(isValidAvatarUrl('https://validcdn.com/avatar.jpg')).toBe(true);
     });
   });
 });

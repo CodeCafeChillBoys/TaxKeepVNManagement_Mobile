@@ -605,5 +605,62 @@ describe('consultationApi', () => {
       expect(res).toEqual(mockDisp);
     });
   });
+
+  describe('Updated Features', () => {
+    it('creates recurring slots', async () => {
+      const req = {
+        startDate: '2026-10-20',
+        numberOfWeeks: 4,
+        weeklySlots: [
+          {
+            dayOfWeek: 1,
+            startTime: '08:30:00',
+            endTime: '11:30:00',
+            sessionType: 'ONLINE_MEETING' as const,
+          },
+        ],
+      };
+      const mockResult = {
+        totalCreated: 4,
+        totalSkipped: 0,
+        fromDate: '2026-10-20',
+        toDate: '2026-11-17',
+        createdSlots: [],
+      };
+      mockPost.mockResolvedValueOnce({ data: { success: true, data: mockResult } });
+
+      const res = await consultationApi.createRecurringSlots(req);
+      expect(mockPost).toHaveBeenCalledWith('/api/v1/expert/slots/recurring', req);
+      expect(res).toEqual(mockResult);
+    });
+
+    it('gets expert sort options', async () => {
+      const mockConfig = {
+        defaultSortBy: 'Recommended',
+        options: [
+          { value: 'Recommended', code: 0, label: 'Đề xuất ưu tiên', isDefault: true },
+          { value: 'RatingDesc', code: 1, label: 'Đánh giá sao cao nhất', isDefault: false },
+        ],
+      };
+      mockGet.mockResolvedValueOnce({ data: { success: true, data: mockConfig } });
+
+      const res = await consultationApi.getExpertSortOptions();
+      expect(mockGet).toHaveBeenCalledWith('/api/v1/experts/sort-options');
+      expect(res).toEqual(mockConfig);
+    });
+
+    it('gets active certificate configs', async () => {
+      const mockConfigs = [
+        { id: 1, code: 'TAX_AGENT', name: 'Đại lý thuế', requiresExpiryDate: false },
+        { id: 2, code: 'CPA', name: 'Kiểm toán viên (CPA)', requiresExpiryDate: false },
+      ];
+      mockGet.mockResolvedValueOnce({ data: { success: true, data: mockConfigs } });
+
+      const res = await consultationApi.getActiveCertificateConfigs();
+      expect(mockGet).toHaveBeenCalledWith('/api/v1/expert-certificate-configs');
+      expect(res).toEqual(mockConfigs);
+    });
+  });
 });
+
 

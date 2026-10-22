@@ -14,9 +14,11 @@ import type {
   BookingPreviewResponse,
   BookingDetailResponse,
   BookingListItemResponse,
+  CreateBookingRequest,
   ExpertApplicationDetailResponse,
   SaveExpertApplicationDraftRequest,
   CertificateResponseDto,
+  ExpertCertificateConfigDto,
   ConsultationFeeConfigDto,
   PaymentLinkResponse,
   EscrowTransactionResponse,
@@ -26,6 +28,9 @@ import type {
   UpcomingMeetingReminderDto,
   CreateExpertSlotRequest,
   UpdateExpertSlotRequest,
+  CreateRecurringSlotRequest,
+  RecurringSlotBatchResultResponse,
+  ExpertSortOptionsResponse,
   ExpertSlotFilterParameters,
   ExpertSlotDetailResponse,
   CreateReviewRequest,
@@ -75,6 +80,17 @@ export const consultationApi = {
       `/api/v1/experts?${params.toString()}`
     );
     return unwrap(res, 'Không thể tải danh sách chuyên gia.');
+  },
+
+  /**
+   * Lấy cấu hình tiêu chí sắp xếp và danh sách option tìm kiếm từ Admin
+   * GET /api/v1/experts/sort-options
+   */
+  async getExpertSortOptions(): Promise<ExpertSortOptionsResponse> {
+    const res = await apiClient.get<ApiResponse<ExpertSortOptionsResponse>>(
+      '/api/v1/experts/sort-options'
+    );
+    return unwrap(res, 'Không thể tải tiêu chí sắp xếp chuyên gia.');
   },
 
   /**
@@ -179,44 +195,26 @@ export const consultationApi = {
 
   /**
    * Khởi tạo lịch hẹn tư vấn và tạm khóa slot 10 phút (Hold slot)
-   * Nhận multipart/form-data
+   * Gửi JSON thuần theo quy định bảo mật mới (Đã loại bỏ đính kèm tệp)
    * POST /api/v1/bookings
    */
-  async createBooking(request: {
+  async createBooking(request: CreateBookingRequest | {
     expertSlotId: string;
     specializationId: number;
     topicTitle: string;
     problemDescription: string;
-    attachments?: Array<{
-      uri: string;
-      name: string;
-      type: string;
-      blob?: any;
-    }>;
+    attachments?: any;
   }): Promise<BookingDetailResponse> {
-    const formData = new FormData();
-    formData.append('ExpertSlotId', request.expertSlotId);
-    formData.append('SpecializationId', String(request.specializationId));
-    formData.append('TopicTitle', request.topicTitle.trim());
-    formData.append('ProblemDescription', request.problemDescription.trim());
-
-    if (request.attachments && request.attachments.length > 0) {
-      for (const file of request.attachments) {
-        if (Platform.OS === 'web' && file.blob) {
-          formData.append('Attachments', file.blob, file.name);
-        } else {
-          formData.append('Attachments', {
-            uri: file.uri,
-            name: file.name,
-            type: file.type || 'application/octet-stream',
-          } as any);
-        }
-      }
-    }
+    const payload: CreateBookingRequest = {
+      expertSlotId: request.expertSlotId,
+      specializationId: Number(request.specializationId),
+      topicTitle: request.topicTitle?.trim() || '',
+      problemDescription: request.problemDescription?.trim() || '',
+    };
 
     const res = await apiClient.post<ApiResponse<BookingDetailResponse>>(
       '/api/v1/bookings',
-      formData
+      payload
     );
     return unwrap(res, 'Không thể khởi tạo lịch hẹn tư vấn.');
   },
@@ -522,6 +520,17 @@ export const consultationApi = {
   },
 
   /**
+   * Lấy danh sách loại chứng chỉ hợp lệ được phép áp dụng (do Admin cấu hình)
+   * GET /api/v1/expert-certificate-configs
+   */
+  async getActiveCertificateConfigs(): Promise<ExpertCertificateConfigDto[]> {
+    const res = await apiClient.get<ApiResponse<ExpertCertificateConfigDto[]>>(
+      '/api/v1/expert-certificate-configs'
+    );
+    return unwrap(res, 'Không thể tải danh mục chứng chỉ áp dụng.');
+  },
+
+  /**
    * Lấy danh mục khung cấu hình phí tư vấn hệ thống
    * GET /api/v1/consultation-fee-configs
    */
@@ -722,6 +731,20 @@ export const consultationApi = {
       `/api/v1/expert/slots/${id}`
     );
     return unwrap(res, 'Không thể tải chi tiết khung giờ.');
+  },
+
+  /**
+   * Tạo hàng loạt khung giờ làm việc định kỳ theo tuần (Batch Recurring Slots)
+   * POST /api/v1/expert/slots/recurring
+   */
+  async createRecurringSlots(
+    request: CreateRecurringSlotRequest
+  ): Promise<RecurringSlotBatchResultResponse> {
+    const res = await apiClient.post<ApiResponse<RecurringSlotBatchResultResponse>>(
+      '/api/v1/expert/slots/recurring',
+      request
+    );
+    return unwrap(res, 'Không thể tạo lịch làm việc định kỳ.');
   },
 
   /**

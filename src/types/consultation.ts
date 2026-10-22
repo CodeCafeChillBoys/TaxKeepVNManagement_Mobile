@@ -230,7 +230,7 @@ export interface BookingDetailResponse {
   cancellationReason?: string | null;
   cancelledBy?: string | null;
   createdAt: string;
-  attachments: BookingAttachmentDto[];
+  attachments?: BookingAttachmentDto[];
 }
 
 export interface BookingListItemResponse {
@@ -252,8 +252,15 @@ export interface BookingListItemResponse {
   status: BookingStatus;
   holdExpiresAt: string;
   approvalDeadline?: string | null;
-  attachmentCount: number;
+  attachmentCount?: number;
   createdAt: string;
+}
+
+export interface CreateBookingRequest {
+  expertSlotId: string;
+  specializationId: number;
+  topicTitle: string;
+  problemDescription: string;
 }
 
 // ── Utility Functions ──────────────────────────────────────────
@@ -261,6 +268,15 @@ export interface BookingListItemResponse {
 export function formatVnd(amount?: number | null): string {
   if (amount === undefined || amount === null || isNaN(amount)) return '0 đ';
   return `${Math.round(amount).toLocaleString('vi-VN')} đ`;
+}
+
+export function isValidAvatarUrl(url?: string | null): boolean {
+  if (!url || typeof url !== 'string') return false;
+  const trimmed = url.trim();
+  if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) return false;
+  // Bỏ qua các địa chỉ máy chủ mẫu / giả lập chưa tồn tại trên internet
+  if (trimmed.includes('storage.taxkeep.vn') || trimmed.includes('example.com')) return false;
+  return true;
 }
 
 export function formatSessionType(type?: SessionType | string): {
@@ -462,8 +478,21 @@ export interface SpecializationDtoItem {
   name: string;
 }
 
+export interface ExpertCertificateConfigDto {
+  id: number;
+  code: string;
+  name: string;
+  description?: string | null;
+  issuingBody?: string | null;
+  requiresExpiryDate: boolean;
+  aiKeywords?: string | null;
+  isActive: boolean;
+  displayOrder: number;
+}
+
 export interface CertificateResponseDto {
   id: string;
+  taskId?: string;
   certificateType: string;
   certificateName: string;
   certificateNumber: string;
@@ -472,7 +501,10 @@ export interface CertificateResponseDto {
   hasExpiry: boolean;
   expiryDate?: string | null;
   fileUrl: string;
+  fileName?: string;
   verificationStatus: CertificateVerificationStatus;
+  verificationSource?: string;
+  verificationNote?: string | null;
   rejectionReason?: string | null;
   verifiedAt?: string | null;
   createdAt: string;
@@ -883,6 +915,39 @@ export interface ExpertSlotDetailResponse {
   isHolding: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface WeeklySlotItemDto {
+  dayOfWeek: number; // 0 = Sunday, 1 = Monday, 2 = Tuesday, 3 = Wednesday, 4 = Thursday, 5 = Friday, 6 = Saturday
+  startTime: string; // HH:mm (VD: "08:30")
+  endTime: string;   // HH:mm (VD: "11:30")
+  sessionType?: SessionType;
+}
+
+export interface CreateRecurringSlotRequest {
+  startDate: string; // YYYY-MM-DD
+  numberOfWeeks?: number; // 1 to 12 tuần (mặc định 4)
+  weeklySlots: WeeklySlotItemDto[];
+}
+
+export interface RecurringSlotBatchResultResponse {
+  totalCreated: number;
+  totalSkipped: number;
+  fromDate: string;
+  toDate: string;
+  createdSlots: ExpertSlotDetailResponse[];
+}
+
+export interface ExpertSortOptionItem {
+  value: ExpertSortBy | string;
+  code: number;
+  label: string;
+  isDefault: boolean;
+}
+
+export interface ExpertSortOptionsResponse {
+  defaultSortBy: ExpertSortBy | string;
+  options: ExpertSortOptionItem[];
 }
 
 // ══════════════════════════════════════════════════════════════════

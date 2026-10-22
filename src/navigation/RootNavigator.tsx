@@ -40,6 +40,7 @@ import { ExpertBookingsScreen } from '../screens/consultation/ExpertBookingsScre
 import { ExpertSlotsScreen } from '../screens/consultation/ExpertSlotsScreen';
 import { ExpertApplicationScreen } from '../screens/consultation/ExpertApplicationScreen';
 import { PaymentResultScreen } from '../screens/consultation/PaymentResultScreen';
+import { WalletScreen } from '../screens/wallet/WalletScreen';
 import { useAuthStore } from '../stores/useAuthStore';
 import { theme } from '../constants/theme';
 
@@ -128,6 +129,7 @@ export const RootNavigator: React.FC = () => {
         <Stack.Screen name="ExpertSlots" component={ExpertSlotsScreen} />
         <Stack.Screen name="ExpertApplication" component={ExpertApplicationScreen} />
         <Stack.Screen name="PaymentResult" component={PaymentResultScreen} />
+        <Stack.Screen name="Wallet" component={WalletScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

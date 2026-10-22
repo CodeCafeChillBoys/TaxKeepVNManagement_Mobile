@@ -113,6 +113,7 @@ export type RootStackParamList = {
     message?: string;
     vnpParams?: Record<string, string>;
   };
+  Wallet: { walletType?: 'EXPERT' | 'USER' } | undefined;
 };
 
 export type RootNavigationProp = NativeStackNavigationProp<RootStackParamList>;

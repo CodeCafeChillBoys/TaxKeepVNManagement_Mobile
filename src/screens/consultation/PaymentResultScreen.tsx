@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -40,118 +40,106 @@ export const PaymentResultScreen: React.FC = () => {
   const [statusMessage, setStatusMessage] = useState<string>(initialMessage || '');
   const [isSuccess, setIsSuccess] = useState<boolean>(initialSuccess);
 
-  useEffect(() => {
-    let isMounted = true;
+  const processPaymentResult = useCallback(async () => {
+    setLoading(true);
+    try {
+      const passedSuccess =
+        route.params?.isSuccess === true || (route.params?.isSuccess as any) === 'true';
+      const responseCode = vnp_ResponseCode || vnpParams?.vnp_ResponseCode;
+      const codeSuccess = responseCode === '00';
 
-    const processPaymentResult = async () => {
-      setLoading(true);
-      try {
-        const passedSuccess =
-          route.params?.isSuccess === true || (route.params?.isSuccess as any) === 'true';
-        const responseCode = vnp_ResponseCode || vnpParams?.vnp_ResponseCode;
-        const codeSuccess = responseCode === '00';
+      const effectiveBookingId =
+        bookingId || escrow?.bookingId || (route.params as any)?.bookingId;
 
-        const effectiveBookingId =
-          bookingId || escrow?.bookingId || (route.params as any)?.bookingId;
+      // 1. Tải thông tin booking và escrow từ DB trước
+      let isPaidBooking = false;
+      if (effectiveBookingId) {
+        const [bookingRes, escrowRes] = await Promise.allSettled([
+          consultationApi.getBookingDetail(effectiveBookingId),
+          consultationApi.getBookingEscrow(effectiveBookingId),
+        ]);
 
-        // 1. Tải thông tin booking và escrow từ DB trước
-        let isPaidBooking = false;
-        if (effectiveBookingId) {
-          const [bookingRes, escrowRes] = await Promise.allSettled([
-            consultationApi.getBookingDetail(effectiveBookingId),
-            consultationApi.getBookingEscrow(effectiveBookingId),
-          ]);
-
-          if (isMounted && bookingRes.status === 'fulfilled') {
-            setBooking(bookingRes.value);
-            const b = bookingRes.value;
-            if (
-              Boolean(b.paidAt) ||
-              b.status === 'AWAITING_EXPERT_APPROVAL' ||
-              b.status === 'CONFIRMED' ||
-              b.status === 'IN_PROGRESS'
-            ) {
-              isPaidBooking = true;
-            }
-          }
-
-          if (isMounted && escrowRes.status === 'fulfilled') {
-            setEscrow(escrowRes.value);
-            if (escrowRes.value.escrowStatus === 'HeldInEscrow') {
-              isPaidBooking = true;
-            }
+        if (bookingRes.status === 'fulfilled') {
+          setBooking(bookingRes.value);
+          const b = bookingRes.value;
+          if (
+            Boolean(b.paidAt) ||
+            b.status === 'AWAITING_EXPERT_APPROVAL' ||
+            b.status === 'CONFIRMED' ||
+            b.status === 'IN_PROGRESS'
+          ) {
+            isPaidBooking = true;
           }
         }
 
-        // 2. Nếu DB CHƯA ghi nhận thanh toán, nhưng có vnpParams và vnp_SecureHash:
-        // Kích hoạt gọi Backend đối soát (đóng vai trò fail-safe nếu Web chưa gọi hoặc bị lỗi mạng)
-        if (!isPaidBooking && vnpParams && Object.keys(vnpParams).length > 0 && vnpParams.vnp_SecureHash) {
-          try {
-            const escrowRes = await consultationApi.handleVnPayReturn(vnpParams);
-            if (isMounted && escrowRes) {
-              setEscrow(escrowRes);
-              if (escrowRes.escrowStatus === 'HeldInEscrow') {
-                isPaidBooking = true;
-              }
-            }
-            if (effectiveBookingId) {
-              const bRes = await consultationApi.getBookingDetail(effectiveBookingId);
-              if (isMounted) {
-                setBooking(bRes);
-                if (Boolean(bRes.paidAt) || bRes.status === 'AWAITING_EXPERT_APPROVAL') {
-                  isPaidBooking = true;
-                }
-              }
-            }
-          } catch (err: any) {
-            if (__DEV__) {
-              console.log('Mobile fallback handleVnPayReturn note:', err?.message);
-            }
+        if (escrowRes.status === 'fulfilled') {
+          setEscrow(escrowRes.value);
+          if (escrowRes.value.escrowStatus === 'HeldInEscrow') {
+            isPaidBooking = true;
           }
         }
-
-        // 3. Quyết định trạng thái hiển thị
-        if (isPaidBooking) {
-          setIsSuccess(true);
-        } else if (codeSuccess || passedSuccess) {
-          // VNPay báo thành công nhưng Backend DB chưa kịp ghi nhận
-          setIsSuccess(false);
-          if (isMounted) {
-            setStatusMessage(
-              'VNPay đã trừ tiền thành công nhưng hệ thống đang đồng bộ dữ liệu. Bạn vui lòng bấm "Thử lại" hoặc kiểm tra lại sau ít giây.'
-            );
-          }
-        } else {
-          setIsSuccess(false);
-          if (responseCode && responseCode !== '00') {
-            let errText = 'Giao dịch chưa hoàn tất.';
-            if (responseCode === '24') {
-              errText = 'Bạn đã hủy giao dịch.';
-            } else if (responseCode === '09') {
-              errText = 'Thẻ chưa kích hoạt thanh toán trực tuyến.';
-            } else if (responseCode === '51') {
-              errText = 'Số dư tài khoản không đủ.';
-            } else if (responseCode === '79') {
-              errText = 'Nhập sai mật khẩu quá số lần quy định.';
-            }
-            if (isMounted) setStatusMessage(errText);
-          }
-        }
-      } catch (err: any) {
-        if (isMounted) {
-          setStatusMessage('Chưa thể cập nhật trạng thái thanh toán.');
-        }
-      } finally {
-        if (isMounted) setLoading(false);
       }
-    };
 
+      // 2. Nếu DB CHƯA ghi nhận thanh toán, nhưng có vnpParams và vnp_SecureHash:
+      // Kích hoạt gọi Backend đối soát (đóng vai trò fail-safe nếu Web chưa gọi hoặc bị lỗi mạng)
+      if (!isPaidBooking && vnpParams && Object.keys(vnpParams).length > 0 && vnpParams.vnp_SecureHash) {
+        try {
+          const escrowRes = await consultationApi.handleVnPayReturn(vnpParams);
+          if (escrowRes) {
+            setEscrow(escrowRes);
+            if (escrowRes.escrowStatus === 'HeldInEscrow') {
+              isPaidBooking = true;
+            }
+          }
+          if (effectiveBookingId) {
+            const bRes = await consultationApi.getBookingDetail(effectiveBookingId);
+            setBooking(bRes);
+            if (Boolean(bRes.paidAt) || bRes.status === 'AWAITING_EXPERT_APPROVAL') {
+              isPaidBooking = true;
+            }
+          }
+        } catch (err: any) {
+          if (__DEV__) {
+            console.log('Mobile fallback handleVnPayReturn note:', err?.message);
+          }
+        }
+      }
+
+      // 3. Quyết định trạng thái hiển thị
+      if (isPaidBooking) {
+        setIsSuccess(true);
+      } else if (codeSuccess || passedSuccess) {
+        // VNPay báo thành công nhưng Backend DB chưa kịp ghi nhận
+        setIsSuccess(false);
+        setStatusMessage(
+          'VNPay đã trừ tiền thành công nhưng hệ thống đang đồng bộ dữ liệu. Bạn vui lòng bấm "Thử lại" hoặc kiểm tra lại sau ít giây.'
+        );
+      } else {
+        setIsSuccess(false);
+        if (responseCode && responseCode !== '00') {
+          let errText = 'Giao dịch chưa hoàn tất.';
+          if (responseCode === '24') {
+            errText = 'Bạn đã hủy giao dịch.';
+          } else if (responseCode === '09') {
+            errText = 'Thẻ chưa kích hoạt thanh toán trực tuyến.';
+          } else if (responseCode === '51') {
+            errText = 'Số dư tài khoản không đủ.';
+          } else if (responseCode === '79') {
+            errText = 'Nhập sai mật khẩu quá số lần quy định.';
+          }
+          setStatusMessage(errText);
+        }
+      }
+    } catch (err: any) {
+      setStatusMessage('Chưa thể cập nhật trạng thái thanh toán.');
+    } finally {
+      setLoading(false);
+    }
+  }, [bookingId, vnp_ResponseCode, vnpParams, escrow?.bookingId, route.params]);
+
+  useEffect(() => {
     processPaymentResult();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [bookingId, vnp_ResponseCode, vnpParams]);
+  }, [processPaymentResult]);
 
   useEffect(() => {
     const onBackPress = () => {

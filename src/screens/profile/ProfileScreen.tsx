@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   RefreshControl,
   Alert,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -21,6 +22,7 @@ import { MainTabBar } from '../../components/navigation/MainTabBar';
 import { DrumHeader } from '../../components/brand/DrumHeader';
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
 import { formatPersonName } from '../../utils/formatPersonName';
+import { Dialog } from '../../components/common/Dialog';
 
 export const ProfileScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
@@ -34,18 +36,21 @@ export const ProfileScreen: React.FC = () => {
   const currentRole = (profile?.userRole || authUser?.role || '').toLowerCase();
   const isExpert = currentRole === 'expert' || currentRole.includes('expert');
 
+  const [showLogoutDialog, setShowLogoutDialog] = useState<boolean>(false);
+
   const handleLogout = () => {
-    Alert.alert('Đăng xuất', 'Bạn có chắc chắn muốn đăng xuất khỏi ứng dụng?', [
-      { text: 'Hủy', style: 'cancel' },
-      {
-        text: 'Đăng xuất',
-        style: 'destructive',
-        onPress: async () => {
-          await logout();
-          navigation.replace('Login');
-        },
-      },
-    ]);
+    setShowLogoutDialog(true);
+  };
+
+  const handleConfirmLogout = async () => {
+    setShowLogoutDialog(false);
+    try {
+      await logout();
+    } catch (e) {
+      console.warn('Logout error:', e);
+    } finally {
+      navigation.replace('Login');
+    }
   };
 
   const fetchProfile = async (isPullRefresh = false) => {
@@ -187,7 +192,7 @@ export const ProfileScreen: React.FC = () => {
           onPress={() => navigation.navigate('MyBookings', {})}
           testID="quickLinkMyBookings"
         />
-        {isExpert && (
+        {isExpert ? (
           <>
             <LinkRow
               label="Quản lý ca tư vấn (Chuyên gia)"
@@ -195,11 +200,22 @@ export const ProfileScreen: React.FC = () => {
               testID="quickLinkExpertBookings"
             />
             <LinkRow
+              label="Ví thu nhập & Rút tiền"
+              onPress={() => navigation.navigate('Wallet', { walletType: 'EXPERT' })}
+              testID="quickLinkExpertWallet"
+            />
+            <LinkRow
               label="Lịch làm việc của chuyên gia"
               onPress={() => navigation.navigate('ExpertSlots')}
               testID="quickLinkExpertSlots"
             />
           </>
+        ) : (
+          <LinkRow
+            label="Ví hoàn tiền & Rút tiền"
+            onPress={() => navigation.navigate('Wallet', { walletType: 'USER' })}
+            testID="quickLinkUserWallet"
+          />
         )}
         <LinkRow
           label={isExpert ? 'Hồ sơ chuyên gia thuế' : 'Đăng ký làm chuyên gia thuế'}
@@ -247,6 +263,19 @@ export const ProfileScreen: React.FC = () => {
         </TouchableOpacity>
       </ScrollView>
       <MainTabBar active="Profile" />
+
+      <Dialog
+        visible={showLogoutDialog}
+        title="Đăng xuất"
+        message="Bạn có chắc chắn muốn đăng xuất khỏi ứng dụng?"
+        primaryLabel="Đăng xuất"
+        secondaryLabel="Hủy"
+        destructive
+        onPrimary={handleConfirmLogout}
+        onSecondary={() => setShowLogoutDialog(false)}
+        onRequestClose={() => setShowLogoutDialog(false)}
+        testID="profileLogoutConfirmDialog"
+      />
     </SafeAreaView>
   );
 };
@@ -339,7 +368,7 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: 22,
     paddingTop: 8,
-    paddingBottom: 28,
+    paddingBottom: 40,
   },
   editHeaderText: {
     fontFamily: fonts.bodySemi,
@@ -612,6 +641,7 @@ const styles = StyleSheet.create({
   logoutBtn: {
     alignItems: 'center',
     paddingVertical: 16,
+    cursor: Platform.OS === 'web' ? ('pointer' as any) : undefined,
   },
   logoutBtnText: {
     fontFamily: fonts.bodySemi,

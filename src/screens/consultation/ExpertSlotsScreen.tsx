@@ -25,6 +25,8 @@ import type {
   SessionType,
   CreateExpertSlotRequest,
   UpdateExpertSlotRequest,
+  WeeklySlotItemDto,
+  CreateRecurringSlotRequest,
 } from '../../types/consultation';
 import { formatSessionType } from '../../types/consultation';
 
@@ -138,11 +140,28 @@ export const ExpertSlotsScreen: React.FC = () => {
   const [servicePickerVisible, setServicePickerVisible] = useState(false);
   const [statusPickerVisible, setStatusPickerVisible] = useState(false);
 
+  // Chế độ chọn nhiều để xóa hàng loạt (Bulk Selection Mode)
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [selectedSlotIds, setSelectedSlotIds] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkDeleteProgress, setBulkDeleteProgress] = useState<{ current: number; total: number } | null>(null);
+
+  // Modal Xác nhận Xóa tất cả theo bộ lọc (Delete All Filtered Modal)
+  const [deleteAllModalVisible, setDeleteAllModalVisible] = useState(false);
+
   // Modal create/edit
   const [modalVisible, setModalVisible] = useState(false);
   const [modalMode, setModalMode] = useState<'create' | 'edit'>('create');
+  const [scheduleType, setScheduleType] = useState<'single' | 'recurring'>('single');
   const [editingSlot, setEditingSlot] = useState<ExpertSlotDetailResponse | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // Recurring Slots Form States
+  const [recurringDays, setRecurringDays] = useState<number[]>([1, 3, 5]); // Thứ 2, 4, 6
+  const [recurringStartTime, setRecurringStartTime] = useState('08:30');
+  const [recurringEndTime, setRecurringEndTime] = useState('11:30');
+  const [recurringSessionType, setRecurringSessionType] = useState<SessionType>('ONLINE_MEETING');
+  const [recurringWeeks, setRecurringWeeks] = useState(4);
 
   // Dialog state
   const [dialog, setDialog] = useState<{
@@ -216,6 +235,7 @@ export const ExpertSlotsScreen: React.FC = () => {
   // Open Create Modal
   const handleOpenCreate = (prefillDate?: string) => {
     setModalMode('create');
+    setScheduleType('single');
     setEditingSlot(null);
     if (prefillDate) {
       setSelectedDate(prefillDate);
@@ -252,6 +272,7 @@ export const ExpertSlotsScreen: React.FC = () => {
       return;
     }
     setModalMode('edit');
+    setScheduleType('single');
     setEditingSlot(slot);
     setSelectedDate(slot.slotDate);
     setStartTime(formatTime(slot.startTime));
@@ -343,6 +364,71 @@ export const ExpertSlotsScreen: React.FC = () => {
     }
   };
 
+  // Submit Recurring Slots
+  const handleSubmitRecurring = async () => {
+    if (recurringDays.length === 0) {
+      setDialog({
+        title: 'Thiếu ngày làm việc',
+        message: 'Vui lòng chọn ít nhất một thứ trong tuần để lặp lại.',
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
+      return;
+    }
+
+    if (recurringStartTime >= recurringEndTime) {
+      setDialog({
+        title: 'Thời gian không hợp lệ',
+        message: 'Giờ kết thúc phải diễn ra sau giờ bắt đầu.',
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      const req: CreateRecurringSlotRequest = {
+        startDate: todayStr,
+        numberOfWeeks: recurringWeeks,
+        weeklySlots: recurringDays.map((dow) => ({
+          dayOfWeek: dow,
+          startTime: toIsoTime(recurringStartTime),
+          endTime: toIsoTime(recurringEndTime),
+          sessionType: recurringSessionType,
+        })),
+      };
+
+      const res = await consultationApi.createRecurringSlots(req);
+      setModalVisible(false);
+      fetchSlots();
+      setDialog({
+        title: 'Tạo lịch định kỳ thành công',
+        message: `Đã tạo thành công ${res.totalCreated} ca làm việc.${
+          res.totalSkipped > 0
+            ? ` Đã tự động bỏ qua ${res.totalSkipped} ca do trùng lịch hoặc vượt quá 6 ca/ngày.`
+            : ''
+        }`,
+        primaryLabel: 'Tuyệt vời',
+        onPrimary: () => setDialog(null),
+      });
+    } catch (err: any) {
+      const friendly = toFriendlyConsultationError(
+        err,
+        'Không thể tạo lịch lặp lại',
+        'Hệ thống chưa thể tạo lịch làm việc hàng loạt lúc này.'
+      );
+      setDialog({
+        title: friendly.title,
+        message: friendly.message,
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   // Toggle Active
   const handleToggleActive = async (slot: ExpertSlotDetailResponse) => {
     if (slot.isBooked) {
@@ -417,7 +503,7 @@ export const ExpertSlotsScreen: React.FC = () => {
           const friendly = toFriendlyConsultationError(
             err,
             'Không thể xóa khung giờ',
-            'Không thể xóa khung giờ làm việc lúc này.'
+            'Không thể xóa khung giờ này do đã từng có khách hàng đặt hẹn (hệ thống cần bảo lưu lịch sử đối soát) hoặc đang có giao dịch.'
           );
           setDialog({
             title: friendly.title,
@@ -533,30 +619,262 @@ export const ExpertSlotsScreen: React.FC = () => {
     });
   }, [slots, filter, serviceFilter, selectedCalendarDate]);
 
+  // ── XỬ LÝ CHỌN NHIỀU & XÓA HÀNG LOẠT (ĐẶT SAU KHI FILTEREDSLOTS ĐÃ KHỞI TẠO) ──
+  const selectableFilteredSlots = useMemo(() => {
+    return filteredSlots.filter((s) => !s.isBooked);
+  }, [filteredSlots]);
+
+  const isAllSelectableSelected = useMemo(() => {
+    if (selectableFilteredSlots.length === 0) return false;
+    return selectableFilteredSlots.every((s) => selectedSlotIds.has(s.id));
+  }, [selectableFilteredSlots, selectedSlotIds]);
+
+  const enterSelectionMode = (initialSlotId?: string) => {
+    setIsSelectionMode(true);
+    if (initialSlotId) {
+      setSelectedSlotIds(new Set([initialSlotId]));
+    } else {
+      setSelectedSlotIds(new Set());
+    }
+  };
+
+  const exitSelectionMode = () => {
+    setIsSelectionMode(false);
+    setSelectedSlotIds(new Set());
+  };
+
+  const handleToggleSelectSlot = (slot: ExpertSlotDetailResponse) => {
+    if (slot.isBooked) {
+      setDialog({
+        title: 'Khung giờ đã có khách',
+        message: 'Khung giờ này đã có khách hàng đặt lịch hẹn. Hệ thống không cho phép xóa để bảo đảm quyền lợi khách hàng.',
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
+      return;
+    }
+
+    setSelectedSlotIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(slot.id)) {
+        next.delete(slot.id);
+      } else {
+        next.add(slot.id);
+      }
+      return next;
+    });
+  };
+
+  const handleToggleSelectAll = () => {
+    if (isAllSelectableSelected) {
+      setSelectedSlotIds(new Set());
+    } else {
+      const next = new Set(selectedSlotIds);
+      selectableFilteredSlots.forEach((s) => next.add(s.id));
+      setSelectedSlotIds(next);
+    }
+  };
+
+  const executeBatchDelete = async (ids: string[], successMessage: string) => {
+    if (ids.length === 0) return;
+    setBulkDeleting(true);
+    setBulkDeleteProgress({ current: 0, total: ids.length });
+
+    let successCount = 0;
+    let failedCount = 0;
+
+    const chunkSize = 3;
+    for (let i = 0; i < ids.length; i += chunkSize) {
+      const chunk = ids.slice(i, i + chunkSize);
+      await Promise.all(
+        chunk.map(async (id) => {
+          try {
+            await consultationApi.deleteSlot(id);
+            successCount++;
+          } catch {
+            failedCount++;
+          }
+        })
+      );
+      setBulkDeleteProgress({
+        current: Math.min(i + chunkSize, ids.length),
+        total: ids.length,
+      });
+    }
+
+    setBulkDeleting(false);
+    setBulkDeleteProgress(null);
+    setIsSelectionMode(false);
+    setSelectedSlotIds(new Set());
+    await fetchSlots();
+
+    if (failedCount === 0) {
+      setDialog({
+        title: 'Xóa thành công',
+        message: `${successMessage} (Tổng cộng ${successCount} ca làm việc).`,
+        primaryLabel: 'Đóng',
+        onPrimary: () => setDialog(null),
+      });
+    } else {
+      setDialog({
+        title: 'Hoàn tất xóa ca làm việc',
+        message: `Đã xóa thành công ${successCount} ca làm việc.${
+          failedCount > 0
+            ? ` Có ${failedCount} ca không thể xóa do đã từng có khách đặt hẹn (hệ thống cần lưu lại lịch sử đối soát) hoặc đang có giao dịch.`
+            : ''
+        }`,
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
+    }
+  };
+
+  const handleConfirmBulkDelete = () => {
+    if (selectedSlotIds.size === 0) {
+      setDialog({
+        title: 'Chưa chọn ca làm việc',
+        message: 'Vui lòng tích chọn ít nhất một ca làm việc để thực hiện xóa.',
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
+      return;
+    }
+
+    const count = selectedSlotIds.size;
+    setDialog({
+      title: 'Xác nhận xóa hàng loạt',
+      message: `Bạn có chắc chắn muốn xóa vĩnh viễn ${count} ca làm việc đã chọn? Thao tác này không thể hoàn tác.`,
+      primaryLabel: `Xóa ${count} ca`,
+      secondaryLabel: 'Hủy',
+      destructive: true,
+      onSecondary: () => setDialog(null),
+      onPrimary: () => {
+        setDialog(null);
+        executeBatchDelete(Array.from(selectedSlotIds), 'Đã xóa hàng loạt thành công');
+      },
+    });
+  };
+
+  // Danh sách các ca đã đặt trong bộ lọc hiện tại (không thể xóa)
+  const bookedFilteredSlots = useMemo(() => {
+    return filteredSlots.filter((s) => s.isBooked || s.isHolding);
+  }, [filteredSlots]);
+
+  // Mô tả bộ lọc hiện tại một cách rõ ràng, trực quan
+  const getFilterDescription = () => {
+    const parts: string[] = [];
+    if (selectedCalendarDate) {
+      parts.push(`Ngày ${formatDateVi(selectedCalendarDate)}`);
+    }
+    if (filter === 'AVAILABLE') {
+      parts.push('Trạng thái Sẵn sàng');
+    } else if (filter === 'EXPIRED') {
+      parts.push('Trạng thái Đã hết hạn');
+    } else if (filter === 'INACTIVE') {
+      parts.push('Trạng thái Tạm tắt');
+    } else if (filter === 'BOOKED') {
+      parts.push('Trạng thái Đã đặt');
+    }
+    if (serviceFilter === 'ONLINE_MEETING') {
+      parts.push('Dịch vụ Họp trực tuyến');
+    } else if (serviceFilter === 'CHAT') {
+      parts.push('Dịch vụ Nhắn tin');
+    } else if (serviceFilter === 'VOICE_CALL') {
+      parts.push('Dịch vụ Gọi thoại');
+    }
+
+    if (parts.length === 0) {
+      return 'Toàn bộ danh sách lịch làm việc';
+    }
+    return parts.join(' • ');
+  };
+
+  const handleOpenDeleteAllModal = () => {
+    if (filteredSlots.length === 0) {
+      setDialog({
+        title: 'Không có ca làm việc',
+        message: 'Hiện không có ca làm việc nào phù hợp với bộ lọc tìm kiếm hiện tại để xóa.',
+        primaryLabel: 'Đóng',
+        onPrimary: () => setDialog(null),
+      });
+      return;
+    }
+
+    if (selectableFilteredSlots.length === 0) {
+      setDialog({
+        title: 'Không thể xóa',
+        message: `Toàn bộ ${bookedFilteredSlots.length} ca làm việc phù hợp với bộ lọc hiện tại đã có khách hàng đặt lịch hẹn. Hệ thống không cho phép xóa để bảo đảm quyền lợi của khách hàng.`,
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
+      return;
+    }
+
+    setDeleteAllModalVisible(true);
+  };
+
+  const handleConfirmDeleteAllFiltered = () => {
+    const idsToDelete = selectableFilteredSlots.map((s) => s.id);
+    const count = idsToDelete.length;
+    setDeleteAllModalVisible(false);
+
+    executeBatchDelete(
+      idsToDelete,
+      `Đã xóa toàn bộ ${count} ca làm việc phù hợp với bộ lọc.`
+    );
+  };
+
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
       {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backBtn}
-          onPress={() => navigation.goBack()}
-          accessibilityRole="button"
-          accessibilityLabel="Quay lại"
-        >
-          <Ionicons name="chevron-back" size={24} color={theme.colors.primary} />
-        </TouchableOpacity>
+      {isSelectionMode ? (
+        <View style={styles.selectionHeader}>
+          <TouchableOpacity
+            style={styles.selectionCloseBtn}
+            onPress={exitSelectionMode}
+            accessibilityRole="button"
+            accessibilityLabel="Hủy chọn"
+          >
+            <Ionicons name="close" size={22} color={theme.colors.primary} />
+            <Text style={styles.selectionCloseText}>Hủy</Text>
+          </TouchableOpacity>
 
-        <Text style={styles.headerTitle}>Lịch làm việc tư vấn</Text>
+          <Text style={styles.selectionHeaderTitle}>
+            Đã chọn {selectedSlotIds.size} ca
+          </Text>
 
-        <TouchableOpacity
-          style={styles.addBtn}
-          onPress={() => handleOpenCreate()}
-          accessibilityRole="button"
-          accessibilityLabel="Thêm khung giờ mới"
-        >
-          <Ionicons name="add" size={24} color="#FFFFFF" />
-        </TouchableOpacity>
-      </View>
+          <TouchableOpacity
+            style={styles.selectionSelectAllBtn}
+            onPress={handleToggleSelectAll}
+            accessibilityRole="button"
+            accessibilityLabel="Chọn tất cả"
+          >
+            <Ionicons
+              name={isAllSelectableSelected ? 'checkbox' : 'square-outline'}
+              size={18}
+              color={theme.colors.primary}
+            />
+            <Text style={styles.selectionSelectAllText}>
+              {isAllSelectableSelected ? 'Bỏ chọn' : 'Chọn hết'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <View style={styles.header}>
+          <TouchableOpacity
+            style={styles.backBtn}
+            onPress={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('ExpertBookings'))}
+            accessibilityRole="button"
+            accessibilityLabel="Quay lại"
+          >
+            <Ionicons name="chevron-back" size={24} color={theme.colors.primary} />
+          </TouchableOpacity>
+
+          <Text style={styles.headerTitle}>Lịch làm việc tư vấn</Text>
+
+          <View style={{ width: 38 }} />
+        </View>
+      )}
       <GoldDoubleRule />
 
       {/* Counters Pill Bar */}
@@ -635,13 +953,13 @@ export const ExpertSlotsScreen: React.FC = () => {
 
           <View style={styles.calHeaderActions}>
             <TouchableOpacity
-              style={styles.calTodayBtn}
-              onPress={handleToday}
+              style={styles.calAddBtn}
+              onPress={() => handleOpenCreate()}
               accessibilityRole="button"
-              accessibilityLabel="Về hôm nay"
+              accessibilityLabel="Thêm lịch làm việc"
             >
-              <Ionicons name="today-outline" size={12} color={theme.colors.primary} />
-              <Text style={styles.calTodayBtnText}>Hôm nay</Text>
+              <Ionicons name="add" size={13} color="#FFFFFF" />
+              <Text style={styles.calAddBtnText}>Thêm lịch</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -888,14 +1206,87 @@ export const ExpertSlotsScreen: React.FC = () => {
       {/* Active Filter Notification */}
       {isFiltered && (
         <View style={styles.activeFilterNotice}>
-          <Text style={styles.activeFilterNoticeText}>
+          <Text style={styles.activeFilterNoticeText} numberOfLines={1}>
             Hiển thị {filteredSlots.length} / {slots.length} khung giờ phù hợp
           </Text>
-          <TouchableOpacity onPress={handleResetFilters}>
-            <Text style={styles.clearFilterLink}>Bỏ lọc</Text>
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            {selectableFilteredSlots.length > 0 && (
+              <TouchableOpacity
+                onPress={handleOpenDeleteAllModal}
+                style={styles.quickDeleteFilterBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Xóa tất cả theo bộ lọc"
+              >
+                <Ionicons name="trash-outline" size={12} color="#DC2626" />
+                <Text style={styles.quickDeleteFilterText}>
+                  Xóa tất cả ({selectableFilteredSlots.length})
+                </Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity onPress={handleResetFilters}>
+              <Text style={styles.clearFilterLink}>Bỏ lọc</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       )}
+
+      {/* Thanh công cụ danh sách: Xóa tất cả theo bộ lọc & Chọn nhiều hàng loạt */}
+      <View style={styles.listToolbar}>
+        <Text style={styles.listToolbarCount}>
+          {filteredSlots.length} ca làm việc
+        </Text>
+
+        <View style={styles.listToolbarActions}>
+          <TouchableOpacity
+            style={[
+              styles.toolbarActionBtn,
+              selectableFilteredSlots.length === 0 && styles.btnDisabled,
+            ]}
+            onPress={handleOpenDeleteAllModal}
+            disabled={selectableFilteredSlots.length === 0}
+            accessibilityRole="button"
+            accessibilityLabel="Xóa tất cả theo bộ lọc"
+          >
+            <Ionicons
+              name="trash-outline"
+              size={13}
+              color={selectableFilteredSlots.length > 0 ? '#DC2626' : '#9CA3AF'}
+            />
+            <Text
+              style={[
+                styles.toolbarActionBtnTextDanger,
+                selectableFilteredSlots.length === 0 && { color: '#9CA3AF' },
+              ]}
+            >
+              Xóa tất cả ({selectableFilteredSlots.length})
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.toolbarActionBtn,
+              isSelectionMode && styles.toolbarActionBtnActive,
+            ]}
+            onPress={() => (isSelectionMode ? exitSelectionMode() : enterSelectionMode())}
+            accessibilityRole="button"
+            accessibilityLabel="Chọn nhiều để xóa"
+          >
+            <Ionicons
+              name={isSelectionMode ? 'close-circle' : 'checkmark-done-circle-outline'}
+              size={14}
+              color={isSelectionMode ? '#FFFFFF' : theme.colors.primary}
+            />
+            <Text
+              style={[
+                styles.toolbarActionBtnText,
+                isSelectionMode && styles.toolbarActionBtnTextActive,
+              ]}
+            >
+              {isSelectionMode ? 'Thoát chọn' : 'Chọn nhiều'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
 
       {/* Slots List */}
       {loading && !refreshing ? (
@@ -946,24 +1337,58 @@ export const ExpertSlotsScreen: React.FC = () => {
           renderItem={({ item }) => {
             const sInfo = formatSessionType(item.sessionType);
             const expired = isSlotExpired(item.slotDate, item.endTime);
+            const isSelected = selectedSlotIds.has(item.id);
+            const canSelect = !item.isBooked;
 
             return (
-              <View style={[styles.slotCard, expired && !item.isBooked && styles.slotCardExpired]}>
+              <TouchableOpacity
+                activeOpacity={isSelectionMode ? 0.7 : 1}
+                onPress={isSelectionMode ? () => handleToggleSelectSlot(item) : undefined}
+                style={[
+                  styles.slotCard,
+                  expired && !item.isBooked && styles.slotCardExpired,
+                  isSelectionMode && isSelected && styles.slotCardSelected,
+                ]}
+              >
                 <View style={styles.slotTopRow}>
-                  <View style={styles.slotDateRow}>
-                    <Ionicons
-                      name="calendar"
-                      size={15}
-                      color={expired && !item.isBooked ? '#9CA3AF' : theme.colors.gold}
-                    />
-                    <Text
-                      style={[
-                        styles.slotDateText,
-                        expired && !item.isBooked && styles.slotDateTextExpired,
-                      ]}
-                    >
-                      {formatDateVi(item.slotDate)}
-                    </Text>
+                  {/* Left: Checkbox in selection mode + Date */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                    {isSelectionMode && (
+                      canSelect ? (
+                        <TouchableOpacity
+                          style={styles.cardCheckboxTouch}
+                          onPress={() => handleToggleSelectSlot(item)}
+                          accessibilityRole="checkbox"
+                          accessibilityState={{ checked: isSelected }}
+                        >
+                          <Ionicons
+                            name={isSelected ? 'checkbox' : 'square-outline'}
+                            size={22}
+                            color={isSelected ? theme.colors.primary : '#94A3B8'}
+                          />
+                        </TouchableOpacity>
+                      ) : (
+                        <View style={styles.cardCheckboxDisabled}>
+                          <Ionicons name="lock-closed" size={16} color="#94A3B8" />
+                        </View>
+                      )
+                    )}
+
+                    <View style={styles.slotDateRow}>
+                      <Ionicons
+                        name="calendar"
+                        size={15}
+                        color={expired && !item.isBooked ? '#9CA3AF' : theme.colors.gold}
+                      />
+                      <Text
+                        style={[
+                          styles.slotDateText,
+                          expired && !item.isBooked && styles.slotDateTextExpired,
+                        ]}
+                      >
+                        {formatDateVi(item.slotDate)}
+                      </Text>
+                    </View>
                   </View>
 
                   {/* Status Badge */}
@@ -1041,106 +1466,130 @@ export const ExpertSlotsScreen: React.FC = () => {
                   </View>
                 </View>
 
-                {/* Bottom Actions */}
-                <View style={styles.slotBottomRow}>
-                  {/* Toggle Active Button */}
-                  {expired && !item.isBooked ? (
-                    <TouchableOpacity
-                      style={[styles.toggleBtn, styles.toggleBtnExpired]}
-                      onPress={() => {
-                        setDialog({
-                          title: 'Khung giờ đã hết hạn',
-                          message:
-                            'Khung giờ này đã quá thời gian so với hiện tại. Hệ thống đã tự động tắt nhận lịch để tránh xung đột.',
-                          primaryLabel: 'Đã hiểu',
-                          onPrimary: () => setDialog(null),
-                        });
-                      }}
-                    >
-                      <Ionicons name="lock-closed-outline" size={14} color="#64748B" />
-                      <Text style={styles.toggleBtnExpiredText}>Đã tự tắt (Hết hạn)</Text>
-                    </TouchableOpacity>
-                  ) : item.isBooked ? (
-                    <View style={[styles.toggleBtn, styles.btnDisabled]}>
-                      <Ionicons name="checkmark-done" size={14} color="#1E40AF" />
-                      <Text style={[styles.toggleBtnText, { color: '#1E40AF' }]}>Đã có lịch hẹn</Text>
-                    </View>
-                  ) : (
-                    <TouchableOpacity
-                      style={[
-                        styles.toggleBtn,
-                        item.isActive ? styles.toggleBtnActive : styles.toggleBtnInactive,
-                      ]}
-                      onPress={() => handleToggleActive(item)}
-                    >
-                      <Ionicons
-                        name={item.isActive ? 'toggle' : 'toggle-outline'}
-                        size={15}
-                        color={item.isActive ? '#065F46' : '#6B7280'}
-                      />
-                      <Text
-                        style={[
-                          styles.toggleBtnText,
-                          { color: item.isActive ? '#065F46' : '#6B7280' },
-                        ]}
-                      >
-                        {item.isActive ? 'Đang mở' : 'Đang tắt'}
+                {/* Bottom Actions or Selection Notice */}
+                {isSelectionMode ? (
+                  <View style={styles.selectionModeCardNotice}>
+                    {item.isBooked ? (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Ionicons name="lock-closed" size={13} color="#64748B" />
+                        <Text style={styles.selectionModeCardNoticeTextDisabled}>
+                          Đã có khách đặt • Không thể xóa
+                        </Text>
+                      </View>
+                    ) : isSelected ? (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Ionicons name="checkmark-circle" size={14} color={theme.colors.primary} />
+                        <Text style={styles.selectionModeCardNoticeTextActive}>
+                          Đã chọn ca này để xóa
+                        </Text>
+                      </View>
+                    ) : (
+                      <Text style={styles.selectionModeCardNoticeText}>
+                        Chạm vào để chọn ca này
                       </Text>
-                    </TouchableOpacity>
-                  )}
-
-                  <View style={styles.rightActionRow}>
-                    <TouchableOpacity
-                      style={[
-                        styles.cardActionBtn,
-                        (item.isBooked || expired) && styles.btnDisabled,
-                      ]}
-                      disabled={item.isBooked || expired}
-                      onPress={() => handleOpenEdit(item)}
-                    >
-                      <Ionicons
-                        name="pencil-outline"
-                        size={15}
-                        color={item.isBooked || expired ? '#A3A3A3' : theme.colors.primary}
-                      />
-                      <Text
-                        style={[
-                          styles.cardActionBtnText,
-                          (item.isBooked || expired) && { color: '#A3A3A3' },
-                        ]}
-                      >
-                        Sửa
-                      </Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={[styles.cardDeleteBtn, item.isBooked && styles.btnDisabled]}
-                      disabled={item.isBooked}
-                      onPress={() => handleDeleteSlot(item)}
-                    >
-                      <Ionicons
-                        name="trash-outline"
-                        size={15}
-                        color={item.isBooked ? '#A3A3A3' : '#DC2626'}
-                      />
-                      <Text
-                        style={[
-                          styles.cardDeleteBtnText,
-                          item.isBooked && { color: '#A3A3A3' },
-                        ]}
-                      >
-                        Xóa
-                      </Text>
-                    </TouchableOpacity>
+                    )}
                   </View>
-                </View>
-              </View>
+                ) : (
+                  <View style={styles.slotBottomRow}>
+                    {/* Toggle Active Button */}
+                    {expired && !item.isBooked ? (
+                      <TouchableOpacity
+                        style={[styles.toggleBtn, styles.toggleBtnExpired]}
+                        onPress={() => {
+                          setDialog({
+                            title: 'Khung giờ đã hết hạn',
+                            message:
+                              'Khung giờ này đã quá thời gian so với hiện tại. Hệ thống đã tự động tắt nhận lịch để tránh xung đột.',
+                            primaryLabel: 'Đã hiểu',
+                            onPrimary: () => setDialog(null),
+                          });
+                        }}
+                      >
+                        <Ionicons name="lock-closed-outline" size={14} color="#64748B" />
+                        <Text style={styles.toggleBtnExpiredText}>Đã tự tắt (Hết hạn)</Text>
+                      </TouchableOpacity>
+                    ) : item.isBooked ? (
+                      <View style={[styles.toggleBtn, styles.btnDisabled]}>
+                        <Ionicons name="checkmark-done" size={14} color="#1E40AF" />
+                        <Text style={[styles.toggleBtnText, { color: '#1E40AF' }]}>Đã có lịch hẹn</Text>
+                      </View>
+                    ) : (
+                      <TouchableOpacity
+                        style={[
+                          styles.toggleBtn,
+                          item.isActive ? styles.toggleBtnActive : styles.toggleBtnInactive,
+                        ]}
+                        onPress={() => handleToggleActive(item)}
+                      >
+                        <Ionicons
+                          name={item.isActive ? 'toggle' : 'toggle-outline'}
+                          size={15}
+                          color={item.isActive ? '#065F46' : '#6B7280'}
+                        />
+                        <Text
+                          style={[
+                            styles.toggleBtnText,
+                            { color: item.isActive ? '#065F46' : '#6B7280' },
+                          ]}
+                        >
+                          {item.isActive ? 'Đang mở' : 'Đang tắt'}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+
+                    <View style={styles.rightActionRow}>
+                      <TouchableOpacity
+                        style={[
+                          styles.cardActionBtn,
+                          (item.isBooked || expired) && styles.btnDisabled,
+                        ]}
+                        disabled={item.isBooked || expired}
+                        onPress={() => handleOpenEdit(item)}
+                      >
+                        <Ionicons
+                          name="pencil-outline"
+                          size={15}
+                          color={item.isBooked || expired ? '#A3A3A3' : theme.colors.primary}
+                        />
+                        <Text
+                          style={[
+                            styles.cardActionBtnText,
+                            (item.isBooked || expired) && { color: '#A3A3A3' },
+                          ]}
+                        >
+                          Sửa
+                        </Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[styles.cardDeleteBtn, item.isBooked && styles.btnDisabled]}
+                        disabled={item.isBooked}
+                        onPress={() => handleDeleteSlot(item)}
+                      >
+                        <Ionicons
+                          name="trash-outline"
+                          size={15}
+                          color={item.isBooked ? '#A3A3A3' : '#DC2626'}
+                        />
+                        <Text
+                          style={[
+                            styles.cardDeleteBtnText,
+                            item.isBooked && { color: '#A3A3A3' },
+                          ]}
+                        >
+                          Xóa
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+              </TouchableOpacity>
             );
           }}
         />
       )}
 
-      {/* Modal Thêm / Chỉnh sửa khung giờ */}
+      {/* ── MODAL THÊM / CHỈNH SỬA LỊCH LÀM VIỆC (TÍCH HỢP CA ĐƠN & LẶP LẠI) ── */}
       <Modal
         visible={modalVisible}
         transparent
@@ -1149,149 +1598,428 @@ export const ExpertSlotsScreen: React.FC = () => {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalSheet}>
+            {/* Header Modal */}
             <View style={styles.modalHeader}>
               <View style={styles.modalHeaderTitleRow}>
                 <Ionicons
-                  name={modalMode === 'create' ? 'add-circle' : 'create'}
+                  name={
+                    modalMode === 'edit'
+                      ? 'create'
+                      : scheduleType === 'recurring'
+                      ? 'repeat'
+                      : 'calendar'
+                  }
                   size={20}
                   color={theme.colors.primary}
                 />
                 <Text style={styles.modalTitle}>
-                  {modalMode === 'create' ? 'Mở khung giờ làm việc mới' : 'Chỉnh sửa khung giờ'}
+                  {modalMode === 'edit' ? 'Chỉnh sửa ca làm việc' : 'Thêm lịch làm việc'}
                 </Text>
               </View>
-              <TouchableOpacity onPress={() => setModalVisible(false)}>
+              <TouchableOpacity onPress={() => setModalVisible(false)} disabled={submitting}>
                 <Ionicons name="close" size={22} color="#666666" />
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
-              {/* Chọn ngày */}
-              <Text style={styles.formSectionLabel}>1. Chọn ngày làm việc:</Text>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                style={styles.datesScroll}
-                contentContainerStyle={{ gap: 8, paddingVertical: 4 }}
-              >
-                {availableDates.map((item) => {
-                  const isSelected = selectedDate === item.dateStr;
-                  return (
-                    <TouchableOpacity
-                      key={item.dateStr}
-                      style={[styles.dateChip, isSelected && styles.dateChipSelected]}
-                      onPress={() => setSelectedDate(item.dateStr)}
-                    >
-                      <Text style={[styles.dateChipText, isSelected && styles.dateChipTextSelected]}>
-                        {item.label}
-                      </Text>
-                      <Text style={[styles.dateChipSub, isSelected && styles.dateChipSubSelected]}>
-                        {item.dateStr.slice(5)}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-
-              {/* Giờ bắt đầu & Giờ kết thúc */}
-              <Text style={[styles.formSectionLabel, { marginTop: 14 }]}>
-                2. Chọn khung giờ (Bắt đầu - Kết thúc):
-              </Text>
-              <View style={styles.timeGridRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.timeLabel}>Bắt đầu:</Text>
-                  <ScrollView style={styles.timeSelectBox} nestedScrollEnabled>
-                    {TIME_OPTIONS.map((t) => (
-                      <TouchableOpacity
-                        key={`start-${t}`}
-                        style={[styles.timeOption, startTime === t && styles.timeOptionActive]}
-                        onPress={() => {
-                          setStartTime(t);
-                          // Auto suggest endTime after 60m
-                          const [h, m] = t.split(':').map(Number);
-                          const endCandidate = `${String(h + 1).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-                          if (TIME_OPTIONS.includes(endCandidate)) {
-                            setEndTime(endCandidate);
-                          }
-                        }}
-                      >
-                        <Text style={[styles.timeOptionText, startTime === t && styles.timeOptionTextActive]}>
-                          {t}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
-                </View>
-
-                <View style={{ width: 16, alignItems: 'center', justifyContent: 'center' }}>
-                  <Ionicons name="arrow-forward" size={16} color="#999999" />
-                </View>
-
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.timeLabel}>Kết thúc:</Text>
-                  <ScrollView style={styles.timeSelectBox} nestedScrollEnabled>
-                    {TIME_OPTIONS.filter((t) => t > startTime).map((t) => (
-                      <TouchableOpacity
-                        key={`end-${t}`}
-                        style={[styles.timeOption, endTime === t && styles.timeOptionActive]}
-                        onPress={() => setEndTime(t)}
-                      >
-                        <Text style={[styles.timeOptionText, endTime === t && styles.timeOptionTextActive]}>
-                          {t}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
-                </View>
-              </View>
-
-              {/* Hình thức tư vấn */}
-              <Text style={[styles.formSectionLabel, { marginTop: 14 }]}>
-                3. Hình thức phiên tư vấn:
-              </Text>
-              <View style={styles.sessionTypeOptions}>
-                {[
-                  { key: 'ONLINE_MEETING', label: 'Họp trực tuyến (1-1)', icon: 'videocam' },
-                  { key: 'CHAT', label: 'Nhắn tin tư vấn', icon: 'chatbubbles' },
-                  { key: 'VOICE_CALL', label: 'Gọi thoại', icon: 'call' },
-                ].map((item) => {
-                  const isSelected = sessionType === item.key;
-                  return (
-                    <TouchableOpacity
-                      key={item.key}
-                      style={[styles.sessionTypeCard, isSelected && styles.sessionTypeCardActive]}
-                      onPress={() => setSessionType(item.key as SessionType)}
-                    >
-                      <Ionicons
-                        name={item.icon as any}
-                        size={18}
-                        color={isSelected ? theme.colors.primary : '#666666'}
-                      />
-                      <Text
-                        style={[
-                          styles.sessionTypeCardText,
-                          isSelected && styles.sessionTypeCardTextActive,
-                        ]}
-                      >
-                        {item.label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-
-              {modalMode === 'edit' && (
+            {/* Bộ chuyển đổi Tab: Ca đơn (1 ngày) vs Lặp lại theo tuần */}
+            {modalMode === 'create' && (
+              <View style={styles.tabContainer}>
                 <TouchableOpacity
-                  style={styles.activeCheckRow}
-                  onPress={() => setIsActive(!isActive)}
+                  style={[styles.tabBtn, scheduleType === 'single' && styles.tabBtnActive]}
+                  onPress={() => setScheduleType('single')}
+                  activeOpacity={0.8}
                 >
                   <Ionicons
-                    name={isActive ? 'checkbox' : 'square-outline'}
-                    size={20}
-                    color={theme.colors.primary}
+                    name="calendar-outline"
+                    size={15}
+                    color={scheduleType === 'single' ? theme.colors.primary : '#6B7280'}
                   />
-                  <Text style={styles.activeCheckLabel}>Mở nhận lịch hẹn ngay sau khi lưu</Text>
+                  <Text style={[styles.tabBtnText, scheduleType === 'single' && styles.tabBtnTextActive]}>
+                    Ca đơn (1 ngày)
+                  </Text>
                 </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.tabBtn, scheduleType === 'recurring' && styles.tabBtnActive]}
+                  onPress={() => setScheduleType('recurring')}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons
+                    name="repeat-outline"
+                    size={15}
+                    color={scheduleType === 'recurring' ? theme.colors.primary : '#6B7280'}
+                  />
+                  <Text
+                    style={[styles.tabBtnText, scheduleType === 'recurring' && styles.tabBtnTextActive]}
+                  >
+                    Lặp lại theo tuần
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
+              {scheduleType === 'single' || modalMode === 'edit' ? (
+                /* ── FORM CA ĐƠN ── */
+                <>
+                  {/* 1. Chọn ngày */}
+                  <Text style={styles.formSectionLabel}>1. Chọn ngày làm việc:</Text>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    style={styles.datesScroll}
+                    contentContainerStyle={{ gap: 8, paddingVertical: 4 }}
+                  >
+                    {availableDates.map((item) => {
+                      const isSelected = selectedDate === item.dateStr;
+                      return (
+                        <TouchableOpacity
+                          key={item.dateStr}
+                          style={[styles.dateChip, isSelected && styles.dateChipSelected]}
+                          onPress={() => setSelectedDate(item.dateStr)}
+                        >
+                          <Text
+                            style={[styles.dateChipText, isSelected && styles.dateChipTextSelected]}
+                          >
+                            {item.label}
+                          </Text>
+                          <Text
+                            style={[styles.dateChipSub, isSelected && styles.dateChipSubSelected]}
+                          >
+                            {item.dateStr.slice(5)}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+
+                  {/* 2. Giờ bắt đầu & Giờ kết thúc */}
+                  <Text style={[styles.formSectionLabel, { marginTop: 14 }]}>
+                    2. Chọn khung giờ (Bắt đầu - Kết thúc):
+                  </Text>
+                  <View style={styles.timeGridRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.timeLabel}>Bắt đầu:</Text>
+                      <ScrollView style={styles.timeSelectBox} nestedScrollEnabled>
+                        {TIME_OPTIONS.map((t) => (
+                          <TouchableOpacity
+                            key={`start-${t}`}
+                            style={[styles.timeOption, startTime === t && styles.timeOptionActive]}
+                            onPress={() => {
+                              setStartTime(t);
+                              const [h, m] = t.split(':').map(Number);
+                              const endCandidate = `${String(h + 1).padStart(2, '0')}:${String(
+                                m
+                              ).padStart(2, '0')}`;
+                              if (TIME_OPTIONS.includes(endCandidate)) {
+                                setEndTime(endCandidate);
+                              }
+                            }}
+                          >
+                            <Text
+                              style={[
+                                styles.timeOptionText,
+                                startTime === t && styles.timeOptionTextActive,
+                              ]}
+                            >
+                              {t}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </ScrollView>
+                    </View>
+
+                    <View style={{ width: 16, alignItems: 'center', justifyContent: 'center' }}>
+                      <Ionicons name="arrow-forward" size={16} color="#999999" />
+                    </View>
+
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.timeLabel}>Kết thúc:</Text>
+                      <ScrollView style={styles.timeSelectBox} nestedScrollEnabled>
+                        {TIME_OPTIONS.filter((t) => t > startTime).map((t) => (
+                          <TouchableOpacity
+                            key={`end-${t}`}
+                            style={[styles.timeOption, endTime === t && styles.timeOptionActive]}
+                            onPress={() => setEndTime(t)}
+                          >
+                            <Text
+                              style={[
+                                styles.timeOptionText,
+                                endTime === t && styles.timeOptionTextActive,
+                              ]}
+                            >
+                              {t}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </ScrollView>
+                    </View>
+                  </View>
+
+                  {/* 3. Hình thức tư vấn */}
+                  <Text style={[styles.formSectionLabel, { marginTop: 14 }]}>
+                    3. Hình thức phiên tư vấn:
+                  </Text>
+                  <View style={styles.sessionTypeOptions}>
+                    {[
+                      { key: 'ONLINE_MEETING', label: 'Họp trực tuyến (1-1)', icon: 'videocam' },
+                      { key: 'CHAT', label: 'Nhắn tin tư vấn', icon: 'chatbubbles' },
+                      { key: 'VOICE_CALL', label: 'Gọi thoại', icon: 'call' },
+                    ].map((item) => {
+                      const isSelected = sessionType === item.key;
+                      return (
+                        <TouchableOpacity
+                          key={item.key}
+                          style={[styles.sessionTypeCard, isSelected && styles.sessionTypeCardActive]}
+                          onPress={() => setSessionType(item.key as SessionType)}
+                        >
+                          <Ionicons
+                            name={item.icon as any}
+                            size={18}
+                            color={isSelected ? theme.colors.primary : '#666666'}
+                          />
+                          <Text
+                            style={[
+                              styles.sessionTypeCardText,
+                              isSelected && styles.sessionTypeCardTextActive,
+                            ]}
+                          >
+                            {item.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+
+                  {modalMode === 'edit' && (
+                    <TouchableOpacity
+                      style={styles.activeCheckRow}
+                      onPress={() => setIsActive(!isActive)}
+                    >
+                      <Ionicons
+                        name={isActive ? 'checkbox' : 'square-outline'}
+                        size={20}
+                        color={theme.colors.primary}
+                      />
+                      <Text style={styles.activeCheckLabel}>Mở nhận lịch hẹn ngay sau khi lưu</Text>
+                    </TouchableOpacity>
+                  )}
+                </>
+              ) : (
+                /* ── FORM LẶP LẠI THEO TUẦN ── */
+                <>
+                  <View style={styles.recurringIntroBox}>
+                    <Ionicons name="sparkles" size={16} color={theme.colors.primary} />
+                    <Text style={styles.recurringIntroText}>
+                      Tự động mở các ca cố định trong nhiều tuần liên tiếp. Hệ thống tự động chống trùng giờ và bỏ qua ca vượt hạn mức.
+                    </Text>
+                  </View>
+
+                  {/* 1. Chọn thứ trong tuần */}
+                  <Text style={styles.formSectionLabel}>1. Chọn ngày lặp trong tuần:</Text>
+                  <View style={styles.quickDayRow}>
+                    <TouchableOpacity
+                      style={styles.quickDayBtn}
+                      onPress={() => setRecurringDays([1, 3, 5])}
+                    >
+                      <Text style={styles.quickDayBtnText}>T2 - T4 - T6</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.quickDayBtn}
+                      onPress={() => setRecurringDays([2, 4, 6])}
+                    >
+                      <Text style={styles.quickDayBtnText}>T3 - T5 - T7</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.quickDayBtn}
+                      onPress={() => setRecurringDays([1, 2, 3, 4, 5])}
+                    >
+                      <Text style={styles.quickDayBtnText}>T2 đến T6</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  <View style={styles.dayGridRow}>
+                    {[
+                      { dow: 1, label: 'Thứ 2' },
+                      { dow: 2, label: 'Thứ 3' },
+                      { dow: 3, label: 'Thứ 4' },
+                      { dow: 4, label: 'Thứ 5' },
+                      { dow: 5, label: 'Thứ 6' },
+                      { dow: 6, label: 'Thứ 7' },
+                      { dow: 0, label: 'Chủ Nhật' },
+                    ].map((item) => {
+                      const isSelected = recurringDays.includes(item.dow);
+                      return (
+                        <TouchableOpacity
+                          key={item.dow}
+                          style={[styles.dayGridPill, isSelected && styles.dayGridPillActive]}
+                          onPress={() => {
+                            if (isSelected) {
+                              setRecurringDays(recurringDays.filter((d) => d !== item.dow));
+                            } else {
+                              setRecurringDays([...recurringDays, item.dow]);
+                            }
+                          }}
+                        >
+                          <Ionicons
+                            name={isSelected ? 'checkmark-circle' : 'ellipse-outline'}
+                            size={15}
+                            color={isSelected ? theme.colors.primary : '#888888'}
+                          />
+                          <Text
+                            style={[
+                              styles.dayGridPillText,
+                              isSelected && styles.dayGridPillTextActive,
+                            ]}
+                          >
+                            {item.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+
+                  {/* 2. Khung giờ áp dụng */}
+                  <Text style={[styles.formSectionLabel, { marginTop: 14 }]}>
+                    2. Khung giờ áp dụng cho mỗi ca:
+                  </Text>
+                  <View style={styles.timeGridRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.timeLabel}>Bắt đầu:</Text>
+                      <ScrollView style={styles.timeSelectBox} nestedScrollEnabled>
+                        {TIME_OPTIONS.map((t) => (
+                          <TouchableOpacity
+                            key={`rec-start-${t}`}
+                            style={[
+                              styles.timeOption,
+                              recurringStartTime === t && styles.timeOptionActive,
+                            ]}
+                            onPress={() => {
+                              setRecurringStartTime(t);
+                              const [h, m] = t.split(':').map(Number);
+                              const endCandidate = `${String(h + 1).padStart(2, '0')}:${String(
+                                m
+                              ).padStart(2, '0')}`;
+                              if (TIME_OPTIONS.includes(endCandidate)) {
+                                setRecurringEndTime(endCandidate);
+                              }
+                            }}
+                          >
+                            <Text
+                              style={[
+                                styles.timeOptionText,
+                                recurringStartTime === t && styles.timeOptionTextActive,
+                              ]}
+                            >
+                              {t}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </ScrollView>
+                    </View>
+
+                    <View style={{ width: 16, alignItems: 'center', justifyContent: 'center' }}>
+                      <Ionicons name="arrow-forward" size={16} color="#999999" />
+                    </View>
+
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.timeLabel}>Kết thúc:</Text>
+                      <ScrollView style={styles.timeSelectBox} nestedScrollEnabled>
+                        {TIME_OPTIONS.filter((t) => t > recurringStartTime).map((t) => (
+                          <TouchableOpacity
+                            key={`rec-end-${t}`}
+                            style={[
+                              styles.timeOption,
+                              recurringEndTime === t && styles.timeOptionActive,
+                            ]}
+                            onPress={() => setRecurringEndTime(t)}
+                          >
+                            <Text
+                              style={[
+                                styles.timeOptionText,
+                                recurringEndTime === t && styles.timeOptionTextActive,
+                              ]}
+                            >
+                              {t}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </ScrollView>
+                    </View>
+                  </View>
+
+                  {/* 3. Hình thức phiên tư vấn */}
+                  <Text style={[styles.formSectionLabel, { marginTop: 14 }]}>
+                    3. Hình thức phiên tư vấn:
+                  </Text>
+                  <View style={styles.sessionTypeOptions}>
+                    {[
+                      { key: 'ONLINE_MEETING', label: 'Họp trực tuyến (1-1)', icon: 'videocam' },
+                      { key: 'CHAT', label: 'Nhắn tin tư vấn', icon: 'chatbubbles' },
+                      { key: 'VOICE_CALL', label: 'Gọi thoại', icon: 'call' },
+                    ].map((item) => {
+                      const isSelected = recurringSessionType === item.key;
+                      return (
+                        <TouchableOpacity
+                          key={`rec-${item.key}`}
+                          style={[
+                            styles.sessionTypeCard,
+                            isSelected && styles.sessionTypeCardActive,
+                          ]}
+                          onPress={() => setRecurringSessionType(item.key as SessionType)}
+                        >
+                          <Ionicons
+                            name={item.icon as any}
+                            size={18}
+                            color={isSelected ? theme.colors.primary : '#666666'}
+                          />
+                          <Text
+                            style={[
+                              styles.sessionTypeCardText,
+                              isSelected && styles.sessionTypeCardTextActive,
+                            ]}
+                          >
+                            {item.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+
+                  {/* 4. Số tuần áp dụng */}
+                  <Text style={[styles.formSectionLabel, { marginTop: 14 }]}>
+                    4. Số tuần áp dụng liên tiếp:
+                  </Text>
+                  <View style={styles.weeksChoiceRow}>
+                    {[
+                      { weeks: 2, label: '2 tuần' },
+                      { weeks: 4, label: '4 tuần (Gợi ý)' },
+                      { weeks: 8, label: '8 tuần' },
+                      { weeks: 12, label: '12 tuần (Tối đa)' },
+                    ].map((w) => {
+                      const isSelected = recurringWeeks === w.weeks;
+                      return (
+                        <TouchableOpacity
+                          key={w.weeks}
+                          style={[
+                            styles.weeksChoicePill,
+                            isSelected && styles.weeksChoicePillActive,
+                          ]}
+                          onPress={() => setRecurringWeeks(w.weeks)}
+                        >
+                          <Text
+                            style={[
+                              styles.weeksChoicePillText,
+                              isSelected && styles.weeksChoicePillTextActive,
+                            ]}
+                          >
+                            {w.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </>
               )}
             </ScrollView>
 
@@ -1306,16 +2034,34 @@ export const ExpertSlotsScreen: React.FC = () => {
 
               <TouchableOpacity
                 style={styles.modalSubmitBtn}
-                onPress={handleSubmit}
+                onPress={
+                  modalMode === 'edit' || scheduleType === 'single'
+                    ? handleSubmit
+                    : handleSubmitRecurring
+                }
                 disabled={submitting}
               >
                 {submitting ? (
                   <ActivityIndicator size="small" color="#FFFFFF" />
                 ) : (
                   <>
-                    <Ionicons name="checkmark" size={18} color="#FFFFFF" />
+                    <Ionicons
+                      name={
+                        modalMode === 'edit'
+                          ? 'checkmark'
+                          : scheduleType === 'recurring'
+                          ? 'sparkles'
+                          : 'checkmark'
+                      }
+                      size={18}
+                      color="#FFFFFF"
+                    />
                     <Text style={styles.modalSubmitBtnText}>
-                      {modalMode === 'create' ? 'Tạo khung giờ' : 'Lưu thay đổi'}
+                      {modalMode === 'edit'
+                        ? 'Lưu thay đổi'
+                        : scheduleType === 'recurring'
+                        ? 'Xác nhận tạo hàng loạt'
+                        : 'Mở khung giờ'}
                     </Text>
                   </>
                 )}
@@ -1565,6 +2311,171 @@ export const ExpertSlotsScreen: React.FC = () => {
         </TouchableOpacity>
       </Modal>
 
+      {/* Modal Xác nhận Xóa tất cả theo bộ lọc tìm kiếm */}
+      <Modal
+        visible={deleteAllModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !bulkDeleting && setDeleteAllModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.deleteAllModalCard}>
+            {/* Header */}
+            <View style={styles.deleteAllModalHeader}>
+              <View style={styles.deleteAllIconCircle}>
+                <Ionicons name="trash-outline" size={24} color="#DC2626" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.deleteAllModalTitle}>Xác nhận xóa tất cả</Text>
+                <Text style={styles.deleteAllModalSubtitle}>
+                  Thao tác sẽ xóa vĩnh viễn các ca làm việc
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setDeleteAllModalVisible(false)}
+                disabled={bulkDeleting}
+                style={{ padding: 4 }}
+              >
+                <Ionicons name="close" size={22} color="#666666" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Chi tiết phạm vi xóa */}
+            <View style={styles.deleteAllScopeCard}>
+              <Text style={styles.deleteAllScopeLabel}>Phạm vi áp dụng (theo bộ lọc):</Text>
+              <View style={styles.deleteAllScopeValueRow}>
+                <Ionicons name="funnel" size={14} color={theme.colors.primary} />
+                <Text style={styles.deleteAllScopeValue} numberOfLines={2}>
+                  {getFilterDescription()}
+                </Text>
+              </View>
+
+              <View style={styles.deleteAllCountBox}>
+                <View style={styles.deleteAllCountItem}>
+                  <Text style={styles.deleteAllCountLabel}>Tổng ca phù hợp</Text>
+                  <Text style={styles.deleteAllCountNum}>{filteredSlots.length}</Text>
+                </View>
+                <View style={styles.deleteAllCountDivider} />
+                <View style={styles.deleteAllCountItem}>
+                  <Text style={[styles.deleteAllCountLabel, { color: '#DC2626' }]}>Sẽ bị xóa</Text>
+                  <Text style={[styles.deleteAllCountNum, { color: '#DC2626' }]}>
+                    {selectableFilteredSlots.length}
+                  </Text>
+                </View>
+                {bookedFilteredSlots.length > 0 && (
+                  <>
+                    <View style={styles.deleteAllCountDivider} />
+                    <View style={styles.deleteAllCountItem}>
+                      <Text style={[styles.deleteAllCountLabel, { color: '#2563EB' }]}>Giữ lại (Đã đặt)</Text>
+                      <Text style={[styles.deleteAllCountNum, { color: '#2563EB' }]}>
+                        {bookedFilteredSlots.length}
+                      </Text>
+                    </View>
+                  </>
+                )}
+              </View>
+            </View>
+
+            {/* Cảnh báo */}
+            <View style={styles.deleteAllWarningBox}>
+              <Ionicons name="warning-outline" size={18} color="#D97706" />
+              <Text style={styles.deleteAllWarningText}>
+                Toàn bộ <Text style={{ fontFamily: fonts.bodyBold, color: '#DC2626' }}>{selectableFilteredSlots.length} ca làm việc</Text> phù hợp với bộ lọc tìm kiếm sẽ bị xóa vĩnh viễn khỏi lịch. Hành động này không thể hoàn tác.
+              </Text>
+            </View>
+
+            {/* Nút bấm */}
+            <View style={styles.deleteAllActionsRow}>
+              <TouchableOpacity
+                style={styles.deleteAllCancelBtn}
+                onPress={() => setDeleteAllModalVisible(false)}
+                disabled={bulkDeleting}
+              >
+                <Text style={styles.deleteAllCancelBtnText}>Hủy bỏ</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.deleteAllConfirmBtn,
+                  bulkDeleting && styles.btnDisabled,
+                ]}
+                onPress={handleConfirmDeleteAllFiltered}
+                disabled={bulkDeleting || selectableFilteredSlots.length === 0}
+              >
+                {bulkDeleting ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                    {bulkDeleteProgress && (
+                      <Text style={styles.deleteAllConfirmBtnText}>
+                        Đang xóa {bulkDeleteProgress.current}/{bulkDeleteProgress.total}...
+                      </Text>
+                    )}
+                  </View>
+                ) : (
+                  <>
+                    <Ionicons name="trash" size={16} color="#FFFFFF" />
+                    <Text style={styles.deleteAllConfirmBtnText}>
+                      Xóa tất cả ({selectableFilteredSlots.length})
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Thanh tác vụ cố định bên dưới khi ở chế độ chọn nhiều */}
+      {isSelectionMode && (
+        <View style={styles.bottomSelectionBar}>
+          <View style={styles.bottomSelectionInfo}>
+            <Text style={styles.bottomSelectionCount}>
+              Đã chọn: <Text style={styles.bottomSelectionCountNum}>{selectedSlotIds.size}</Text> ca
+            </Text>
+            <Text style={styles.bottomSelectionSub}>
+              {selectableFilteredSlots.length} ca có thể xóa
+            </Text>
+          </View>
+
+          <View style={styles.bottomSelectionActions}>
+            <TouchableOpacity
+              style={styles.bottomCancelBtn}
+              onPress={exitSelectionMode}
+              disabled={bulkDeleting}
+            >
+              <Text style={styles.bottomCancelBtnText}>Hủy</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.bottomDeleteBtn,
+                (selectedSlotIds.size === 0 || bulkDeleting) && styles.btnDisabled,
+              ]}
+              disabled={selectedSlotIds.size === 0 || bulkDeleting}
+              onPress={handleConfirmBulkDelete}
+            >
+              {bulkDeleting ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                  {bulkDeleteProgress && (
+                    <Text style={styles.bottomDeleteBtnText}>
+                      {bulkDeleteProgress.current}/{bulkDeleteProgress.total}
+                    </Text>
+                  )}
+                </View>
+              ) : (
+                <>
+                  <Ionicons name="trash" size={16} color="#FFFFFF" />
+                  <Text style={styles.bottomDeleteBtnText}>
+                    Xóa ({selectedSlotIds.size})
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
       {/* Thông báo Dialog chuẩn hệ thống */}
       {dialog ? (
         <Dialog
@@ -1611,13 +2522,51 @@ const styles = StyleSheet.create({
     flex: 1,
     textAlign: 'center',
   },
-  addBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    justifyContent: 'center',
+  headerAddBtn: {
+    flexDirection: 'row',
     alignItems: 'center',
+    gap: 4,
     backgroundColor: theme.colors.primary,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 20,
+    ...theme.shadows.button,
+  },
+  headerAddBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12.5,
+    color: '#FFFFFF',
+  },
+  tabContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#F3EFE6',
+    borderRadius: 10,
+    padding: 3,
+    marginHorizontal: 16,
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  tabBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  tabBtnActive: {
+    backgroundColor: '#FFFFFF',
+    ...theme.shadows.card,
+  },
+  tabBtnText: {
+    fontFamily: fonts.body,
+    fontSize: 12.5,
+    color: '#6B7280',
+  },
+  tabBtnTextActive: {
+    fontFamily: fonts.bodyBold,
+    color: theme.colors.primary,
   },
 
   // Counters
@@ -1703,21 +2652,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 5,
   },
-  calTodayBtn: {
+  calAddBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
-    paddingHorizontal: 7,
+    backgroundColor: theme.colors.primary,
+    paddingHorizontal: 8,
     paddingVertical: 4.5,
     borderRadius: 6,
-    borderWidth: 0.5,
-    borderColor: '#E2DAC8',
     gap: 3,
+    ...theme.shadows.button,
   },
-  calTodayBtnText: {
+  calAddBtnText: {
     fontFamily: fonts.bodyBold,
     fontSize: 11,
-    color: theme.colors.primary,
+    color: '#FFFFFF',
   },
   calToggleBtn: {
     flexDirection: 'row',
@@ -2527,6 +3475,457 @@ const styles = StyleSheet.create({
   modalSubmitBtnText: {
     fontFamily: fonts.bodyBold,
     fontSize: 12.5,
+    color: '#FFFFFF',
+  },
+  recurringIntroBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: '#FFFBEB',
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    marginBottom: 12,
+  },
+  recurringIntroText: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: '#92400E',
+    flex: 1,
+    lineHeight: 18,
+  },
+  quickDayRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 10,
+  },
+  quickDayBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    backgroundColor: '#F0EBE1',
+    borderWidth: 1,
+    borderColor: '#E2DCD0',
+  },
+  quickDayBtnText: {
+    fontFamily: fonts.body,
+    fontSize: 11,
+    color: theme.colors.primary,
+  },
+  dayGridRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  dayGridPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#FAF8F3',
+    borderWidth: 1,
+    borderColor: '#E8E2D5',
+  },
+  dayGridPillActive: {
+    backgroundColor: '#EBF4F6',
+    borderColor: theme.colors.primary,
+  },
+  dayGridPillText: {
+    fontFamily: fonts.body,
+    fontSize: 13,
+    color: '#4B5563',
+  },
+  dayGridPillTextActive: {
+    fontFamily: fonts.bodyBold,
+    color: theme.colors.primary,
+  },
+  weeksChoiceRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  weeksChoicePill: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#FAF8F3',
+    borderWidth: 1,
+    borderColor: '#E8E2D5',
+  },
+  weeksChoicePillActive: {
+    backgroundColor: '#EBF4F6',
+    borderColor: theme.colors.primary,
+  },
+  weeksChoicePillText: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: '#4B5563',
+  },
+  weeksChoicePillTextActive: {
+    fontFamily: fonts.bodyBold,
+    color: theme.colors.primary,
+  },
+
+  // Selection Mode Header & Bar Styles
+  selectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#ECE6DA',
+  },
+  selectionCloseBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    padding: 4,
+  },
+  selectionCloseText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 13,
+    color: theme.colors.primary,
+  },
+  selectionHeaderTitle: {
+    fontFamily: fonts.serifBold,
+    fontSize: 16,
+    color: theme.colors.primary,
+  },
+  selectionSelectAllBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: '#F3EFE6',
+  },
+  selectionSelectAllText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12,
+    color: theme.colors.primary,
+  },
+
+  // List Toolbar
+  listToolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginHorizontal: 16,
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  listToolbarCount: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 12,
+    color: '#6B7280',
+  },
+  listToolbarActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  toolbarActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 6,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#E2DAC8',
+  },
+  toolbarActionBtnActive: {
+    backgroundColor: theme.colors.primary,
+    borderColor: theme.colors.primary,
+  },
+  toolbarActionBtnText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 11.5,
+    color: theme.colors.primary,
+  },
+  toolbarActionBtnTextActive: {
+    color: '#FFFFFF',
+    fontFamily: fonts.bodyBold,
+  },
+  toolbarActionBtnTextDanger: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 11.5,
+    color: '#DC2626',
+  },
+
+  // Quick delete in active filter
+  quickDeleteFilterBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 5,
+  },
+  quickDeleteFilterText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 11,
+    color: '#DC2626',
+  },
+
+  // Card Selection Styles
+  cardCheckboxTouch: {
+    padding: 2,
+  },
+  cardCheckboxDisabled: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: '#F1F5F9',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  slotCardSelected: {
+    borderColor: theme.colors.primary,
+    borderWidth: 1.5,
+    backgroundColor: '#FDFBF7',
+  },
+  selectionModeCardNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    marginTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#F3EFE6',
+  },
+  selectionModeCardNoticeText: {
+    fontFamily: fonts.body,
+    fontSize: 11.5,
+    color: '#6B7280',
+  },
+  selectionModeCardNoticeTextActive: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12,
+    color: theme.colors.primary,
+  },
+  selectionModeCardNoticeTextDisabled: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 11.5,
+    color: '#64748B',
+  },
+
+  // Bottom Floating Selection Bar
+  bottomSelectionBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#FFFFFF',
+    borderTopWidth: 1,
+    borderTopColor: '#E5E7EB',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    elevation: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -3 },
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+  },
+  bottomSelectionInfo: {
+    flex: 1,
+  },
+  bottomSelectionCount: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 13,
+    color: '#1F2937',
+  },
+  bottomSelectionCountNum: {
+    fontFamily: fonts.serifBold,
+    fontSize: 15,
+    color: theme.colors.primary,
+  },
+  bottomSelectionSub: {
+    fontFamily: fonts.body,
+    fontSize: 11,
+    color: '#6B7280',
+  },
+  bottomSelectionActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  bottomCancelBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 8,
+    backgroundColor: '#F3F4F6',
+  },
+  bottomCancelBtnText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 13,
+    color: '#4B5563',
+  },
+  bottomDeleteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#DC2626',
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 8,
+  },
+  bottomDeleteBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 13,
+    color: '#FFFFFF',
+  },
+
+  // Delete All Modal Confirmation Styles
+  deleteAllModalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    width: '90%',
+    maxWidth: 420,
+    ...theme.shadows.card,
+  },
+  deleteAllModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 16,
+  },
+  deleteAllIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#FEE2E2',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  deleteAllModalTitle: {
+    fontFamily: fonts.serifBold,
+    fontSize: 17,
+    color: '#1F2937',
+  },
+  deleteAllModalSubtitle: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 2,
+  },
+  deleteAllScopeCard: {
+    backgroundColor: '#FBF9F4',
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#ECE4D4',
+    marginBottom: 14,
+  },
+  deleteAllScopeLabel: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 11.5,
+    color: '#6B7280',
+    marginBottom: 6,
+  },
+  deleteAllScopeValueRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 10,
+  },
+  deleteAllScopeValue: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 13,
+    color: theme.colors.primary,
+    flex: 1,
+  },
+  deleteAllCountBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: '#EFEBE1',
+  },
+  deleteAllCountItem: {
+    alignItems: 'center',
+    paddingHorizontal: 8,
+  },
+  deleteAllCountLabel: {
+    fontFamily: fonts.body,
+    fontSize: 11,
+    color: '#6B7280',
+    marginBottom: 2,
+  },
+  deleteAllCountNum: {
+    fontFamily: fonts.serifBold,
+    fontSize: 16,
+    color: '#1F2937',
+  },
+  deleteAllCountDivider: {
+    width: 1,
+    height: 24,
+    backgroundColor: '#E5E7EB',
+  },
+  deleteAllWarningBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: '#FEF3C7',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 18,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  deleteAllWarningText: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: '#92400E',
+    flex: 1,
+    lineHeight: 17,
+  },
+  deleteAllActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  deleteAllCancelBtn: {
+    flex: 1,
+    paddingVertical: 11,
+    borderRadius: 8,
+    backgroundColor: '#F3F4F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  deleteAllCancelBtnText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 13,
+    color: '#4B5563',
+  },
+  deleteAllConfirmBtn: {
+    flex: 1.5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 11,
+    borderRadius: 8,
+    backgroundColor: '#DC2626',
+  },
+  deleteAllConfirmBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 13,
     color: '#FFFFFF',
   },
 });

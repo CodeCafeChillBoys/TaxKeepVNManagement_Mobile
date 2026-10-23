@@ -62,6 +62,9 @@ export type RootStackParamList = {
     isReadOnly?: boolean;
     crossCheckResult?: import('../api/incomeSourceApi').IncomeSourceCrossCheckResult | null;
   };
+  /** Chat tư vấn thuế AI. Không sessionId = phiên mới; nonce để nạp lại khi mở từ Lịch sử */
+  TaxChat: { sessionId?: string; nonce?: number } | undefined;
+  TaxChatHistory: undefined;
   SettlementStart: undefined;
   SettlementPreview: {
     taxYear: number;

@@ -316,127 +316,141 @@ export const HomeScreen: React.FC = () => {
         </TouchableOpacity>
       </View>
 
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.deductionBlock} testID="homeDeadlineCountdown">
-          <Text style={styles.deductionLabel}>Hạn nộp quyết toán thuế TNCN</Text>
-          <Text
-            style={[styles.deductionAmount, deadlineView && { color: DEADLINE_COLORS[deadlineView.tone] }]}
-            numberOfLines={1}
-            adjustsFontSizeToFit
-            minimumFontScale={0.6}
-            testID="homeDeadlineDays"
-          >
-            {deadlineView?.headline ?? '—'}
-          </Text>
-          {deadlineView ? (
-            <Text style={styles.deductionMeta} numberOfLines={2}>
-              {deadlineView.meta}
-            </Text>
-          ) : null}
-        </View>
-
-        <GoldDoubleRule style={styles.rule} />
-
-        <View style={styles.todoHeader}>
-          <Text style={styles.todoTitle}>Cần xử lý</Text>
-          <Text style={styles.todoCount}>
-            {todoItems.length} việc
-          </Text>
-        </View>
-
-        {todoItems.length === 0 ? (
-          <View style={styles.todoEmpty}>
-            <Text style={styles.todoEmptyText}>Không có việc cần xử lý lúc này.</Text>
-          </View>
-        ) : (
-          todoItems.map((item, index) => (
-            <TouchableOpacity
-              key={item.id}
-              style={styles.todoRow}
-              activeOpacity={0.7}
-              onPress={() => handleTodoPress(item)}
-              disabled={reminderPatching}
-              testID={
-                item.kind === 'age' ? 'btnUploadStudentCardReminder' : `homeTodo_${item.id}`
-              }
-              accessibilityRole="button"
+      <View style={styles.flex}>
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.deductionBlock} testID="homeDeadlineCountdown">
+            <Text style={styles.deductionLabel}>Hạn nộp quyết toán thuế TNCN</Text>
+            <Text
+              style={[styles.deductionAmount, deadlineView && { color: DEADLINE_COLORS[deadlineView.tone] }]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.6}
+              testID="homeDeadlineDays"
             >
-              <Text style={styles.todoIndex}>
-                {String(index + 1).padStart(2, '0')}
+              {deadlineView?.headline ?? '—'}
+            </Text>
+            {deadlineView ? (
+              <Text style={styles.deductionMeta} numberOfLines={2}>
+                {deadlineView.meta}
               </Text>
-              <View style={styles.todoBody}>
-                <Text style={styles.todoItemTitle}>{item.title}</Text>
-                <Text style={styles.todoItemSubtitle}>{item.subtitle}</Text>
-              </View>
-              {reminderPatching && item.kind === 'age' ? (
-                <ActivityIndicator size="small" color={theme.colors.gold} />
-              ) : (
-                <Ionicons name="chevron-forward" size={16} color="#999999" />
-              )}
+            ) : null}
+          </View>
+
+          <GoldDoubleRule style={styles.rule} />
+
+          <View style={styles.todoHeader}>
+            <Text style={styles.todoTitle}>Cần xử lý</Text>
+            <Text style={styles.todoCount}>
+              {todoItems.length} việc
+            </Text>
+          </View>
+
+          {todoItems.length === 0 ? (
+            <View style={styles.todoEmpty}>
+              <Text style={styles.todoEmptyText}>Không có việc cần xử lý lúc này.</Text>
+            </View>
+          ) : (
+            todoItems.map((item, index) => (
+              <TouchableOpacity
+                key={item.id}
+                style={styles.todoRow}
+                activeOpacity={0.7}
+                onPress={() => handleTodoPress(item)}
+                disabled={reminderPatching}
+                testID={
+                  item.kind === 'age' ? 'btnUploadStudentCardReminder' : `homeTodo_${item.id}`
+                }
+                accessibilityRole="button"
+              >
+                <Text style={styles.todoIndex}>
+                  {String(index + 1).padStart(2, '0')}
+                </Text>
+                <View style={styles.todoBody}>
+                  <Text style={styles.todoItemTitle}>{item.title}</Text>
+                  <Text style={styles.todoItemSubtitle}>{item.subtitle}</Text>
+                </View>
+                {reminderPatching && item.kind === 'age' ? (
+                  <ActivityIndicator size="small" color={theme.colors.gold} />
+                ) : (
+                  <Ionicons name="chevron-forward" size={16} color="#999999" />
+                )}
+              </TouchableOpacity>
+            ))
+          )}
+
+          <View style={styles.shortcutGrid} testID="homeShortcutGrid">
+            <TouchableOpacity
+              style={[styles.shortcutCell, styles.shortcutBorderRight, styles.shortcutBorderBottom]}
+              onPress={() => navigation.navigate('TaxRegistration')}
+              testID="homeTaxRegistrationCard"
+              accessibilityRole="button"
+              accessibilityLabel="Khai báo NPT"
+            >
+              <Ionicons name="person-add-outline" size={20} color={theme.colors.primary} />
+              <Text style={styles.shortcutLabel}>Khai báo NPT</Text>
             </TouchableOpacity>
-          ))
-        )}
 
-        <View style={styles.shortcutGrid} testID="homeShortcutGrid">
-          <TouchableOpacity
-            style={[styles.shortcutCell, styles.shortcutBorderRight, styles.shortcutBorderBottom]}
-            onPress={() => navigation.navigate('TaxRegistration')}
-            testID="homeTaxRegistrationCard"
-            accessibilityRole="button"
-            accessibilityLabel="Khai báo NPT"
-          >
-            <Ionicons name="person-add-outline" size={20} color={theme.colors.primary} />
-            <Text style={styles.shortcutLabel}>Khai báo NPT</Text>
-          </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.shortcutCell, styles.shortcutBorderBottom]}
+              onPress={() => navigation.navigate('LawConditions')}
+              testID="homeLawConditionsCard"
+              accessibilityRole="button"
+              accessibilityLabel="Điều kiện luật"
+            >
+              <Ionicons name="book-outline" size={20} color={theme.colors.primary} />
+              <Text style={styles.shortcutLabel}>Điều kiện luật</Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[styles.shortcutCell, styles.shortcutBorderBottom]}
-            onPress={() => navigation.navigate('LawConditions')}
-            testID="homeLawConditionsCard"
-            accessibilityRole="button"
-            accessibilityLabel="Điều kiện luật"
-          >
-            <Ionicons name="book-outline" size={20} color={theme.colors.primary} />
-            <Text style={styles.shortcutLabel}>Điều kiện luật</Text>
-          </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.shortcutCell, styles.shortcutBorderRight, styles.shortcutBorderBottom]}
+              onPress={() => navigation.navigate('IncomeSourceList')}
+              testID="homeIncomeSourceCard"
+              accessibilityRole="button"
+              accessibilityLabel="Nơi chi trả"
+            >
+              <Ionicons name="business-outline" size={20} color={theme.colors.primary} />
+              <Text style={styles.shortcutLabel}>Nơi chi trả</Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[styles.shortcutCell, styles.shortcutBorderRight, styles.shortcutBorderBottom]}
-            onPress={() => navigation.navigate('IncomeSourceList')}
-            testID="homeIncomeSourceCard"
-            accessibilityRole="button"
-            accessibilityLabel="Nơi chi trả"
-          >
-            <Ionicons name="business-outline" size={20} color={theme.colors.primary} />
-            <Text style={styles.shortcutLabel}>Nơi chi trả</Text>
-          </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.shortcutCell, styles.shortcutBorderBottom]}
+              onPress={() => navigation.navigate('ExpenseList')}
+              testID="homeExpenseListCard"
+              accessibilityRole="button"
+              accessibilityLabel="Hóa đơn chứng từ"
+            >
+              <Ionicons name="receipt-outline" size={20} color={theme.colors.primary} />
+              <Text style={styles.shortcutLabel}>Hóa đơn chứng từ</Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[styles.shortcutCell, styles.shortcutBorderBottom]}
-            onPress={() => navigation.navigate('ExpenseList')}
-            testID="homeExpenseListCard"
-            accessibilityRole="button"
-            accessibilityLabel="Hóa đơn chứng từ"
-          >
-            <Ionicons name="receipt-outline" size={20} color={theme.colors.primary} />
-            <Text style={styles.shortcutLabel}>Hóa đơn chứng từ</Text>
-          </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.shortcutCell, styles.shortcutFullWidth]}
+              onPress={() => navigation.navigate('SettlementStart')}
+              testID="homeSettlementCard"
+              accessibilityRole="button"
+              accessibilityLabel="Quyết toán thuế"
+            >
+              <Ionicons name="calculator-outline" size={20} color={theme.colors.primary} />
+              <Text style={styles.shortcutLabel}>Quyết toán thuế</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
 
-          <TouchableOpacity
-            style={[styles.shortcutCell, styles.shortcutFullWidth]}
-            onPress={() => navigation.navigate('SettlementStart')}
-            testID="homeSettlementCard"
-            accessibilityRole="button"
-            accessibilityLabel="Quyết toán thuế"
-          >
-            <Ionicons name="calculator-outline" size={20} color={theme.colors.primary} />
-            <Text style={styles.shortcutLabel}>Quyết toán thuế</Text>
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
+        {/* Nút nổi mở chat AI: góc phải dưới, ngay trên thanh tab */}
+        <TouchableOpacity
+          style={styles.chatFab}
+          onPress={() => navigation.navigate('TaxChat')}
+          testID="homeTaxChatFab"
+          accessibilityRole="button"
+          accessibilityLabel="Hỏi đáp thuế AI"
+        >
+          <Ionicons name="chatbubbles" size={20} color={theme.colors.textOnPrimary} />
+          <Text style={styles.chatFabText}>Hỏi AI</Text>
+        </TouchableOpacity>
+      </View>
 
       <MainTabBar active="Home" />
 
@@ -658,9 +672,35 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: '#ECE9C2',
   },
+  flex: {
+    flex: 1,
+  },
   scrollContent: {
     paddingHorizontal: 20,
-    paddingBottom: 24,
+    // Chừa chỗ cho nút "Hỏi AI" để không che ô cuối khi cuộn hết
+    paddingBottom: 88,
+  },
+  chatFab: {
+    position: 'absolute',
+    right: 20,
+    bottom: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    height: 52,
+    paddingHorizontal: 18,
+    borderRadius: 26,
+    backgroundColor: theme.colors.primary,
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+  },
+  chatFabText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 14,
+    color: theme.colors.textOnPrimary,
   },
   deductionBlock: {
     marginTop: 46,

@@ -60,15 +60,21 @@ apiClient.interceptors.request.use(
         (reqConfig.data as any)?.constructor?.name === 'FormData' ||
         typeof (reqConfig.data as any)?.append === 'function');
 
-    if (isFormData && reqConfig.headers) {
-      if (typeof (reqConfig.headers as any).delete === 'function') {
-        (reqConfig.headers as any).delete('Content-Type');
-        (reqConfig.headers as any).delete('content-type');
+    if (isFormData) {
+      // Ngăn chặn Axios tự động stringify FormData trong React Native
+      reqConfig.transformRequest = (data) => data;
+      reqConfig.timeout = Math.max(reqConfig.timeout || 0, 120000);
+
+      if (reqConfig.headers) {
+        if (typeof (reqConfig.headers as any).delete === 'function') {
+          (reqConfig.headers as any).delete('Content-Type');
+          (reqConfig.headers as any).delete('content-type');
+        }
+        delete reqConfig.headers['Content-Type'];
+        delete reqConfig.headers['content-type'];
+        (reqConfig.headers as any)['Content-Type'] = undefined;
+        (reqConfig.headers as any)['content-type'] = undefined;
       }
-      delete reqConfig.headers['Content-Type'];
-      delete reqConfig.headers['content-type'];
-      (reqConfig.headers as any)['Content-Type'] = undefined;
-      (reqConfig.headers as any)['content-type'] = undefined;
     }
     return reqConfig;
   },
@@ -79,6 +85,15 @@ apiClient.interceptors.request.use(
 apiClient.interceptors.response.use(
   (response) => response,
   async (error) => {
+    // Trích xuất thông điệp tiếng Việt cụ thể từ backend nếu có
+    const beMessage =
+      error.response?.data?.message ||
+      error.response?.data?.title ||
+      (typeof error.response?.data === 'string' ? error.response.data : null);
+    if (beMessage && typeof beMessage === 'string' && beMessage.trim()) {
+      error.message = beMessage.trim();
+    }
+
     if (error.response?.status === 401) {
       await storageHelper.removeItem(config.storageKeys.accessToken);
       await storageHelper.removeItem(config.storageKeys.refreshToken);

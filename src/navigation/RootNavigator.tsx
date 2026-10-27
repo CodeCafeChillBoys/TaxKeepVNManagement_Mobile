@@ -33,6 +33,16 @@ import { SettlementZipReadyScreen } from '../screens/settlement/SettlementZipRea
 import { SettlementDownloadExpiredScreen } from '../screens/settlement/SettlementDownloadExpiredScreen';
 import { TaxChatScreen } from '../screens/chat/TaxChatScreen';
 import { TaxChatHistoryScreen } from '../screens/chat/TaxChatHistoryScreen';
+import { ExpertListScreen } from '../screens/consultation/ExpertListScreen';
+import { ExpertDetailScreen } from '../screens/consultation/ExpertDetailScreen';
+import { BookingCreateScreen } from '../screens/consultation/BookingCreateScreen';
+import { MyBookingsScreen } from '../screens/consultation/MyBookingsScreen';
+import { BookingDetailScreen } from '../screens/consultation/BookingDetailScreen';
+import { ExpertBookingsScreen } from '../screens/consultation/ExpertBookingsScreen';
+import { ExpertSlotsScreen } from '../screens/consultation/ExpertSlotsScreen';
+import { ExpertApplicationScreen } from '../screens/consultation/ExpertApplicationScreen';
+import { PaymentResultScreen } from '../screens/consultation/PaymentResultScreen';
+import { WalletScreen } from '../screens/wallet/WalletScreen';
 import { useAuthStore } from '../stores/useAuthStore';
 import { theme } from '../constants/theme';
 
@@ -40,6 +50,16 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 
 const tabScreenOptions = {
   animation: 'none' as const,
+};
+
+const linking = {
+  prefixes: ['taxkeep://', 'fe://', 'exp://'],
+  config: {
+    screens: {
+      PaymentResult: 'payments/vnpay-return',
+      BookingDetail: 'bookings/:bookingId',
+    },
+  },
 };
 
 export const RootNavigator: React.FC = () => {
@@ -59,6 +79,7 @@ export const RootNavigator: React.FC = () => {
 
   return (
     <NavigationContainer
+      linking={linking}
       onStateChange={() => {
         if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
           document.activeElement.blur();
@@ -103,6 +124,16 @@ export const RootNavigator: React.FC = () => {
         <Stack.Screen name="SettlementPdfViewer" component={SettlementPdfViewerScreen} />
         <Stack.Screen name="SettlementZipReady" component={SettlementZipReadyScreen} />
         <Stack.Screen name="SettlementDownloadExpired" component={SettlementDownloadExpiredScreen} />
+        <Stack.Screen name="ExpertList" component={ExpertListScreen} />
+        <Stack.Screen name="ExpertDetail" component={ExpertDetailScreen} />
+        <Stack.Screen name="BookingCreate" component={BookingCreateScreen} />
+        <Stack.Screen name="MyBookings" component={MyBookingsScreen} />
+        <Stack.Screen name="BookingDetail" component={BookingDetailScreen} />
+        <Stack.Screen name="ExpertBookings" component={ExpertBookingsScreen} />
+        <Stack.Screen name="ExpertSlots" component={ExpertSlotsScreen} />
+        <Stack.Screen name="ExpertApplication" component={ExpertApplicationScreen} />
+        <Stack.Screen name="PaymentResult" component={PaymentResultScreen} />
+        <Stack.Screen name="Wallet" component={WalletScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

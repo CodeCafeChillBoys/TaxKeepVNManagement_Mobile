@@ -1,0 +1,1026 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
+  TouchableOpacity,
+  ActivityIndicator,
+  RefreshControl,
+  Modal,
+  TextInput,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNavigation, useRoute, useFocusEffect, RouteProp } from '@react-navigation/native';
+import { Ionicons } from '@expo/vector-icons';
+import { theme } from '../../constants/theme';
+import { fonts } from '../../constants/fonts';
+import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
+import { Dialog } from '../../components/common/Dialog';
+import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
+import { consultationApi } from '../../api/consultationApi';
+import { walletApi, WalletResponse } from '../../api/walletApi';
+import { toFriendlyConsultationError } from '../../utils/consultationFriendlyErrors';
+import type { BookingListItemResponse } from '../../types/consultation';
+import {
+  formatVnd,
+  formatBookingStatus,
+  formatSessionType,
+  formatVietnameseDate,
+  formatTimeRange,
+} from '../../types/consultation';
+
+type TabKey = 'PENDING' | 'ALL';
+
+export const ExpertBookingsScreen: React.FC = () => {
+  const navigation = useNavigation<RootNavigationProp>();
+  const route = useRoute<RouteProp<RootStackParamList, 'ExpertBookings'>>();
+  const initialTab = route.params?.initialTab === 'pending' ? 'PENDING' : 'ALL';
+
+  const [activeTab, setActiveTab] = useState<TabKey>(initialTab);
+  const [pendingBookings, setPendingBookings] = useState<BookingListItemResponse[]>([]);
+  const [allBookings, setAllBookings] = useState<BookingListItemResponse[]>([]);
+  const [expertWallet, setExpertWallet] = useState<WalletResponse | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [refreshing, setRefreshing] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Filter for ALL tab
+  const [statusFilter, setStatusFilter] = useState<string>('ALL');
+
+  // Reject modal state
+  const [rejectModalVisible, setRejectModalVisible] = useState(false);
+  const [rejectingBooking, setRejectingBooking] = useState<BookingListItemResponse | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
+  const [actionLoading, setActionLoading] = useState(false);
+
+  // Dialog state
+  const [dialog, setDialog] = useState<{
+    title: string;
+    message: string;
+    primaryLabel?: string;
+    onPrimary?: () => void;
+    secondaryLabel?: string;
+    onSecondary?: () => void;
+    destructive?: boolean;
+  } | null>(null);
+
+  // Live timer for 2h approval countdown
+  const [currentTimeMs, setCurrentTimeMs] = useState(Date.now());
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTimeMs(Date.now());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const fetchData = useCallback(async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
+    else setLoading(true);
+    setError(null);
+
+    try {
+      const [walletRes, bookingsRes] = await Promise.allSettled([
+        walletApi.getMyWallet('EXPERT'),
+        activeTab === 'PENDING'
+          ? consultationApi.getExpertPendingBookings({ page: 1, size: 20 })
+          : consultationApi.getExpertBookings({
+              status: statusFilter === 'ALL' ? undefined : statusFilter,
+              page: 1,
+              size: 30,
+            }),
+      ]);
+
+      if (walletRes.status === 'fulfilled') {
+        setExpertWallet(walletRes.value);
+      }
+
+      if (bookingsRes.status === 'fulfilled') {
+        if (activeTab === 'PENDING') {
+          setPendingBookings(bookingsRes.value.items || []);
+        } else {
+          setAllBookings(bookingsRes.value.items || []);
+        }
+      } else {
+        throw bookingsRes.reason;
+      }
+    } catch (err: any) {
+      setError(err?.response?.data?.message || err?.message || 'Không thể tải danh sách ca tư vấn.');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [activeTab, statusFilter]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchData(true);
+    }, [fetchData])
+  );
+
+  // Handle Accept
+  const handleAccept = (booking: BookingListItemResponse) => {
+    setDialog({
+      title: 'Tiếp nhận ca tư vấn',
+      message: `Bạn đồng ý tiếp nhận ca tư vấn của khách hàng ${booking.userFullName}?`,
+      primaryLabel: 'Đồng ý tiếp nhận',
+      secondaryLabel: 'Hủy',
+      onSecondary: () => setDialog(null),
+      onPrimary: async () => {
+        setDialog(null);
+        setActionLoading(true);
+        try {
+          await consultationApi.acceptBooking(booking.id);
+          setDialog({
+            title: 'Thành công',
+            message: 'Lịch hẹn tư vấn chính thức được xác nhận.',
+            primaryLabel: 'Đóng',
+            onPrimary: () => setDialog(null),
+          });
+          fetchData(true);
+        } catch (err: any) {
+          const friendly = toFriendlyConsultationError(
+            err,
+            'Không thể tiếp nhận',
+            'Không thể tiếp nhận ca tư vấn lúc này.'
+          );
+          setDialog({
+            title: friendly.title,
+            message: friendly.message,
+            primaryLabel: 'Đã hiểu',
+            onPrimary: () => setDialog(null),
+          });
+        } finally {
+          setActionLoading(false);
+        }
+      },
+    });
+  };
+
+  // Handle Reject Submit
+  const handleConfirmReject = async () => {
+    if (!rejectingBooking || rejectReason.trim().length < 5) {
+      setDialog({
+        title: 'Cần nêu rõ lý do',
+        message: 'Vui lòng nhập lý do từ chối tối thiểu 5 ký tự để khách hàng nắm thông tin.',
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
+      return;
+    }
+    setActionLoading(true);
+    try {
+      await consultationApi.rejectBooking(rejectingBooking.id, rejectReason.trim());
+      setRejectModalVisible(false);
+      setRejectingBooking(null);
+      setRejectReason('');
+      setDialog({
+        title: 'Đã từ chối ca tư vấn',
+        message:
+          'Ca tư vấn đã được từ chối. Hệ thống tự động hoàn trả 100% chi phí cho khách hàng và mở lại khung giờ.',
+        primaryLabel: 'Đóng',
+        onPrimary: () => setDialog(null),
+      });
+      fetchData(true);
+    } catch (err: any) {
+      const friendly = toFriendlyConsultationError(
+        err,
+        'Không thể từ chối',
+        'Không thể từ chối ca tư vấn lúc này.'
+      );
+      setDialog({
+        title: friendly.title,
+        message: friendly.message,
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const renderPendingItem = ({ item }: { item: BookingListItemResponse }) => {
+    const session = formatSessionType(item.sessionType);
+    let secondsLeft = 0;
+    if (item.approvalDeadline) {
+      const deadlineMs = new Date(item.approvalDeadline).getTime();
+      secondsLeft = Math.max(0, Math.floor((deadlineMs - currentTimeMs) / 1000));
+    }
+    const hours = Math.floor(secondsLeft / 3600);
+    const mins = Math.floor((secondsLeft % 3600) / 60);
+    const secs = secondsLeft % 60;
+    const isUrgent = secondsLeft < 1800; // Under 30 mins
+
+    return (
+      <View style={styles.bookingCard}>
+        {/* Header row: Session badge, Countdown tag, Fee */}
+        <View style={styles.cardHeader}>
+          <View style={styles.codeWrap}>
+            <View style={[styles.sessionBadge, { backgroundColor: `${session.color}15` }]}>
+              <Ionicons name={session.icon as any} size={12} color={session.color} />
+              <Text style={[styles.sessionBadgeText, { color: session.color }]}>{session.label}</Text>
+            </View>
+            <View style={[styles.slaBadge, isUrgent && styles.slaBadgeUrgent]}>
+              <Ionicons
+                name={isUrgent ? 'alarm' : 'hourglass-outline'}
+                size={12}
+                color={isUrgent ? '#B91C1C' : '#92400E'}
+              />
+              <Text style={[styles.slaText, isUrgent && styles.slaTextUrgent]}>
+                {secondsLeft > 0
+                  ? `Chờ duyệt: ${hours > 0 ? `${hours}h ` : ''}${mins}m`
+                  : 'Hết hạn'}
+              </Text>
+            </View>
+          </View>
+          <Text style={styles.cardFee}>{formatVnd(item.fee)}</Text>
+        </View>
+
+        {/* Customer & topic */}
+        <Text style={styles.clientName}>Khách hàng: {item.userFullName}</Text>
+        <Text style={styles.topicTitle} numberOfLines={2}>
+          {item.topicTitle || 'Yêu cầu tư vấn quyết toán thuế'}
+        </Text>
+
+        {/* Info pills */}
+        <View style={styles.pillRow}>
+          <View style={styles.pill}>
+            <Ionicons name="calendar-outline" size={13} color="#444444" />
+            <Text style={styles.pillText}>{formatVietnameseDate(item.slotDate)}</Text>
+          </View>
+          <View style={styles.pill}>
+            <Ionicons name="time-outline" size={13} color="#444444" />
+            <Text style={styles.pillText}>{formatTimeRange(item.startTime, item.endTime)}</Text>
+          </View>
+          {Boolean(item.attachmentCount && item.attachmentCount > 0) && (
+            <View style={styles.pill}>
+              <Ionicons name="attach" size={13} color="#444444" />
+              <Text style={styles.pillText}>{item.attachmentCount} tệp</Text>
+            </View>
+          )}
+        </View>
+
+        {/* Action Buttons Row */}
+        <View style={styles.actionBtnRow}>
+          <TouchableOpacity
+            style={styles.detailBtn}
+            onPress={() => navigation.navigate('BookingDetail', { bookingId: item.id, isExpertView: true })}
+          >
+            <Text style={styles.detailBtnText}>Chi tiết</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.cardRejectBtn}
+            onPress={() => {
+              setRejectingBooking(item);
+              setRejectReason('');
+              setRejectModalVisible(true);
+            }}
+          >
+            <Text style={styles.cardRejectBtnText}>Từ chối</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.cardAcceptBtn}
+            onPress={() => handleAccept(item)}
+            disabled={actionLoading}
+          >
+            <Ionicons name="checkmark-circle" size={15} color="#FFFFFF" />
+            <Text style={styles.cardAcceptBtnText}>Tiếp nhận</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  };
+
+  const renderAllItem = ({ item }: { item: BookingListItemResponse }) => {
+    const status = formatBookingStatus(item.status);
+    const session = formatSessionType(item.sessionType);
+
+    return (
+      <TouchableOpacity
+        style={styles.bookingCard}
+        activeOpacity={0.85}
+        onPress={() => navigation.navigate('BookingDetail', { bookingId: item.id, isExpertView: true })}
+      >
+        <View style={styles.cardHeader}>
+          <View style={[styles.sessionBadge, { backgroundColor: `${session.color}15` }]}>
+            <Ionicons name={session.icon as any} size={12} color={session.color} />
+            <Text style={[styles.sessionBadgeText, { color: session.color }]}>{session.label}</Text>
+          </View>
+          <View style={[styles.statusBadge, { backgroundColor: status.bg }]}>
+            <Text style={[styles.statusBadgeText, { color: status.color }]}>{status.label}</Text>
+          </View>
+        </View>
+
+        <Text style={styles.clientName}>Khách hàng: {item.userFullName}</Text>
+        <Text style={styles.topicTitle} numberOfLines={2}>
+          {item.topicTitle || 'Yêu cầu tư vấn'}
+        </Text>
+
+        <View style={styles.pillRow}>
+          <View style={styles.pill}>
+            <Ionicons name="calendar-outline" size={13} color="#444444" />
+            <Text style={styles.pillText}>{formatVietnameseDate(item.slotDate)}</Text>
+          </View>
+          <View style={styles.pill}>
+            <Ionicons name="time-outline" size={13} color="#444444" />
+            <Text style={styles.pillText}>{formatTimeRange(item.startTime, item.endTime)}</Text>
+          </View>
+          <View style={[styles.pill, { backgroundColor: `${session.color}15` }]}>
+            <Ionicons name={session.icon as any} size={13} color={session.color} />
+            <Text style={[styles.pillText, { color: session.color }]}>{session.label}</Text>
+          </View>
+        </View>
+
+        <View style={styles.cardFooter}>
+          <Text style={styles.cardFee}>{formatVnd(item.fee)}</Text>
+          <View style={styles.cardFooterRight}>
+            <Text style={styles.viewDetailLink}>Xem chi tiết</Text>
+            <Ionicons name="chevron-forward" size={14} color={theme.colors.primary} />
+          </View>
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
+  const currentList = activeTab === 'PENDING' ? pendingBookings : allBookings;
+
+  return (
+    <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
+      {/* ── HEADER ── */}
+      <View style={styles.header}>
+        <TouchableOpacity
+          onPress={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('Home'))}
+          style={styles.backBtn}
+          accessibilityRole="button"
+          accessibilityLabel="Quay lại"
+        >
+          <Ionicons name="arrow-back" size={24} color={theme.colors.textPrimary} />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Quản lý ca tư vấn</Text>
+        <TouchableOpacity
+          style={styles.refreshBtn}
+          onPress={() => fetchData(true)}
+          accessibilityRole="button"
+          accessibilityLabel="Làm mới"
+        >
+          <Ionicons name="refresh" size={20} color={theme.colors.primary} />
+        </TouchableOpacity>
+      </View>
+      <GoldDoubleRule />
+
+      {/* ── REVENUE & WALLET KPI CARD ── */}
+      <View style={styles.kpiRevenueCard}>
+        <View style={styles.kpiRevenueLeft}>
+          <Text style={styles.kpiRevenueLabel}>Tổng thu nhập tích lũy</Text>
+          <Text style={styles.kpiRevenueValue}>{formatVnd(expertWallet?.totalEarned ?? 0)}</Text>
+          <Text style={styles.kpiAvailableSub}>
+            Số dư ví khả dụng: <Text style={{ fontFamily: fonts.bodyBold, color: '#059669' }}>{formatVnd(expertWallet?.availableBalance ?? 0)}</Text>
+          </Text>
+        </View>
+
+        <TouchableOpacity
+          style={styles.kpiWalletBtn}
+          activeOpacity={0.85}
+          onPress={() => navigation.navigate('Wallet', { walletType: 'EXPERT' })}
+          accessibilityRole="button"
+          accessibilityLabel="Ví & Rút tiền"
+        >
+          <Ionicons name="wallet-outline" size={16} color="#FFFFFF" />
+          <Text style={styles.kpiWalletBtnText}>Ví & Rút tiền</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* ── TAB SELECTOR ── */}
+      <View style={styles.tabContainer}>
+        <TouchableOpacity
+          style={[styles.tabBtn, activeTab === 'PENDING' && styles.tabBtnActive]}
+          onPress={() => setActiveTab('PENDING')}
+        >
+          <Text style={[styles.tabBtnText, activeTab === 'PENDING' && styles.tabBtnTextActive]}>
+            Chờ duyệt
+          </Text>
+          {pendingBookings.length > 0 && (
+            <View style={styles.tabBadge}>
+              <Text style={styles.tabBadgeText}>{pendingBookings.length}</Text>
+            </View>
+          )}
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.tabBtn, activeTab === 'ALL' && styles.tabBtnActive]}
+          onPress={() => setActiveTab('ALL')}
+        >
+          <Text style={[styles.tabBtnText, activeTab === 'ALL' && styles.tabBtnTextActive]}>
+            Tất cả lịch hẹn
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* ── STATUS FILTER (Only for ALL tab) ── */}
+      {activeTab === 'ALL' && (
+        <View style={styles.filterChipScroll}>
+          {[
+            { key: 'ALL', label: 'Tất cả' },
+            { key: 'CONFIRMED', label: 'Đã xác nhận' },
+            { key: 'COMPLETED', label: 'Hoàn thành' },
+            { key: 'REJECTED_BY_EXPERT', label: 'Từ chối' },
+            { key: 'CANCELLED_BY_USER', label: 'Khách hủy' },
+          ].map((chip) => (
+            <TouchableOpacity
+              key={chip.key}
+              style={[
+                styles.filterChip,
+                statusFilter === chip.key && styles.filterChipActive,
+              ]}
+              onPress={() => setStatusFilter(chip.key)}
+            >
+              <Text
+                style={[
+                  styles.filterChipText,
+                  statusFilter === chip.key && styles.filterChipTextActive,
+                ]}
+              >
+                {chip.label}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+
+      {/* ── CONTENT LIST ── */}
+      {loading && !refreshing ? (
+        <View style={styles.centerLoading}>
+          <ActivityIndicator size="large" color={theme.colors.primary} />
+          <Text style={styles.loadingText}>Đang tải danh sách ca tư vấn...</Text>
+        </View>
+      ) : error ? (
+        <View style={styles.centerLoading}>
+          <Ionicons name="alert-circle-outline" size={44} color={theme.colors.error} />
+          <Text style={styles.errorText}>{error}</Text>
+          <TouchableOpacity style={styles.retryBtn} onPress={() => fetchData(true)}>
+            <Text style={styles.retryBtnText}>Thử lại</Text>
+          </TouchableOpacity>
+        </View>
+      ) : currentList.length === 0 ? (
+        <View style={styles.centerEmpty}>
+          <Ionicons
+            name={activeTab === 'PENDING' ? 'checkmark-done-circle-outline' : 'calendar-outline'}
+            size={48}
+            color="#999999"
+          />
+          <Text style={styles.emptyTitle}>
+            {activeTab === 'PENDING'
+              ? 'Không có ca nào chờ tiếp nhận'
+              : 'Chưa có lịch hẹn nào phù hợp'}
+          </Text>
+          <Text style={styles.emptySubtitle}>
+            {activeTab === 'PENDING'
+              ? 'Bạn đã phản hồi toàn bộ các yêu cầu tư vấn hiện tại.'
+              : 'Các lịch hẹn tư vấn mới sẽ hiển thị tại đây.'}
+          </Text>
+        </View>
+      ) : (
+        <FlatList
+          data={currentList}
+          keyExtractor={(item) => item.id}
+          renderItem={activeTab === 'PENDING' ? renderPendingItem : renderAllItem}
+          contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => fetchData(true)}
+              colors={[theme.colors.primary]}
+            />
+          }
+        />
+      )}
+
+      {/* ── REJECT MODAL ── */}
+      <Modal
+        visible={rejectModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setRejectModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <View style={styles.modalHeader}>
+              <Ionicons name="close-circle" size={26} color={theme.colors.error} />
+              <Text style={styles.modalTitle}>Từ chối ca tư vấn</Text>
+            </View>
+
+            <Text style={styles.modalDesc}>
+              Hệ thống sẽ hoàn trả 100% chi phí cho khách hàng và mở lại khung giờ tư vấn. Vui lòng nêu rõ lý do:
+            </Text>
+
+            <TextInput
+              style={styles.reasonInput}
+              placeholder="VD: Trùng lịch làm việc đột xuất, hồ sơ ngoài phạm vi hỗ trợ..."
+              placeholderTextColor="#999999"
+              value={rejectReason}
+              onChangeText={setRejectReason}
+              multiline
+              numberOfLines={3}
+              textAlignVertical="top"
+            />
+
+            <View style={styles.modalBtnRow}>
+              <TouchableOpacity
+                style={styles.modalCloseBtn}
+                onPress={() => setRejectModalVisible(false)}
+                disabled={actionLoading}
+              >
+                <Text style={styles.modalCloseBtnText}>Đóng</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.modalSubmitBtn}
+                onPress={handleConfirmReject}
+                disabled={actionLoading}
+              >
+                {actionLoading ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.modalSubmitBtnText}>Xác nhận từ chối</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Thông báo Dialog chuẩn hệ thống */}
+      {dialog ? (
+        <Dialog
+          visible={Boolean(dialog)}
+          title={dialog.title}
+          message={dialog.message}
+          primaryLabel={dialog.primaryLabel || 'Đóng'}
+          secondaryLabel={dialog.secondaryLabel}
+          destructive={dialog.destructive}
+          onPrimary={dialog.onPrimary || (() => setDialog(null))}
+          onSecondary={dialog.onSecondary || (() => setDialog(null))}
+          onRequestClose={() => setDialog(null)}
+        />
+      ) : null}
+    </SafeAreaView>
+  );
+};
+
+const styles = StyleSheet.create({
+  safe: {
+    flex: 1,
+    backgroundColor: theme.colors.background,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#FFFFFF',
+  },
+  backBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  refreshBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerTitle: {
+    fontFamily: fonts.serifBold,
+    fontSize: 17,
+    color: theme.colors.textPrimary,
+  },
+
+  // Tabs
+  tabContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+  },
+  tabBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 12,
+    marginRight: 20,
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  tabBtnActive: {
+    borderBottomColor: theme.colors.primary,
+  },
+  tabBtnText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 13,
+    color: theme.colors.textSecondary,
+  },
+  tabBtnTextActive: {
+    fontFamily: fonts.bodyBold,
+    color: theme.colors.primary,
+  },
+  tabBadge: {
+    backgroundColor: '#EF4444',
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+  },
+  tabBadgeText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 10,
+    color: '#FFFFFF',
+  },
+
+  // Filter Chips
+  filterChipScroll: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    gap: 8,
+    backgroundColor: '#FFFFFF',
+  },
+  filterChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: '#F3EFE6',
+  },
+  filterChipActive: {
+    backgroundColor: theme.colors.primary,
+  },
+  filterChipText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 12,
+    color: '#666666',
+  },
+  filterChipTextActive: {
+    color: '#FFFFFF',
+  },
+
+  // List & Cards (Flat design, NO nested card)
+  listContent: {
+    padding: 16,
+    gap: 12,
+  },
+  bookingCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    padding: 14,
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  codeWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  sessionBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  sessionBadgeText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 11,
+  },
+  bookingCode: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 13,
+    color: theme.colors.primary,
+  },
+  slaBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  slaBadgeUrgent: {
+    backgroundColor: '#FEE2E2',
+  },
+  slaText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 11,
+    color: '#92400E',
+  },
+  slaTextUrgent: {
+    color: '#B91C1C',
+  },
+  cardFee: {
+    fontFamily: fonts.serifBold,
+    fontSize: 14,
+    color: theme.colors.primary,
+  },
+  clientName: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 13,
+    color: theme.colors.textPrimary,
+    marginBottom: 4,
+  },
+  topicTitle: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: '#444444',
+    lineHeight: 17,
+    marginBottom: 10,
+  },
+  pillRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 12,
+  },
+  pill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#F3EFE6',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  pillText: {
+    fontFamily: fonts.body,
+    fontSize: 11,
+    color: '#333333',
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  statusBadgeText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 11,
+  },
+  cardFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+  },
+  cardFooterRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  viewDetailLink: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 12,
+    color: theme.colors.primary,
+  },
+
+  // Actions row in pending card
+  actionBtnRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: theme.colors.border,
+  },
+  detailBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 6,
+    backgroundColor: '#F3EFE6',
+  },
+  detailBtnText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 12,
+    color: '#444444',
+  },
+  cardRejectBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: theme.colors.error,
+  },
+  cardRejectBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12,
+    color: theme.colors.error,
+  },
+  cardAcceptBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    backgroundColor: '#059669',
+    paddingVertical: 8,
+    borderRadius: 6,
+  },
+  cardAcceptBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12,
+    color: '#FFFFFF',
+  },
+
+  // States
+  centerLoading: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  loadingText: {
+    fontFamily: fonts.body,
+    fontSize: 13,
+    color: theme.colors.textSecondary,
+    marginTop: 10,
+  },
+  centerEmpty: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 32,
+  },
+  emptyTitle: {
+    fontFamily: fonts.serifBold,
+    fontSize: 15,
+    color: theme.colors.textPrimary,
+    marginTop: 12,
+  },
+  emptySubtitle: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: theme.colors.textSecondary,
+    textAlign: 'center',
+    marginTop: 4,
+  },
+  errorText: {
+    fontFamily: fonts.body,
+    fontSize: 13,
+    color: theme.colors.error,
+    textAlign: 'center',
+    marginVertical: 10,
+  },
+  retryBtn: {
+    backgroundColor: theme.colors.primary,
+    paddingHorizontal: 18,
+    paddingVertical: 8,
+    borderRadius: 6,
+  },
+  retryBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12,
+    color: '#FFFFFF',
+  },
+
+  // Modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalBox: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    padding: 18,
+    width: '100%',
+    maxWidth: 360,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  modalTitle: {
+    fontFamily: fonts.serifBold,
+    fontSize: 16,
+    color: theme.colors.error,
+  },
+  modalDesc: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: '#555555',
+    lineHeight: 17,
+    marginBottom: 12,
+  },
+  reasonInput: {
+    backgroundColor: theme.colors.inputBackground,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: 8,
+    padding: 10,
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: theme.colors.textPrimary,
+    minHeight: 70,
+    marginBottom: 16,
+  },
+  modalBtnRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+  },
+  modalCloseBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 6,
+    backgroundColor: '#F3EFE6',
+  },
+  modalCloseBtnText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 12,
+    color: '#555555',
+  },
+  modalSubmitBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 6,
+    backgroundColor: theme.colors.error,
+  },
+  modalSubmitBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12,
+    color: '#FFFFFF',
+  },
+  kpiRevenueCard: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 4,
+    backgroundColor: '#1E293B',
+    borderRadius: 14,
+    padding: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  kpiRevenueLeft: {
+    flex: 1,
+    marginRight: 10,
+  },
+  kpiRevenueLabel: {
+    fontFamily: fonts.body,
+    fontSize: 11,
+    color: '#94A3B8',
+  },
+  kpiRevenueValue: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 20,
+    color: '#F8FAFC',
+    marginTop: 2,
+  },
+  kpiAvailableSub: {
+    fontFamily: fonts.body,
+    fontSize: 11,
+    color: '#CBD5E1',
+    marginTop: 3,
+  },
+  kpiWalletBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: theme.colors.primary,
+    paddingVertical: 9,
+    paddingHorizontal: 13,
+    borderRadius: 8,
+  },
+  kpiWalletBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12,
+    color: '#FFFFFF',
+  },
+});

@@ -9,6 +9,7 @@ import {
   FlatList,
   RefreshControl,
   ActivityIndicator,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -27,6 +28,7 @@ import { notificationApi, NotificationItem } from '../../api/notificationApi';
 import { taxSettlementApi } from '../../api/taxSettlementApi';
 import type { TaxDeadlineCountdown } from '../../types/taxSettlement';
 import { deadlineDisplay } from './homeDeadlineCountdown';
+import { profileApi } from '../../api/profileApi';
 import {
   buildHomeReminderChangeGroupPlan,
   runHomeReminderChangeGroup,
@@ -44,6 +46,9 @@ import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
 import { MainTabBar } from '../../components/navigation/MainTabBar';
 import { humanizeGroupCodes } from '../dependent/dependentGroupUtils';
 import { formatPersonName } from '../../utils/formatPersonName';
+import { consultationApi } from '../../api/consultationApi';
+import type { UpcomingMeetingReminderDto } from '../../types/consultation';
+import { formatVietnameseDate, formatTimeRange } from '../../types/consultation';
 
 const DEADLINE_COLORS = {
   normal: theme.colors.primaryDark,
@@ -70,6 +75,8 @@ function initialFromName(name?: string | null): string {
 export const HomeScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
   const { user } = useAuthStore();
+  const userRole = (user?.role || '').toLowerCase();
+  const isExpert = userRole === 'expert' || userRole.includes('expert');
 
   const [reminders, setReminders] = useState<AgeReminderItemDto[]>([]);
   const [dependents, setDependents] = useState<DependentItem[]>([]);
@@ -89,6 +96,8 @@ export const HomeScreen: React.FC = () => {
   const [refreshingNotifs, setRefreshingNotifs] = useState<boolean>(false);
   const [deadline, setDeadline] = useState<TaxDeadlineCountdown | null>(null);
   const [promptAnswered, setPromptAnswered] = useState(false);
+  const [upcomingMeeting, setUpcomingMeeting] = useState<UpcomingMeetingReminderDto | null>(null);
+  const [joiningMeeting, setJoiningMeeting] = useState<boolean>(false);
 
   const fetchDashboardData = useCallback(async () => {
     // Tách riêng: lỗi đếm ngược không làm hỏng phần nhắc NPT / thông báo
@@ -107,10 +116,29 @@ export const HomeScreen: React.FC = () => {
 
       const count = await notificationApi.getUnreadCount();
       setUnreadCount(count);
+
+      // Nhắc nhở ca họp trực tuyến sắp diễn ra
+      consultationApi
+        .getUpcomingMeetingReminder()
+        .then((reminder) => {
+          setUpcomingMeeting(reminder?.hasUpcomingMeeting ? reminder : null);
+        })
+        .catch(() => {
+          setUpcomingMeeting(null);
+        });
+
+      // Đồng bộ thông tin vai trò người dùng (nếu vừa được duyệt chuyên gia)
+      profileApi.getProfile().then((prof) => {
+        if (prof?.userRole && user && user.role !== prof.userRole) {
+          useAuthStore.setState({
+            user: { ...user, role: prof.userRole },
+          });
+        }
+      }).catch(() => {});
     } catch (err) {
       console.warn('HomeScreen fetchDashboardData error:', err);
     }
-  }, []);
+  }, [user]);
 
   useFocusEffect(
     useCallback(() => {
@@ -284,6 +312,29 @@ export const HomeScreen: React.FC = () => {
     }
   };
 
+  const handleJoinUpcomingMeeting = async () => {
+    if (!upcomingMeeting?.bookingId) return;
+    setJoiningMeeting(true);
+    try {
+      const res = await consultationApi.joinConsultation(upcomingMeeting.bookingId);
+      if (res?.roomUrl) {
+        await Linking.openURL(res.roomUrl);
+      } else if (upcomingMeeting.roomUrl) {
+        await Linking.openURL(upcomingMeeting.roomUrl);
+      } else {
+        navigation.navigate('BookingDetail', { bookingId: upcomingMeeting.bookingId });
+      }
+    } catch (err: any) {
+      if (upcomingMeeting.roomUrl) {
+        await Linking.openURL(upcomingMeeting.roomUrl).catch(() => {});
+      } else {
+        navigation.navigate('BookingDetail', { bookingId: upcomingMeeting.bookingId });
+      }
+    } finally {
+      setJoiningMeeting(false);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <DrumPatternBackdrop variant="soft" />
@@ -381,6 +432,187 @@ export const HomeScreen: React.FC = () => {
             ))
           )}
 
+          {/* Banner lịch hẹn trực tuyến sắp diễn ra */}
+          {upcomingMeeting && upcomingMeeting.hasUpcomingMeeting ? (
+            <View
+              style={[
+                styles.upcomingCard,
+                upcomingMeeting.urgencyLevel === 'IN_PROGRESS' && styles.upcomingCardInProgress,
+                upcomingMeeting.urgencyLevel === 'OPENED' && styles.upcomingCardOpened,
+              ]}
+              testID="homeUpcomingMeetingBanner"
+            >
+              <View style={styles.upcomingHeader}>
+                <View
+                  style={[
+                    styles.upcomingBadge,
+                    upcomingMeeting.urgencyLevel === 'IN_PROGRESS' && styles.upcomingBadgeInProgress,
+                    upcomingMeeting.urgencyLevel === 'OPENED' && styles.upcomingBadgeOpened,
+                  ]}
+                >
+                  <Ionicons
+                    name={
+                      upcomingMeeting.urgencyLevel === 'IN_PROGRESS' || upcomingMeeting.urgencyLevel === 'OPENED'
+                        ? 'videocam'
+                        : 'alarm-outline'
+                    }
+                    size={12}
+                    color="#FFFFFF"
+                  />
+                  <Text style={styles.upcomingBadgeText}>
+                    {upcomingMeeting.urgencyLevel === 'IN_PROGRESS'
+                      ? 'ĐANG DIỄN RA'
+                      : upcomingMeeting.urgencyLevel === 'OPENED'
+                      ? 'PHÒNG ĐÃ MỞ'
+                      : upcomingMeeting.urgencyLevel === 'SOON'
+                      ? 'SẮP BẮT ĐẦU'
+                      : 'LỊCH HẸN SẮP TỚI'}
+                  </Text>
+                </View>
+
+                <TouchableOpacity
+                  onPress={() => {
+                    if (upcomingMeeting.bookingId) {
+                      navigation.navigate('BookingDetail', { bookingId: upcomingMeeting.bookingId });
+                    }
+                  }}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  style={styles.upcomingDetailLink}
+                  accessibilityRole="button"
+                  accessibilityLabel="Xem chi tiết lịch hẹn"
+                >
+                  <Text style={styles.upcomingDetailLinkText}>Chi tiết</Text>
+                  <Ionicons name="chevron-forward" size={12} color={theme.colors.primary} />
+                </TouchableOpacity>
+              </View>
+
+              <Text style={styles.upcomingTitle} numberOfLines={2}>
+                {upcomingMeeting.topicTitle || 'Tư vấn trực tuyến cùng chuyên gia thuế'}
+              </Text>
+
+              <View style={styles.upcomingMetaRow}>
+                <Ionicons name="person-outline" size={13} color="#444444" />
+                <Text style={styles.upcomingMetaText} numberOfLines={1}>
+                  {upcomingMeeting.partnerRole === 'TAXPAYER' ? 'Khách hàng: ' : 'Chuyên gia: '}
+                  {upcomingMeeting.partnerName || 'Chuyên gia tư vấn'}
+                </Text>
+              </View>
+
+              <View style={styles.upcomingTimeRow}>
+                <View style={styles.upcomingTimePill}>
+                  <Ionicons name="calendar-outline" size={13} color={theme.colors.primaryDark} />
+                  <Text style={styles.upcomingTimeText}>
+                    {formatVietnameseDate(upcomingMeeting.slotDate ?? undefined)}
+                  </Text>
+                </View>
+                <View style={styles.upcomingTimePill}>
+                  <Ionicons name="time-outline" size={13} color={theme.colors.primaryDark} />
+                  <Text style={styles.upcomingTimeText}>
+                    {formatTimeRange(upcomingMeeting.startTime ?? undefined, upcomingMeeting.endTime ?? undefined)}
+                  </Text>
+                </View>
+              </View>
+
+              {upcomingMeeting.reminderMessage ? (
+                <Text style={styles.upcomingMessage}>{upcomingMeeting.reminderMessage}</Text>
+              ) : null}
+
+              <View style={styles.upcomingActionsRow}>
+                {upcomingMeeting.canJoinRoom || upcomingMeeting.isRoomOpen ? (
+                  <TouchableOpacity
+                    style={styles.upcomingJoinBtn}
+                    onPress={handleJoinUpcomingMeeting}
+                    disabled={joiningMeeting}
+                    activeOpacity={0.85}
+                    accessibilityRole="button"
+                    accessibilityLabel="Vào phòng tư vấn ngay"
+                  >
+                    {joiningMeeting ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <>
+                        <Ionicons name="videocam" size={16} color="#FFFFFF" />
+                        <Text style={styles.upcomingJoinBtnText}>Vào phòng họp ngay</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                ) : null}
+
+                <TouchableOpacity
+                  style={[
+                    styles.upcomingViewDetailBtn,
+                    !(upcomingMeeting.canJoinRoom || upcomingMeeting.isRoomOpen) &&
+                      styles.upcomingViewDetailBtnFull,
+                  ]}
+                  onPress={() => {
+                    if (upcomingMeeting.bookingId) {
+                      navigation.navigate('BookingDetail', { bookingId: upcomingMeeting.bookingId });
+                    }
+                  }}
+                  activeOpacity={0.85}
+                  accessibilityRole="button"
+                  accessibilityLabel="Xem chi tiết lịch hẹn"
+                >
+                  <Ionicons name="calendar-outline" size={15} color={theme.colors.primary} />
+                  <Text style={styles.upcomingViewDetailBtnText}>
+                    {upcomingMeeting.canJoinRoom || upcomingMeeting.isRoomOpen
+                      ? 'Hồ sơ hẹn'
+                      : 'Xem chi tiết'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : null}
+
+          {/* Banner tư vấn chuyên gia thuế */}
+          <View style={styles.consultBannerCard} testID="homeConsultBanner">
+            <View style={styles.consultBannerHeader}>
+              <View style={styles.consultBannerTag}>
+                <Ionicons name="ribbon" size={12} color="#FFFFFF" />
+                <Text style={styles.consultBannerTagText}>TƯ VẤN CHUYÊN GIA</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => navigation.navigate('MyBookings', {})}
+                style={styles.myBookingsLink}
+                accessibilityRole="button"
+                accessibilityLabel="Lịch hẹn của tôi"
+              >
+                <Ionicons name="calendar-outline" size={13} color={theme.colors.primary} />
+                <Text style={styles.myBookingsLinkText}>Lịch hẹn của tôi</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.consultBannerTitle}>Đặt lịch tư vấn thuế cùng chuyên gia</Text>
+            <Text style={styles.consultBannerSubtitle}>
+              Hỗ trợ giải đáp chuyên sâu về thuế TNCN, quyết toán & hoàn thuế với đội ngũ chuyên gia đã xác
+              thực chứng chỉ hành nghề.
+            </Text>
+            <View style={styles.consultBannerBtnRow}>
+              <TouchableOpacity
+                style={styles.consultBannerPrimaryBtn}
+                onPress={() => navigation.navigate('ExpertList')}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel="Tìm và đặt lịch ngay"
+              >
+                <Ionicons name="search" size={15} color="#FFFFFF" />
+                <Text style={styles.consultBannerPrimaryBtnText}>Tìm & Đặt lịch</Text>
+              </TouchableOpacity>
+
+              {!isExpert && (
+                <TouchableOpacity
+                  style={styles.consultBannerSecondaryBtn}
+                  onPress={() => navigation.navigate('ExpertApplication')}
+                  activeOpacity={0.85}
+                  accessibilityRole="button"
+                  accessibilityLabel="Trở thành chuyên gia"
+                >
+                  <Ionicons name="ribbon-outline" size={15} color={theme.colors.primary} />
+                  <Text style={styles.consultBannerSecondaryBtnText}>Đăng ký chuyên gia</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+
           <View style={styles.shortcutGrid} testID="homeShortcutGrid">
             <TouchableOpacity
               style={[styles.shortcutCell, styles.shortcutBorderRight, styles.shortcutBorderBottom]}
@@ -424,6 +656,28 @@ export const HomeScreen: React.FC = () => {
             >
               <Ionicons name="receipt-outline" size={20} color={theme.colors.primary} />
               <Text style={styles.shortcutLabel}>Hóa đơn chứng từ</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.shortcutCell, styles.shortcutBorderRight, styles.shortcutBorderBottom]}
+              onPress={() => navigation.navigate('ExpertList')}
+              testID="homeExpertListCard"
+              accessibilityRole="button"
+              accessibilityLabel="Tư vấn chuyên gia"
+            >
+              <Ionicons name="chatbubbles-outline" size={20} color={theme.colors.primary} />
+              <Text style={styles.shortcutLabel}>Tư vấn chuyên gia</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.shortcutCell, styles.shortcutBorderBottom]}
+              onPress={() => navigation.navigate('MyBookings', {})}
+              testID="homeMyBookingsCard"
+              accessibilityRole="button"
+              accessibilityLabel="Lịch hẹn tư vấn"
+            >
+              <Ionicons name="calendar-outline" size={20} color={theme.colors.primary} />
+              <Text style={styles.shortcutLabel}>Lịch hẹn tư vấn</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -780,6 +1034,245 @@ const styles = StyleSheet.create({
   todoItemSubtitle: {
     ...theme.typography.helper,
     color: theme.colors.textSecondary,
+  },
+  consultBannerCard: {
+    marginTop: 18,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1.5,
+    borderColor: '#E8D5B5',
+    ...theme.shadows.card,
+  },
+  // Upcoming meeting banner styles
+  upcomingCard: {
+    marginTop: 18,
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1.5,
+    borderColor: '#FDE68A',
+    backgroundColor: '#FFFBEB',
+    ...theme.shadows.card,
+  },
+  upcomingCardOpened: {
+    borderColor: '#A7F3D0',
+    backgroundColor: '#F0FDF4',
+  },
+  upcomingCardInProgress: {
+    borderColor: '#FECACA',
+    backgroundColor: '#FEF2F2',
+  },
+  upcomingHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  upcomingBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#D97706',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+    gap: 4,
+  },
+  upcomingBadgeOpened: {
+    backgroundColor: '#059669',
+  },
+  upcomingBadgeInProgress: {
+    backgroundColor: '#DC2626',
+  },
+  upcomingBadgeText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 10,
+    color: '#FFFFFF',
+    letterSpacing: 0.5,
+  },
+  upcomingDetailLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  upcomingDetailLinkText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 11,
+    color: theme.colors.primary,
+  },
+  upcomingTitle: {
+    fontFamily: fonts.serifBold,
+    fontSize: 15,
+    color: theme.colors.primaryDark,
+    lineHeight: 20,
+    marginBottom: 6,
+  },
+  upcomingMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginBottom: 8,
+  },
+  upcomingMetaText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 12,
+    color: '#333333',
+    flex: 1,
+  },
+  upcomingTimeRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 8,
+  },
+  upcomingTimePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  upcomingTimeText: {
+    fontFamily: fonts.bodyMedium,
+    fontSize: 11,
+    color: theme.colors.textPrimary,
+  },
+  upcomingMessage: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: '#4B5563',
+    lineHeight: 17,
+    marginBottom: 10,
+  },
+  upcomingActionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 2,
+  },
+  upcomingJoinBtn: {
+    flex: 1.4,
+    height: 40,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#059669',
+    borderRadius: 8,
+    gap: 6,
+    ...theme.shadows.button,
+  },
+  upcomingJoinBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12,
+    color: '#FFFFFF',
+  },
+  upcomingViewDetailBtn: {
+    flex: 1,
+    height: 40,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: theme.colors.primary,
+    borderRadius: 8,
+    gap: 5,
+  },
+  upcomingViewDetailBtnFull: {
+    flex: 1,
+  },
+  upcomingViewDetailBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12,
+    color: theme.colors.primary,
+  },
+  consultBannerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  consultBannerTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: theme.colors.primary,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+    gap: 4,
+  },
+  consultBannerTagText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 10,
+    color: '#FFFFFF',
+    letterSpacing: 0.5,
+  },
+  myBookingsLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  myBookingsLinkText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 11,
+    color: theme.colors.primary,
+  },
+  consultBannerTitle: {
+    fontFamily: fonts.serifBold,
+    fontSize: 15,
+    color: theme.colors.primaryDark,
+    lineHeight: 20,
+    marginBottom: 4,
+  },
+  consultBannerSubtitle: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: '#555555',
+    lineHeight: 17,
+    marginBottom: 12,
+  },
+  consultBannerBtnRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 2,
+  },
+  consultBannerPrimaryBtn: {
+    flex: 1,
+    height: 40,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: theme.colors.primary,
+    borderRadius: 8,
+    gap: 6,
+    ...theme.shadows.button,
+  },
+  consultBannerPrimaryBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12,
+    color: '#FFFFFF',
+  },
+  consultBannerSecondaryBtn: {
+    flex: 1,
+    height: 40,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: theme.colors.primary,
+    borderRadius: 8,
+    gap: 5,
+  },
+  consultBannerSecondaryBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12,
+    color: theme.colors.primary,
   },
   shortcutGrid: {
     marginTop: 18,

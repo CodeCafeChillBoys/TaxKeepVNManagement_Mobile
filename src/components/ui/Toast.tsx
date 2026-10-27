@@ -87,10 +87,9 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     <ToastContext.Provider value={{ toast: toastMethods }}>
       {children}
       <View
-        pointerEvents="box-none"
         style={[
           styles.container,
-          { top: Math.max(insets.top, 12) + 6 },
+          { top: Math.max(insets.top, 12) + 6, pointerEvents: 'box-none' as any },
         ]}
       >
         {toasts.map((t) => (

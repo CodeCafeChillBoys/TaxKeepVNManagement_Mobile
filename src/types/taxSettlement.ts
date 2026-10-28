@@ -154,3 +154,20 @@ export function heroOutcome(preview: Pick<TaxSettlementPreview, 'refundAmount' |
   }
   return { label: 'KHÔNG PHÁT SINH', amount: 0, kind: 'zero' };
 }
+
+/** GET /api/v1/tax-settlements/deadline-countdown */
+export type TaxDeadlineCountdown = {
+  taxYear: number;
+  deadlineDate: string;
+  deadlineFormatted: string;
+  daysRemaining: number;
+  reminderMessage: string;
+  /** BE tự chuyển sang hạn năm sau khi đã qua hạn → không còn OVERDUE, daysRemaining luôn ≥ 0 */
+  urgencyLevel: 'NORMAL' | 'WARNING' | 'CRITICAL';
+  isOverdue: boolean;
+  reminderMilestones: number[];
+  /** Chỉ có khi gọi kèm token: hỏi 1 lần "Bạn đã quyết toán thuế chưa?" */
+  shouldPromptSettlementCheck?: boolean;
+  promptTaxYear?: number | null;
+  promptQuestion?: string | null;
+};

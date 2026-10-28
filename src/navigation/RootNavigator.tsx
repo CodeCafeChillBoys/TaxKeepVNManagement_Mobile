@@ -31,6 +31,8 @@ import { SettlementExportFormScreen } from '../screens/settlement/SettlementExpo
 import { SettlementPdfViewerScreen } from '../screens/settlement/SettlementPdfViewerScreen';
 import { SettlementZipReadyScreen } from '../screens/settlement/SettlementZipReadyScreen';
 import { SettlementDownloadExpiredScreen } from '../screens/settlement/SettlementDownloadExpiredScreen';
+import { TaxChatScreen } from '../screens/chat/TaxChatScreen';
+import { TaxChatHistoryScreen } from '../screens/chat/TaxChatHistoryScreen';
 import { ExpertListScreen } from '../screens/consultation/ExpertListScreen';
 import { ExpertDetailScreen } from '../screens/consultation/ExpertDetailScreen';
 import { BookingCreateScreen } from '../screens/consultation/BookingCreateScreen';
@@ -111,6 +113,8 @@ export const RootNavigator: React.FC = () => {
         <Stack.Screen name="ExpenseList" component={ExpenseListScreen} />
         <Stack.Screen name="ExpenseUpload" component={ExpenseUploadScreen} />
         <Stack.Screen name="ExpenseReview" component={ExpenseReviewScreen} />
+        <Stack.Screen name="TaxChat" component={TaxChatScreen} />
+        <Stack.Screen name="TaxChatHistory" component={TaxChatHistoryScreen} />
         <Stack.Screen name="SettlementStart" component={SettlementStartScreen} />
         <Stack.Screen name="SettlementPreview" component={SettlementPreviewScreen} />
         <Stack.Screen name="SettlementSuccess" component={SettlementSuccessScreen} />

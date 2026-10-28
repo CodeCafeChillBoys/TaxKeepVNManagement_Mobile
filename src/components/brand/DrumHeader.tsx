@@ -4,6 +4,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { fonts } from '../../constants/fonts';
 import { theme } from '../../constants/theme';
+import { HomeHeaderButton, useShowHomeButton } from '../navigation/HomeHeaderButton';
 
 type Props = {
   title: string;
@@ -14,6 +15,9 @@ type Props = {
 
 /** Dải trống đồng mờ xuống nền kem — header của màn tra cứu và màn gốc tab. */
 export function DrumHeader({ title, onBack, backTestID, right }: Props) {
+  const showHome = useShowHomeButton();
+  // Lùi bên trái · Home (+ nút riêng của màn) bên phải; 2 bên rộng bằng nhau để tiêu đề nằm giữa
+  const sideWidth = showHome && right ? 88 : 44;
   return (
     <View style={styles.root}>
       <LinearGradient
@@ -33,19 +37,24 @@ export function DrumHeader({ title, onBack, backTestID, right }: Props) {
         pointerEvents="none"
       />
       <View style={styles.row}>
-        <TouchableOpacity
-          style={styles.side}
-          onPress={onBack}
-          accessibilityRole="button"
-          accessibilityLabel="Quay lại"
-          testID={backTestID}
-        >
-          <Ionicons name="arrow-back" size={24} color={theme.colors.textPrimary} />
-        </TouchableOpacity>
+        <View style={[styles.side, styles.sideLeft, { width: sideWidth }]}>
+          <TouchableOpacity
+            style={styles.iconBtn}
+            onPress={onBack}
+            accessibilityRole="button"
+            accessibilityLabel="Quay lại"
+            testID={backTestID}
+          >
+            <Ionicons name="arrow-back" size={24} color={theme.colors.textPrimary} />
+          </TouchableOpacity>
+        </View>
         <Text style={styles.title} numberOfLines={1}>
           {title}
         </Text>
-        <View style={styles.side}>{right}</View>
+        <View style={[styles.side, styles.sideRight, { width: sideWidth }]}>
+          {showHome ? <HomeHeaderButton /> : null}
+          {right}
+        </View>
       </View>
     </View>
   );
@@ -74,6 +83,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#F8F5EE',
   },
   side: {
+    height: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  sideLeft: { justifyContent: 'flex-start' },
+  sideRight: { justifyContent: 'flex-end' },
+  iconBtn: {
     width: 44,
     height: 44,
     alignItems: 'center',

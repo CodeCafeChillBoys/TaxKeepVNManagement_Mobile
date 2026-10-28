@@ -25,6 +25,9 @@ import {
 } from '../../api/dependentDocumentApi';
 import { dependentLifecycleApi } from '../../api/dependentLifecycleApi';
 import { notificationApi, NotificationItem } from '../../api/notificationApi';
+import { taxSettlementApi } from '../../api/taxSettlementApi';
+import type { TaxDeadlineCountdown } from '../../types/taxSettlement';
+import { deadlineDisplay } from './homeDeadlineCountdown';
 import { profileApi } from '../../api/profileApi';
 import {
   buildHomeReminderChangeGroupPlan,
@@ -47,7 +50,11 @@ import { consultationApi } from '../../api/consultationApi';
 import type { UpcomingMeetingReminderDto } from '../../types/consultation';
 import { formatVietnameseDate, formatTimeRange } from '../../types/consultation';
 
-const DEDUCTION_PER_DEPENDENT = 6_200_000;
+const DEADLINE_COLORS = {
+  normal: theme.colors.primaryDark,
+  warning: theme.colors.warning,
+  danger: theme.colors.error,
+};
 
 type TodoItem = {
   id: string;
@@ -63,10 +70,6 @@ function initialFromName(name?: string | null): string {
   if (!trimmed) return '?';
   const parts = trimmed.split(/\s+/);
   return (parts[parts.length - 1] || '?').charAt(0).toUpperCase();
-}
-
-function formatMoney(amount: number): string {
-  return `${amount.toLocaleString('vi-VN')} đ`;
 }
 
 export const HomeScreen: React.FC = () => {
@@ -91,10 +94,17 @@ export const HomeScreen: React.FC = () => {
   const [notifTab, setNotifTab] = useState<'ALL' | 'UNREAD'>('ALL');
   const [loadingNotifs, setLoadingNotifs] = useState<boolean>(false);
   const [refreshingNotifs, setRefreshingNotifs] = useState<boolean>(false);
+  const [deadline, setDeadline] = useState<TaxDeadlineCountdown | null>(null);
+  const [promptAnswered, setPromptAnswered] = useState(false);
   const [upcomingMeeting, setUpcomingMeeting] = useState<UpcomingMeetingReminderDto | null>(null);
   const [joiningMeeting, setJoiningMeeting] = useState<boolean>(false);
 
   const fetchDashboardData = useCallback(async () => {
+    // Tách riêng: lỗi đếm ngược không làm hỏng phần nhắc NPT / thông báo
+    taxSettlementApi
+      .getDeadlineCountdown()
+      .then(setDeadline)
+      .catch((err) => console.warn('HomeScreen deadline countdown error:', err));
     try {
       const [remindersData, deps] = await Promise.all([
         dependentDocumentApi.getAgeTransitionReminders(),
@@ -146,9 +156,17 @@ export const HomeScreen: React.FC = () => {
   );
 
   const displayName = formatPersonName(user?.fullName) || 'Người nộp thuế';
-  const completeCount = dependents.filter((d) => d.isProfileComplete).length;
-  const pendingProofCount = dependents.filter((d) => !d.isProfileComplete).length;
-  const deductionAmount = dependents.length * DEDUCTION_PER_DEPENDENT;
+  const deadlineView = deadline ? deadlineDisplay(deadline) : null;
+  const promptTaxYear = deadline?.shouldPromptSettlementCheck ? deadline.promptTaxYear : null;
+
+  const answerSettlementPrompt = (response: 'YES' | 'NO' | 'DISMISSED') => {
+    if (!promptTaxYear) return;
+    setPromptAnswered(true);
+    taxSettlementApi
+      .acknowledgeSettlementPrompt(promptTaxYear, response)
+      .catch((err) => console.warn('HomeScreen acknowledge prompt error:', err));
+    if (response === 'NO') navigation.navigate('SettlementStart');
+  };
 
   const todoItems = useMemo((): TodoItem[] => {
     const items: TodoItem[] = [];
@@ -403,11 +421,6 @@ export const HomeScreen: React.FC = () => {
     }
   };
 
-  const deductionSubtitle =
-    dependents.length === 0
-      ? 'Chưa có người phụ thuộc'
-      : `${dependents.length} người · ${completeCount} đủ hồ sơ · ${pendingProofCount} chờ minh chứng`;
-
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <DrumPatternBackdrop variant="soft" />
@@ -440,393 +453,421 @@ export const HomeScreen: React.FC = () => {
         </TouchableOpacity>
       </View>
 
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.deductionBlock}>
-          <Text style={styles.deductionLabel}>Giảm trừ người phụ thuộc mỗi tháng</Text>
-          <Text style={styles.deductionAmount}>{formatMoney(deductionAmount)}</Text>
-          <Text style={styles.deductionMeta}>{deductionSubtitle}</Text>
-        </View>
-
-        <GoldDoubleRule style={styles.rule} />
-
-        <View style={styles.todoHeader}>
-          <Text style={styles.todoTitle}>Cần xử lý</Text>
-          <Text style={styles.todoCount}>
-            {todoItems.length} việc
-          </Text>
-        </View>
-
-        {todoItems.length === 0 ? (
-          <View style={styles.todoEmpty}>
-            <Text style={styles.todoEmptyText}>Không có việc cần xử lý lúc này.</Text>
-          </View>
-        ) : (
-          todoItems.map((item, index) => (
-            <TouchableOpacity
-              key={item.id}
-              style={styles.todoRow}
-              activeOpacity={0.7}
-              onPress={() => handleTodoPress(item)}
-              disabled={reminderPatching}
-              testID={
-                item.kind === 'age' ? 'btnUploadStudentCardReminder' : `homeTodo_${item.id}`
-              }
-              accessibilityRole="button"
+      <View style={styles.flex}>
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.deductionBlock} testID="homeDeadlineCountdown">
+            <Text style={styles.deductionLabel}>Hạn nộp quyết toán thuế TNCN</Text>
+            <Text
+              style={[styles.deductionAmount, deadlineView && { color: DEADLINE_COLORS[deadlineView.tone] }]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.6}
+              testID="homeDeadlineDays"
             >
-              <Text style={styles.todoIndex}>
-                {String(index + 1).padStart(2, '0')}
-              </Text>
-              <View style={styles.todoBody}>
-                <Text style={styles.todoItemTitle}>{item.title}</Text>
-                <Text style={styles.todoItemSubtitle}>{item.subtitle}</Text>
-              </View>
-              {reminderPatching && item.kind === 'age' ? (
-                <ActivityIndicator size="small" color={theme.colors.gold} />
-              ) : (
-                <Ionicons name="chevron-forward" size={16} color="#999999" />
-              )}
-            </TouchableOpacity>
-          ))
-        )}
-
-        {/* ── BANNER CẢNH BÁO CA TƯ VẤN ĐÓNG DO VẮNG MẶT (NO-SHOW) CHƯA ĐỌC ── */}
-        {unreadNoShowNotifications.map((notif) => {
-          const isUserNoShowForCustomer =
-            notif.notificationType === 'USER_NO_SHOW' ||
-            notif.notificationType === 'USER_NO_SHOW_CLOSED';
-          const isExpertProtected = notif.notificationType === 'USER_NO_SHOW_EXPERT_NOTIFIED';
-          return (
-            <TouchableOpacity
-              key={notif.notificationId}
-              activeOpacity={0.85}
-              onPress={() => handleNotificationPress(notif)}
-              style={{
-                backgroundColor: isExpertProtected
-                  ? '#ECFDF5'
-                  : isUserNoShowForCustomer
-                  ? '#FFF7ED'
-                  : '#FEF2F2',
-                borderWidth: 1,
-                borderColor: isExpertProtected
-                  ? '#A7F3D0'
-                  : isUserNoShowForCustomer
-                  ? '#FED7AA'
-                  : '#FECACA',
-                borderRadius: 12,
-                padding: 14,
-                marginBottom: 14,
-              }}
-              testID={`homeNoShowAlert_${notif.notificationId}`}
-            >
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                <Ionicons
-                  name={isExpertProtected ? 'shield-checkmark' : 'alert-circle'}
-                  size={18}
-                  color={isExpertProtected ? '#059669' : isUserNoShowForCustomer ? '#C2410C' : '#DC2626'}
-                />
-                <Text
-                  style={{
-                    flex: 1,
-                    fontFamily: fonts.serifBold,
-                    fontSize: 14,
-                    color: isExpertProtected ? '#065F46' : isUserNoShowForCustomer ? '#9A3412' : '#991B1B',
-                  }}
-                >
-                  {notif.title}
-                </Text>
-              </View>
-              <Text
-                style={{
-                  fontFamily: fonts.body,
-                  fontSize: 12.5,
-                  lineHeight: 18,
-                  color: isExpertProtected ? '#047857' : isUserNoShowForCustomer ? '#C2410C' : '#B91C1C',
-                  marginBottom: 8,
-                }}
-              >
-                {notif.message}
-              </Text>
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
-                <Text
-                  style={{
-                    fontFamily: fonts.bodyBold,
-                    fontSize: 12,
-                    color: isExpertProtected ? '#059669' : isUserNoShowForCustomer ? '#C2410C' : '#DC2626',
-                  }}
-                >
-                  Xem chi tiết ca tư vấn
-                </Text>
-                <Ionicons
-                  name="chevron-forward"
-                  size={14}
-                  color={isExpertProtected ? '#059669' : isUserNoShowForCustomer ? '#C2410C' : '#DC2626'}
-                />
-              </View>
-            </TouchableOpacity>
-          );
-        })}
-
-        {/* ── BANNER NHẮC NHỞ LỊCH HẸN TRỰC TUYẾN SẮP DIỄN RA ── */}
-        {upcomingMeeting && upcomingMeeting.hasUpcomingMeeting ? (
-          <View
-            style={[
-              styles.upcomingCard,
-              upcomingMeeting.urgencyLevel === 'IN_PROGRESS' && styles.upcomingCardInProgress,
-              upcomingMeeting.urgencyLevel === 'OPENED' && styles.upcomingCardOpened,
-            ]}
-            testID="homeUpcomingMeetingBanner"
-          >
-            <View style={styles.upcomingHeader}>
-              <View
-                style={[
-                  styles.upcomingBadge,
-                  upcomingMeeting.urgencyLevel === 'IN_PROGRESS' && styles.upcomingBadgeInProgress,
-                  upcomingMeeting.urgencyLevel === 'OPENED' && styles.upcomingBadgeOpened,
-                ]}
-              >
-                <Ionicons
-                  name={
-                    upcomingMeeting.urgencyLevel === 'IN_PROGRESS' || upcomingMeeting.urgencyLevel === 'OPENED'
-                      ? 'videocam'
-                      : 'alarm-outline'
-                  }
-                  size={12}
-                  color="#FFFFFF"
-                />
-                <Text style={styles.upcomingBadgeText}>
-                  {upcomingMeeting.urgencyLevel === 'IN_PROGRESS'
-                    ? 'ĐANG DIỄN RA'
-                    : upcomingMeeting.urgencyLevel === 'OPENED'
-                    ? 'PHÒNG ĐÃ MỞ'
-                    : upcomingMeeting.urgencyLevel === 'SOON'
-                    ? 'SẮP BẮT ĐẦU'
-                    : 'LỊCH HẸN SẮP TỚI'}
-                </Text>
-              </View>
-
-              <TouchableOpacity
-                onPress={() => {
-                  if (upcomingMeeting.bookingId) {
-                    navigation.navigate('BookingDetail', { bookingId: upcomingMeeting.bookingId });
-                  }
-                }}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                style={styles.upcomingDetailLink}
-                accessibilityRole="button"
-                accessibilityLabel="Xem chi tiết lịch hẹn"
-              >
-                <Text style={styles.upcomingDetailLinkText}>Chi tiết</Text>
-                <Ionicons name="chevron-forward" size={12} color={theme.colors.primary} />
-              </TouchableOpacity>
-            </View>
-
-            <Text style={styles.upcomingTitle} numberOfLines={2}>
-              {upcomingMeeting.topicTitle || 'Tư vấn trực tuyến cùng chuyên gia thuế'}
+              {deadlineView?.headline ?? '—'}
             </Text>
-
-            <View style={styles.upcomingMetaRow}>
-              <Ionicons name="person-outline" size={13} color="#444444" />
-              <Text style={styles.upcomingMetaText} numberOfLines={1}>
-                {upcomingMeeting.partnerRole === 'TAXPAYER' ? 'Khách hàng: ' : 'Chuyên gia: '}
-                {upcomingMeeting.partnerName || 'Chuyên gia tư vấn'}
+            {deadlineView ? (
+              <Text style={styles.deductionMeta} numberOfLines={2}>
+                {deadlineView.meta}
               </Text>
-            </View>
-
-            <View style={styles.upcomingTimeRow}>
-              <View style={styles.upcomingTimePill}>
-                <Ionicons name="calendar-outline" size={13} color={theme.colors.primaryDark} />
-                <Text style={styles.upcomingTimeText}>
-                  {formatVietnameseDate(upcomingMeeting.slotDate ?? undefined)}
-                </Text>
-              </View>
-              <View style={styles.upcomingTimePill}>
-                <Ionicons name="time-outline" size={13} color={theme.colors.primaryDark} />
-                <Text style={styles.upcomingTimeText}>
-                  {formatTimeRange(upcomingMeeting.startTime ?? undefined, upcomingMeeting.endTime ?? undefined)}
-                </Text>
-              </View>
-            </View>
-
-            {upcomingMeeting.reminderMessage ? (
-              <Text style={styles.upcomingMessage}>{upcomingMeeting.reminderMessage}</Text>
             ) : null}
+          </View>
 
-            <View style={styles.upcomingActionsRow}>
-              {upcomingMeeting.canJoinRoom || upcomingMeeting.isRoomOpen ? (
-                <TouchableOpacity
-                  style={styles.upcomingJoinBtn}
-                  onPress={handleJoinUpcomingMeeting}
-                  disabled={joiningMeeting}
-                  activeOpacity={0.85}
-                  accessibilityRole="button"
-                  accessibilityLabel="Vào phòng tư vấn ngay"
+          <GoldDoubleRule style={styles.rule} />
+
+          <View style={styles.todoHeader}>
+            <Text style={styles.todoTitle}>Cần xử lý</Text>
+            <Text style={styles.todoCount}>
+              {todoItems.length} việc
+            </Text>
+          </View>
+
+          {todoItems.length === 0 ? (
+            <View style={styles.todoEmpty}>
+              <Text style={styles.todoEmptyText}>Không có việc cần xử lý lúc này.</Text>
+            </View>
+          ) : (
+            todoItems.map((item, index) => (
+              <TouchableOpacity
+                key={item.id}
+                style={styles.todoRow}
+                activeOpacity={0.7}
+                onPress={() => handleTodoPress(item)}
+                disabled={reminderPatching}
+                testID={
+                  item.kind === 'age' ? 'btnUploadStudentCardReminder' : `homeTodo_${item.id}`
+                }
+                accessibilityRole="button"
+              >
+                <Text style={styles.todoIndex}>
+                  {String(index + 1).padStart(2, '0')}
+                </Text>
+                <View style={styles.todoBody}>
+                  <Text style={styles.todoItemTitle}>{item.title}</Text>
+                  <Text style={styles.todoItemSubtitle}>{item.subtitle}</Text>
+                </View>
+                {reminderPatching && item.kind === 'age' ? (
+                  <ActivityIndicator size="small" color={theme.colors.gold} />
+                ) : (
+                  <Ionicons name="chevron-forward" size={16} color="#999999" />
+                )}
+              </TouchableOpacity>
+            ))
+          )}
+
+          {/* ── BANNER CẢNH BÁO CA TƯ VẤN ĐÓNG DO VẮNG MẶT (NO-SHOW) CHƯA ĐỌC ── */}
+          {unreadNoShowNotifications.map((notif) => {
+            const isUserNoShowForCustomer =
+              notif.notificationType === 'USER_NO_SHOW' ||
+              notif.notificationType === 'USER_NO_SHOW_CLOSED';
+            const isExpertProtected = notif.notificationType === 'USER_NO_SHOW_EXPERT_NOTIFIED';
+            return (
+              <TouchableOpacity
+                key={notif.notificationId}
+                activeOpacity={0.85}
+                onPress={() => handleNotificationPress(notif)}
+                style={{
+                  backgroundColor: isExpertProtected
+                    ? '#ECFDF5'
+                    : isUserNoShowForCustomer
+                    ? '#FFF7ED'
+                    : '#FEF2F2',
+                  borderWidth: 1,
+                  borderColor: isExpertProtected
+                    ? '#A7F3D0'
+                    : isUserNoShowForCustomer
+                    ? '#FED7AA'
+                    : '#FECACA',
+                  borderRadius: 12,
+                  padding: 14,
+                  marginBottom: 14,
+                }}
+                testID={`homeNoShowAlert_${notif.notificationId}`}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <Ionicons
+                    name={isExpertProtected ? 'shield-checkmark' : 'alert-circle'}
+                    size={18}
+                    color={isExpertProtected ? '#059669' : isUserNoShowForCustomer ? '#C2410C' : '#DC2626'}
+                  />
+                  <Text
+                    style={{
+                      flex: 1,
+                      fontFamily: fonts.serifBold,
+                      fontSize: 14,
+                      color: isExpertProtected ? '#065F46' : isUserNoShowForCustomer ? '#9A3412' : '#991B1B',
+                    }}
+                  >
+                    {notif.title}
+                  </Text>
+                </View>
+                <Text
+                  style={{
+                    fontFamily: fonts.body,
+                    fontSize: 12.5,
+                    lineHeight: 18,
+                    color: isExpertProtected ? '#047857' : isUserNoShowForCustomer ? '#C2410C' : '#B91C1C',
+                    marginBottom: 8,
+                  }}
                 >
-                  {joiningMeeting ? (
-                    <ActivityIndicator size="small" color="#FFFFFF" />
-                  ) : (
-                    <>
-                      <Ionicons name="videocam" size={16} color="#FFFFFF" />
-                      <Text style={styles.upcomingJoinBtnText}>Vào phòng họp ngay</Text>
-                    </>
-                  )}
+                  {notif.message}
+                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
+                  <Text
+                    style={{
+                      fontFamily: fonts.bodyBold,
+                      fontSize: 12,
+                      color: isExpertProtected ? '#059669' : isUserNoShowForCustomer ? '#C2410C' : '#DC2626',
+                    }}
+                  >
+                    Xem chi tiết ca tư vấn
+                  </Text>
+                  <Ionicons
+                    name="chevron-forward"
+                    size={14}
+                    color={isExpertProtected ? '#059669' : isUserNoShowForCustomer ? '#C2410C' : '#DC2626'}
+                  />
+                </View>
+              </TouchableOpacity>
+            );
+          })}
+
+          {/* Banner lịch hẹn trực tuyến sắp diễn ra */}
+          {upcomingMeeting && upcomingMeeting.hasUpcomingMeeting ? (
+            <View
+              style={[
+                styles.upcomingCard,
+                upcomingMeeting.urgencyLevel === 'IN_PROGRESS' && styles.upcomingCardInProgress,
+                upcomingMeeting.urgencyLevel === 'OPENED' && styles.upcomingCardOpened,
+              ]}
+              testID="homeUpcomingMeetingBanner"
+            >
+              <View style={styles.upcomingHeader}>
+                <View
+                  style={[
+                    styles.upcomingBadge,
+                    upcomingMeeting.urgencyLevel === 'IN_PROGRESS' && styles.upcomingBadgeInProgress,
+                    upcomingMeeting.urgencyLevel === 'OPENED' && styles.upcomingBadgeOpened,
+                  ]}
+                >
+                  <Ionicons
+                    name={
+                      upcomingMeeting.urgencyLevel === 'IN_PROGRESS' || upcomingMeeting.urgencyLevel === 'OPENED'
+                        ? 'videocam'
+                        : 'alarm-outline'
+                    }
+                    size={12}
+                    color="#FFFFFF"
+                  />
+                  <Text style={styles.upcomingBadgeText}>
+                    {upcomingMeeting.urgencyLevel === 'IN_PROGRESS'
+                      ? 'ĐANG DIỄN RA'
+                      : upcomingMeeting.urgencyLevel === 'OPENED'
+                      ? 'PHÒNG ĐÃ MỞ'
+                      : upcomingMeeting.urgencyLevel === 'SOON'
+                      ? 'SẮP BẮT ĐẦU'
+                      : 'LỊCH HẸN SẮP TỚI'}
+                  </Text>
+                </View>
+
+                <TouchableOpacity
+                  onPress={() => {
+                    if (upcomingMeeting.bookingId) {
+                      navigation.navigate('BookingDetail', { bookingId: upcomingMeeting.bookingId });
+                    }
+                  }}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  style={styles.upcomingDetailLink}
+                  accessibilityRole="button"
+                  accessibilityLabel="Xem chi tiết lịch hẹn"
+                >
+                  <Text style={styles.upcomingDetailLinkText}>Chi tiết</Text>
+                  <Ionicons name="chevron-forward" size={12} color={theme.colors.primary} />
                 </TouchableOpacity>
+              </View>
+
+              <Text style={styles.upcomingTitle} numberOfLines={2}>
+                {upcomingMeeting.topicTitle || 'Tư vấn trực tuyến cùng chuyên gia thuế'}
+              </Text>
+
+              <View style={styles.upcomingMetaRow}>
+                <Ionicons name="person-outline" size={13} color="#444444" />
+                <Text style={styles.upcomingMetaText} numberOfLines={1}>
+                  {upcomingMeeting.partnerRole === 'TAXPAYER' ? 'Khách hàng: ' : 'Chuyên gia: '}
+                  {upcomingMeeting.partnerName || 'Chuyên gia tư vấn'}
+                </Text>
+              </View>
+
+              <View style={styles.upcomingTimeRow}>
+                <View style={styles.upcomingTimePill}>
+                  <Ionicons name="calendar-outline" size={13} color={theme.colors.primaryDark} />
+                  <Text style={styles.upcomingTimeText}>
+                    {formatVietnameseDate(upcomingMeeting.slotDate ?? undefined)}
+                  </Text>
+                </View>
+                <View style={styles.upcomingTimePill}>
+                  <Ionicons name="time-outline" size={13} color={theme.colors.primaryDark} />
+                  <Text style={styles.upcomingTimeText}>
+                    {formatTimeRange(upcomingMeeting.startTime ?? undefined, upcomingMeeting.endTime ?? undefined)}
+                  </Text>
+                </View>
+              </View>
+
+              {upcomingMeeting.reminderMessage ? (
+                <Text style={styles.upcomingMessage}>{upcomingMeeting.reminderMessage}</Text>
               ) : null}
 
+              <View style={styles.upcomingActionsRow}>
+                {upcomingMeeting.canJoinRoom || upcomingMeeting.isRoomOpen ? (
+                  <TouchableOpacity
+                    style={styles.upcomingJoinBtn}
+                    onPress={handleJoinUpcomingMeeting}
+                    disabled={joiningMeeting}
+                    activeOpacity={0.85}
+                    accessibilityRole="button"
+                    accessibilityLabel="Vào phòng tư vấn ngay"
+                  >
+                    {joiningMeeting ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <>
+                        <Ionicons name="videocam" size={16} color="#FFFFFF" />
+                        <Text style={styles.upcomingJoinBtnText}>Vào phòng họp ngay</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                ) : null}
+
+                <TouchableOpacity
+                  style={[
+                    styles.upcomingViewDetailBtn,
+                    !(upcomingMeeting.canJoinRoom || upcomingMeeting.isRoomOpen) &&
+                      styles.upcomingViewDetailBtnFull,
+                  ]}
+                  onPress={() => {
+                    if (upcomingMeeting.bookingId) {
+                      navigation.navigate('BookingDetail', { bookingId: upcomingMeeting.bookingId });
+                    }
+                  }}
+                  activeOpacity={0.85}
+                  accessibilityRole="button"
+                  accessibilityLabel="Xem chi tiết lịch hẹn"
+                >
+                  <Ionicons name="calendar-outline" size={15} color={theme.colors.primary} />
+                  <Text style={styles.upcomingViewDetailBtnText}>
+                    {upcomingMeeting.canJoinRoom || upcomingMeeting.isRoomOpen
+                      ? 'Hồ sơ hẹn'
+                      : 'Xem chi tiết'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : null}
+
+          {/* Banner tư vấn chuyên gia thuế */}
+          <View style={styles.consultBannerCard} testID="homeConsultBanner">
+            <View style={styles.consultBannerHeader}>
+              <View style={styles.consultBannerTag}>
+                <Ionicons name="ribbon" size={12} color="#FFFFFF" />
+                <Text style={styles.consultBannerTagText}>TƯ VẤN CHUYÊN GIA</Text>
+              </View>
               <TouchableOpacity
-                style={[
-                  styles.upcomingViewDetailBtn,
-                  !(upcomingMeeting.canJoinRoom || upcomingMeeting.isRoomOpen) && styles.upcomingViewDetailBtnFull,
-                ]}
-                onPress={() => {
-                  if (upcomingMeeting.bookingId) {
-                    navigation.navigate('BookingDetail', { bookingId: upcomingMeeting.bookingId });
-                  }
-                }}
-                activeOpacity={0.85}
+                onPress={() => navigation.navigate('MyBookings', {})}
+                style={styles.myBookingsLink}
                 accessibilityRole="button"
-                accessibilityLabel="Xem chi tiết lịch hẹn"
+                accessibilityLabel="Lịch hẹn của tôi"
               >
-                <Ionicons name="calendar-outline" size={15} color={theme.colors.primary} />
-                <Text style={styles.upcomingViewDetailBtnText}>
-                  {upcomingMeeting.canJoinRoom || upcomingMeeting.isRoomOpen
-                    ? 'Hồ sơ hẹn'
-                    : 'Xem chi tiết'}
-                </Text>
+                <Ionicons name="calendar-outline" size={13} color={theme.colors.primary} />
+                <Text style={styles.myBookingsLinkText}>Lịch hẹn của tôi</Text>
               </TouchableOpacity>
             </View>
-          </View>
-        ) : null}
+            <Text style={styles.consultBannerTitle}>Đặt lịch tư vấn thuế cùng chuyên gia</Text>
+            <Text style={styles.consultBannerSubtitle}>
+              Hỗ trợ giải đáp chuyên sâu về thuế TNCN, quyết toán & hoàn thuế với đội ngũ chuyên gia đã xác
+              thực chứng chỉ hành nghề.
+            </Text>
+            <View style={styles.consultBannerBtnRow}>
+              <TouchableOpacity
+                style={styles.consultBannerPrimaryBtn}
+                onPress={() => navigation.navigate('ExpertList')}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel="Tìm và đặt lịch ngay"
+              >
+                <Ionicons name="search" size={15} color="#FFFFFF" />
+                <Text style={styles.consultBannerPrimaryBtnText}>Tìm & Đặt lịch</Text>
+              </TouchableOpacity>
 
-        {/* ── BANNER TƯ VẤN CHUYÊN GIA THUẾ ── */}
-        <View style={styles.consultBannerCard} testID="homeConsultBanner">
-          <View style={styles.consultBannerHeader}>
-            <View style={styles.consultBannerTag}>
-              <Ionicons name="ribbon" size={12} color="#FFFFFF" />
-              <Text style={styles.consultBannerTagText}>TƯ VẤN CHUYÊN GIA</Text>
+              {!isExpert && (
+                <TouchableOpacity
+                  style={styles.consultBannerSecondaryBtn}
+                  onPress={() => navigation.navigate('ExpertApplication')}
+                  activeOpacity={0.85}
+                  accessibilityRole="button"
+                  accessibilityLabel="Trở thành chuyên gia"
+                >
+                  <Ionicons name="ribbon-outline" size={15} color={theme.colors.primary} />
+                  <Text style={styles.consultBannerSecondaryBtnText}>Đăng ký chuyên gia</Text>
+                </TouchableOpacity>
+              )}
             </View>
-            <TouchableOpacity
-              onPress={() => navigation.navigate('MyBookings', {})}
-              style={styles.myBookingsLink}
-              accessibilityRole="button"
-              accessibilityLabel="Lịch hẹn của tôi"
-            >
-              <Ionicons name="calendar-outline" size={13} color={theme.colors.primary} />
-              <Text style={styles.myBookingsLinkText}>Lịch hẹn của tôi</Text>
-            </TouchableOpacity>
           </View>
-          <Text style={styles.consultBannerTitle}>Đặt lịch tư vấn thuế cùng chuyên gia</Text>
-          <Text style={styles.consultBannerSubtitle}>
-            Hỗ trợ giải đáp chuyên sâu về thuế TNCN, quyết toán & hoàn thuế với đội ngũ chuyên gia đã xác thực chứng chỉ hành nghề.
-          </Text>
-          <View style={styles.consultBannerBtnRow}>
+
+          <View style={styles.shortcutGrid} testID="homeShortcutGrid">
             <TouchableOpacity
-              style={styles.consultBannerPrimaryBtn}
+              style={[styles.shortcutCell, styles.shortcutBorderRight, styles.shortcutBorderBottom]}
+              onPress={() => navigation.navigate('TaxRegistration')}
+              testID="homeTaxRegistrationCard"
+              accessibilityRole="button"
+              accessibilityLabel="Khai báo NPT"
+            >
+              <Ionicons name="person-add-outline" size={20} color={theme.colors.primary} />
+              <Text style={styles.shortcutLabel}>Khai báo NPT</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.shortcutCell, styles.shortcutBorderBottom]}
+              onPress={() => navigation.navigate('LawConditions')}
+              testID="homeLawConditionsCard"
+              accessibilityRole="button"
+              accessibilityLabel="Điều kiện luật"
+            >
+              <Ionicons name="book-outline" size={20} color={theme.colors.primary} />
+              <Text style={styles.shortcutLabel}>Điều kiện luật</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.shortcutCell, styles.shortcutBorderRight, styles.shortcutBorderBottom]}
+              onPress={() => navigation.navigate('IncomeSourceList')}
+              testID="homeIncomeSourceCard"
+              accessibilityRole="button"
+              accessibilityLabel="Nơi chi trả"
+            >
+              <Ionicons name="business-outline" size={20} color={theme.colors.primary} />
+              <Text style={styles.shortcutLabel}>Nơi chi trả</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.shortcutCell, styles.shortcutBorderBottom]}
+              onPress={() => navigation.navigate('ExpenseList')}
+              testID="homeExpenseListCard"
+              accessibilityRole="button"
+              accessibilityLabel="Hóa đơn chứng từ"
+            >
+              <Ionicons name="receipt-outline" size={20} color={theme.colors.primary} />
+              <Text style={styles.shortcutLabel}>Hóa đơn chứng từ</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.shortcutCell, styles.shortcutBorderRight, styles.shortcutBorderBottom]}
               onPress={() => navigation.navigate('ExpertList')}
-              activeOpacity={0.85}
+              testID="homeExpertListCard"
               accessibilityRole="button"
-              accessibilityLabel="Tìm và đặt lịch ngay"
+              accessibilityLabel="Tư vấn chuyên gia"
             >
-              <Ionicons name="search" size={15} color="#FFFFFF" />
-              <Text style={styles.consultBannerPrimaryBtnText}>Tìm & Đặt lịch</Text>
+              <Ionicons name="chatbubbles-outline" size={20} color={theme.colors.primary} />
+              <Text style={styles.shortcutLabel}>Tư vấn chuyên gia</Text>
             </TouchableOpacity>
 
-            {!isExpert && (
-              <TouchableOpacity
-                style={styles.consultBannerSecondaryBtn}
-                onPress={() => navigation.navigate('ExpertApplication')}
-                activeOpacity={0.85}
-                accessibilityRole="button"
-                accessibilityLabel="Trở thành chuyên gia"
-              >
-                <Ionicons name="ribbon-outline" size={15} color={theme.colors.primary} />
-                <Text style={styles.consultBannerSecondaryBtnText}>Đăng ký chuyên gia</Text>
-              </TouchableOpacity>
-            )}
+            <TouchableOpacity
+              style={[styles.shortcutCell, styles.shortcutBorderBottom]}
+              onPress={() => navigation.navigate('MyBookings', {})}
+              testID="homeMyBookingsCard"
+              accessibilityRole="button"
+              accessibilityLabel="Lịch hẹn tư vấn"
+            >
+              <Ionicons name="calendar-outline" size={20} color={theme.colors.primary} />
+              <Text style={styles.shortcutLabel}>Lịch hẹn tư vấn</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.shortcutCell, styles.shortcutFullWidth]}
+              onPress={() => navigation.navigate('SettlementStart')}
+              testID="homeSettlementCard"
+              accessibilityRole="button"
+              accessibilityLabel="Quyết toán thuế"
+            >
+              <Ionicons name="calculator-outline" size={20} color={theme.colors.primary} />
+              <Text style={styles.shortcutLabel}>Quyết toán thuế</Text>
+            </TouchableOpacity>
           </View>
-        </View>
+        </ScrollView>
 
-        <View style={styles.shortcutGrid} testID="homeShortcutGrid">
-          <TouchableOpacity
-            style={[styles.shortcutCell, styles.shortcutBorderRight, styles.shortcutBorderBottom]}
-            onPress={() => navigation.navigate('TaxRegistration')}
-            testID="homeTaxRegistrationCard"
-            accessibilityRole="button"
-            accessibilityLabel="Khai báo NPT"
-          >
-            <Ionicons name="person-add-outline" size={20} color={theme.colors.primary} />
-            <Text style={styles.shortcutLabel}>Khai báo NPT</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.shortcutCell, styles.shortcutBorderBottom]}
-            onPress={() => navigation.navigate('LawConditions')}
-            testID="homeLawConditionsCard"
-            accessibilityRole="button"
-            accessibilityLabel="Điều kiện luật"
-          >
-            <Ionicons name="book-outline" size={20} color={theme.colors.primary} />
-            <Text style={styles.shortcutLabel}>Điều kiện luật</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.shortcutCell, styles.shortcutBorderRight, styles.shortcutBorderBottom]}
-            onPress={() => navigation.navigate('IncomeSourceList')}
-            testID="homeIncomeSourceCard"
-            accessibilityRole="button"
-            accessibilityLabel="Nơi chi trả"
-          >
-            <Ionicons name="business-outline" size={20} color={theme.colors.primary} />
-            <Text style={styles.shortcutLabel}>Nơi chi trả</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.shortcutCell, styles.shortcutBorderBottom]}
-            onPress={() => navigation.navigate('ExpenseList')}
-            testID="homeExpenseListCard"
-            accessibilityRole="button"
-            accessibilityLabel="Hóa đơn chứng từ"
-          >
-            <Ionicons name="receipt-outline" size={20} color={theme.colors.primary} />
-            <Text style={styles.shortcutLabel}>Hóa đơn chứng từ</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.shortcutCell, styles.shortcutBorderRight, styles.shortcutBorderBottom]}
-            onPress={() => navigation.navigate('ExpertList')}
-            testID="homeExpertListCard"
-            accessibilityRole="button"
-            accessibilityLabel="Tư vấn chuyên gia"
-          >
-            <Ionicons name="chatbubbles-outline" size={20} color={theme.colors.primary} />
-            <Text style={styles.shortcutLabel}>Tư vấn chuyên gia</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.shortcutCell, styles.shortcutBorderBottom]}
-            onPress={() => navigation.navigate('MyBookings', {})}
-            testID="homeMyBookingsCard"
-            accessibilityRole="button"
-            accessibilityLabel="Lịch hẹn tư vấn"
-          >
-            <Ionicons name="calendar-outline" size={20} color={theme.colors.primary} />
-            <Text style={styles.shortcutLabel}>Lịch hẹn tư vấn</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.shortcutCell, styles.shortcutFullWidth]}
-            onPress={() => navigation.navigate('SettlementStart')}
-            testID="homeSettlementCard"
-            accessibilityRole="button"
-            accessibilityLabel="Quyết toán thuế"
-          >
-            <Ionicons name="calculator-outline" size={20} color={theme.colors.primary} />
-            <Text style={styles.shortcutLabel}>Quyết toán thuế</Text>
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
+        {/* Nút nổi mở chat AI: góc phải dưới, ngay trên thanh tab */}
+        <TouchableOpacity
+          style={styles.chatFab}
+          onPress={() => navigation.navigate('TaxChat')}
+          testID="homeTaxChatFab"
+          accessibilityRole="button"
+          accessibilityLabel="Hỏi đáp thuế AI"
+        >
+          <Ionicons name="chatbubbles" size={20} color={theme.colors.textOnPrimary} />
+          <Text style={styles.chatFabText}>Hỏi AI</Text>
+        </TouchableOpacity>
+      </View>
 
       <MainTabBar active="Home" />
 
@@ -985,6 +1026,18 @@ export const HomeScreen: React.FC = () => {
       />
 
       <Dialog
+        visible={!!promptTaxYear && !promptAnswered}
+        title={`Quyết toán thuế TNCN năm ${promptTaxYear ?? ''}`}
+        message={deadline?.promptQuestion ?? 'Bạn đã quyết toán thuế chưa?'}
+        primaryLabel="Đã quyết toán"
+        secondaryLabel="Chưa, quyết toán ngay"
+        onPrimary={() => answerSettlementPrompt('YES')}
+        onSecondary={() => answerSettlementPrompt('NO')}
+        onRequestClose={() => answerSettlementPrompt('DISMISSED')}
+        testID="homeSettlementPromptDialog"
+      />
+
+      <Dialog
         visible={!!infoDialog}
         title={infoDialog?.title ?? ''}
         message={infoDialog?.message ?? ''}
@@ -1055,9 +1108,35 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderColor: '#ECE9C2',
   },
+  flex: {
+    flex: 1,
+  },
   scrollContent: {
     paddingHorizontal: 20,
-    paddingBottom: 24,
+    // Chừa chỗ cho nút "Hỏi AI" để không che ô cuối khi cuộn hết
+    paddingBottom: 88,
+  },
+  chatFab: {
+    position: 'absolute',
+    right: 20,
+    bottom: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    height: 52,
+    paddingHorizontal: 18,
+    borderRadius: 26,
+    backgroundColor: theme.colors.primary,
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+  },
+  chatFabText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 14,
+    color: theme.colors.textOnPrimary,
   },
   deductionBlock: {
     marginTop: 46,
@@ -1072,12 +1151,17 @@ const styles = StyleSheet.create({
   },
   deductionAmount: {
     ...theme.typography.amountLarge,
+    // Chữ (có dấu tiếng Việt) thay cho số tiền: dòng cao hơn để không cắt dấu/đuôi chữ
+    lineHeight: 50,
+    alignSelf: 'stretch',
+    textAlign: 'center',
     color: theme.colors.primaryDark,
     fontVariant: ['tabular-nums'],
   },
   deductionMeta: {
     ...theme.typography.helper,
     color: theme.colors.textSecondary,
+    textAlign: 'center',
   },
   rule: {
     marginTop: 24,

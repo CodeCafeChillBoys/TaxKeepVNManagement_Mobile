@@ -12,6 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
+import { HomeHeaderButton, useShowHomeButton } from '../../components/navigation/HomeHeaderButton';
 import { fonts } from '../../constants/fonts';
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
 import { RootNavigationProp } from '../../navigation/types';
@@ -20,6 +21,7 @@ const YEAR_OPTIONS = [2026, 2025, 2024];
 
 export const SettlementStartScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
+  const showHome = useShowHomeButton();
   const [taxYear, setTaxYear] = useState(2026);
   const [showOptional, setShowOptional] = useState(false);
   const [cutoffDate, setCutoffDate] = useState('');
@@ -45,20 +47,22 @@ export const SettlementStartScreen: React.FC = () => {
     });
   };
 
+  // Có nút Home thì nới 2 bên bằng nhau để tiêu đề vẫn ở giữa
+  const sideStyle = [styles.side, showHome && styles.sideWide];
+
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
       <View style={styles.header}>
-        <TouchableOpacity style={styles.side} onPress={() => navigation.goBack()} testID="settlementStartBack">
+        <TouchableOpacity style={sideStyle} onPress={() => navigation.goBack()} testID="settlementStartBack">
           <Ionicons name="arrow-back" size={24} color={theme.colors.textPrimary} />
         </TouchableOpacity>
         <Text style={styles.title}>Quyết toán thuế</Text>
-        <TouchableOpacity
-          style={styles.side}
-          onPress={() => navigation.navigate('SettlementList')}
-          testID="settlementStartGoList"
-        >
-          <Text style={styles.link}>Hồ sơ</Text>
-        </TouchableOpacity>
+        <View style={[sideStyle, styles.sideRow]}>
+          <HomeHeaderButton style={styles.homeSmall} />
+          <TouchableOpacity onPress={() => navigation.navigate('SettlementList')} testID="settlementStartGoList">
+            <Text style={styles.link}>Hồ sơ</Text>
+          </TouchableOpacity>
+        </View>
       </View>
       <GoldDoubleRule />
 
@@ -127,6 +131,9 @@ const styles = StyleSheet.create({
     height: 52,
   },
   side: { width: 64, height: 44, alignItems: 'center', justifyContent: 'center' },
+  sideWide: { width: 100 },
+  sideRow: { flexDirection: 'row', justifyContent: 'flex-end' },
+  homeSmall: { width: 36 },
   title: {
     flex: 1,
     textAlign: 'center',

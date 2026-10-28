@@ -17,6 +17,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { theme } from '../../constants/theme';
+import { HomeHeaderButton } from '../../components/navigation/HomeHeaderButton';
 import { formatPersonName } from '../../utils/formatPersonName';
 import {
   dependentDocumentApi,
@@ -721,7 +722,7 @@ export const ProofDocumentsScreen: React.FC = () => {
           <Ionicons name="arrow-back" size={26} color="#1A1A1A" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Ảnh minh chứng</Text>
-        <View style={{ width: 44 }} />
+        <View style={styles.homeSlot}><HomeHeaderButton /></View>
       </View>
 
       {/* Đã ẩn các tab nhóm khác theo yêu cầu - Chỉ hiển thị đúng nhóm người dùng đã chọn */}
@@ -1054,6 +1055,8 @@ export const ProofDocumentsScreen: React.FC = () => {
 };
 
 const styles = StyleSheet.create({
+  // Ô phải header: nút về Trang chủ, giữ độ rộng cũ để tiêu đề vẫn ở giữa
+  homeSlot: { width: 44, alignItems: 'flex-end', justifyContent: 'center' },
   safeArea: {
     flex: 1,
     backgroundColor: '#FFFFFF',

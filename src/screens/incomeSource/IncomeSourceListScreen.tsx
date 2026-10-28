@@ -32,6 +32,7 @@ import {
 } from '../../api/incomeSourceApi';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { MonthlyIncomePanel } from '../income/MonthlyIncomePanel';
+import { evaluateManualIncomeSource } from './manualIncomeSourceCheck';
 
 const TAX_YEAR_OPTIONS = [2026, 2025, 2024];
 
@@ -192,6 +193,46 @@ export const IncomeSourceListScreen: React.FC = () => {
     return Object.keys(errs).length === 0;
   };
 
+  // Hỏi lại người dùng (web không có Alert nhiều nút)
+  const confirmProceed = (title: string, message: string, okText: string): Promise<boolean> => {
+    if (Platform.OS === 'web') return Promise.resolve(window.confirm(`${title}\n\n${message}`));
+    return new Promise((resolve) =>
+      Alert.alert(title, message, [
+        { text: 'Xem lại', style: 'cancel', onPress: () => resolve(false) },
+        { text: okText, style: 'destructive', onPress: () => resolve(true) },
+      ])
+    );
+  };
+
+  /**
+   * Khai tay ở tab Theo năm không đi qua chứng từ khấu trừ → đối chiếu với thu nhập các tháng
+   * (cùng API cross-check của luồng chứng từ). Lệch thì hỏi lại trước khi lưu.
+   */
+  const confirmAgainstMonthly = async (name: string, year: number, income: number, tax: number): Promise<boolean> => {
+    try {
+      const result = await incomeSourceApi.crossCheck({
+        companyName: name,
+        taxYear: year,
+        certificateTotalIncome: income,
+        certificateTaxWithheld: tax,
+        certificateInsuranceDeducted: 0,
+      });
+      const outcome = evaluateManualIncomeSource(result, { income, tax });
+      if (outcome.status !== 'mismatch') return true;
+      return confirmProceed(
+        'Chưa khớp với thu nhập theo tháng',
+        `${outcome.messages.join('\n')}\n\nSố khai ở đây được dùng để quyết toán. Kiểm tra lại số liệu, hoặc vẫn lưu nếu bạn chắc chắn.`,
+        'Vẫn lưu'
+      );
+    } catch {
+      return confirmProceed(
+        'Chưa đối chiếu được',
+        'Không kiểm tra được với thu nhập theo tháng lúc này. Bạn vẫn muốn lưu?',
+        'Vẫn lưu'
+      );
+    }
+  };
+
   // Gửi Form lưu thông tin
   const handleSave = async () => {
     if (!validateForm()) return;
@@ -203,6 +244,8 @@ export const IncomeSourceListScreen: React.FC = () => {
       const cleanYear = Number(taxYear) || 2026;
       const cleanIncome = Number(totalIncome.replace(/[^\d.]/g, '')) || 0;
       const cleanWithheld = Number(taxWithheld.replace(/[^\d.]/g, '')) || 0;
+
+      if (!(await confirmAgainstMonthly(cleanName, cleanYear, cleanIncome, cleanWithheld))) return;
 
       if (editingItem) {
         // Cập nhật: gửi đầy đủ các field mới của BE

@@ -11,6 +11,7 @@ import {
   Platform,
   Image,
   Linking,
+  BackHandler,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -18,6 +19,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
+import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
 import { Dialog } from '../../components/common/Dialog';
 import { RootNavigationProp } from '../../navigation/types';
@@ -47,6 +49,36 @@ export const ExpertApplicationScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
   const currentUser = useAuthStore((s) => s.user);
   const userRole = (currentUser?.role || '').toLowerCase();
+
+  const handleBack = useCallback(() => {
+    const state = navigation.getState();
+    const routes = state?.routes || [];
+    const prevRoute = routes.length >= 2 ? routes[routes.length - 2] : null;
+
+    if (
+      prevRoute &&
+      ['BookingDetail', 'Wallet', 'PaymentResult', 'ExpertBookings', 'ExpertSlots'].includes(
+        prevRoute.name
+      )
+    ) {
+      navigation.navigate('Profile');
+      return;
+    }
+
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+    } else {
+      navigation.navigate('Profile');
+    }
+  }, [navigation]);
+
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      handleBack();
+      return true;
+    });
+    return () => sub.remove();
+  }, [handleBack]);
 
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -80,10 +112,22 @@ export const ExpertApplicationScreen: React.FC = () => {
   const [specModalVisible, setSpecModalVisible] = useState(false);
   const [tempSpecIds, setTempSpecIds] = useState<number[]>([]);
 
+  // Danh sách các hình thức dịch vụ đang được Admin bật trong cấu hình khung mức phí
+  const isSessionTypeConfigured = useCallback(
+    (sessionType: 'ONLINE_MEETING' | 'CHAT' | 'VOICE_CALL') => {
+      if (feeConfigs.length === 0) {
+        return sessionType === 'ONLINE_MEETING';
+      }
+      return feeConfigs.some((c) => c.sessionType === sessionType && c.isActive !== false);
+    },
+    [feeConfigs]
+  );
+
   const getFeeLimits = (sessionType: 'ONLINE_MEETING' | 'CHAT' | 'VOICE_CALL', durationMinutes = 60) => {
-    const cfg = feeConfigs.find(
-      (c) => c.sessionType === sessionType && c.durationMinutes === durationMinutes
-    );
+    const cfg =
+      feeConfigs.find(
+        (c) => c.sessionType === sessionType && c.durationMinutes === durationMinutes
+      ) || feeConfigs.find((c) => c.sessionType === sessionType);
     if (cfg) {
       return { min: cfg.minFee, max: cfg.maxFee };
     }
@@ -108,7 +152,7 @@ export const ExpertApplicationScreen: React.FC = () => {
     const cLimit = getFeeLimits('CHAT', 60);
     const vLimit = getFeeLimits('VOICE_CALL', 60);
 
-    if (mFee < mLimit.min || mFee > mLimit.max) {
+    if (isSessionTypeConfigured('ONLINE_MEETING') && (mFee < mLimit.min || mFee > mLimit.max)) {
       setDialog({
         title: 'Mức phí ngoài khung quy định',
         message: `Mức phí Họp trực tuyến (60 phút) phải nằm trong khoảng từ ${formatVndWithDots(mLimit.min)} đến ${formatVndWithDots(mLimit.max)} theo quy định sàn.`,
@@ -118,7 +162,7 @@ export const ExpertApplicationScreen: React.FC = () => {
       return;
     }
 
-    if (cFee < cLimit.min || cFee > cLimit.max) {
+    if (isSessionTypeConfigured('CHAT') && (cFee < cLimit.min || cFee > cLimit.max)) {
       setDialog({
         title: 'Mức phí ngoài khung quy định',
         message: `Mức phí Nhắn tin tư vấn (60 phút) phải nằm trong khoảng từ ${formatVndWithDots(cLimit.min)} đến ${formatVndWithDots(cLimit.max)} theo quy định sàn.`,
@@ -128,7 +172,7 @@ export const ExpertApplicationScreen: React.FC = () => {
       return;
     }
 
-    if (vFee < vLimit.min || vFee > vLimit.max) {
+    if (isSessionTypeConfigured('VOICE_CALL') && (vFee < vLimit.min || vFee > vLimit.max)) {
       setDialog({
         title: 'Mức phí ngoài khung quy định',
         message: `Mức phí Gọi thoại trực tiếp (60 phút) phải nằm trong khoảng từ ${formatVndWithDots(vLimit.min)} đến ${formatVndWithDots(vLimit.max)} theo quy định sàn.`,
@@ -241,6 +285,21 @@ export const ExpertApplicationScreen: React.FC = () => {
 
       setSpecializations(specs);
       setFeeConfigs(fees);
+
+      if (!appData && Array.isArray(fees) && fees.length > 0) {
+        const mCfg =
+          fees.find((c) => c.sessionType === 'ONLINE_MEETING' && c.durationMinutes === 60) ||
+          fees.find((c) => c.sessionType === 'ONLINE_MEETING');
+        if (mCfg?.minFee) setOnlineMeetingFee(formatThousands(mCfg.minFee));
+        const cCfg =
+          fees.find((c) => c.sessionType === 'CHAT' && c.durationMinutes === 60) ||
+          fees.find((c) => c.sessionType === 'CHAT');
+        if (cCfg?.minFee) setChatFee(formatThousands(cCfg.minFee));
+        const vCfg =
+          fees.find((c) => c.sessionType === 'VOICE_CALL' && c.durationMinutes === 60) ||
+          fees.find((c) => c.sessionType === 'VOICE_CALL');
+        if (vCfg?.minFee) setVoiceCallFee(formatThousands(vCfg.minFee));
+      }
 
       if (configs && configs.length > 0) {
         setCertConfigs(configs);
@@ -358,6 +417,34 @@ export const ExpertApplicationScreen: React.FC = () => {
 
   // Build Payload
   const buildDraftPayload = () => {
+    const feeProposals: {
+      sessionType: 'ONLINE_MEETING' | 'CHAT' | 'VOICE_CALL';
+      durationMinutes: number;
+      proposedFee: number;
+    }[] = [];
+
+    if (isSessionTypeConfigured('ONLINE_MEETING')) {
+      feeProposals.push({
+        sessionType: 'ONLINE_MEETING',
+        durationMinutes: 60,
+        proposedFee: parseThousands(onlineMeetingFee),
+      });
+    }
+    if (isSessionTypeConfigured('CHAT')) {
+      feeProposals.push({
+        sessionType: 'CHAT',
+        durationMinutes: 60,
+        proposedFee: parseThousands(chatFee),
+      });
+    }
+    if (isSessionTypeConfigured('VOICE_CALL')) {
+      feeProposals.push({
+        sessionType: 'VOICE_CALL',
+        durationMinutes: 60,
+        proposedFee: parseThousands(voiceCallFee),
+      });
+    }
+
     return {
       fullName: fullName.trim(),
       jobTitle: jobTitle.trim(),
@@ -366,23 +453,7 @@ export const ExpertApplicationScreen: React.FC = () => {
       yearsOfExperience: parseInt(yearsOfExperience, 10) || 0,
       experienceDescription: experienceDescription.trim(),
       specializationIds: selectedSpecIds,
-      feeProposals: [
-        {
-          sessionType: 'ONLINE_MEETING' as const,
-          durationMinutes: 60,
-          proposedFee: parseThousands(onlineMeetingFee),
-        },
-        {
-          sessionType: 'CHAT' as const,
-          durationMinutes: 60,
-          proposedFee: parseThousands(chatFee),
-        },
-        {
-          sessionType: 'VOICE_CALL' as const,
-          durationMinutes: 60,
-          proposedFee: parseThousands(voiceCallFee),
-        },
-      ],
+      feeProposals,
     };
   };
 
@@ -449,6 +520,41 @@ export const ExpertApplicationScreen: React.FC = () => {
       setDialog({
         title: 'Thiếu chứng chỉ',
         message: 'Vui lòng đính kèm ít nhất một chứng chỉ hành nghề thuế hợp lệ.',
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
+      return;
+    }
+
+    const mFee = parseThousands(onlineMeetingFee);
+    const cFee = parseThousands(chatFee);
+    const vFee = parseThousands(voiceCallFee);
+    const mLimit = getFeeLimits('ONLINE_MEETING', 60);
+    const cLimit = getFeeLimits('CHAT', 60);
+    const vLimit = getFeeLimits('VOICE_CALL', 60);
+
+    if (isSessionTypeConfigured('ONLINE_MEETING') && (mFee < mLimit.min || mFee > mLimit.max)) {
+      setDialog({
+        title: 'Mức phí ngoài khung quy định',
+        message: `Mức phí Họp trực tuyến (60 phút) phải nằm trong khoảng từ ${formatVndWithDots(mLimit.min)} đến ${formatVndWithDots(mLimit.max)} theo quy định hệ thống.`,
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
+      return;
+    }
+    if (isSessionTypeConfigured('CHAT') && (cFee < cLimit.min || cFee > cLimit.max)) {
+      setDialog({
+        title: 'Mức phí ngoài khung quy định',
+        message: `Mức phí Nhắn tin tư vấn (60 phút) phải nằm trong khoảng từ ${formatVndWithDots(cLimit.min)} đến ${formatVndWithDots(cLimit.max)} theo quy định hệ thống.`,
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
+      return;
+    }
+    if (isSessionTypeConfigured('VOICE_CALL') && (vFee < vLimit.min || vFee > vLimit.max)) {
+      setDialog({
+        title: 'Mức phí ngoài khung quy định',
+        message: `Mức phí Gọi thoại trực tiếp (60 phút) phải nằm trong khoảng từ ${formatVndWithDots(vLimit.min)} đến ${formatVndWithDots(vLimit.max)} theo quy định hệ thống.`,
         primaryLabel: 'Đã hiểu',
         onPrimary: () => setDialog(null),
       });
@@ -700,9 +806,10 @@ export const ExpertApplicationScreen: React.FC = () => {
   if (loading) {
     return (
       <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
+        <DrumPatternBackdrop variant="soft" />
         <View style={styles.header}>
           <TouchableOpacity
-            onPress={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('Profile'))}
+            onPress={handleBack}
             style={styles.backBtn}
             accessibilityRole="button"
             accessibilityLabel="Quay lại"
@@ -737,10 +844,12 @@ export const ExpertApplicationScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
+      <DrumPatternBackdrop variant="soft" />
+
       {/* ── HEADER ── */}
       <View style={styles.header}>
         <TouchableOpacity
-          onPress={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('Profile'))}
+          onPress={handleBack}
           style={styles.backBtn}
           accessibilityRole="button"
           accessibilityLabel="Quay lại"
@@ -979,97 +1088,103 @@ export const ExpertApplicationScreen: React.FC = () => {
 
           <View style={styles.feeGroup}>
             {/* Họp trực tuyến */}
-            <View style={styles.feeItem}>
-              <View style={styles.feeItemTopRow}>
-                <View style={styles.feeHeader}>
-                  <Ionicons name="videocam-outline" size={16} color={theme.colors.primary} />
-                  <Text style={styles.feeLabel}>Họp trực tuyến (Gọi video)</Text>
-                </View>
-                {application?.status === 'Approved' && (
-                  <View style={styles.feeActiveBadge}>
-                    <Ionicons name="checkmark-circle" size={12} color="#059669" />
-                    <Text style={styles.feeActiveBadgeText}>Đang áp dụng</Text>
+            {isSessionTypeConfigured('ONLINE_MEETING') && (
+              <View style={styles.feeItem}>
+                <View style={styles.feeItemTopRow}>
+                  <View style={styles.feeHeader}>
+                    <Ionicons name="videocam-outline" size={16} color={theme.colors.primary} />
+                    <Text style={styles.feeLabel}>Họp trực tuyến (Gọi video 1-1)</Text>
                   </View>
-                )}
+                  {application?.status === 'Approved' && (
+                    <View style={styles.feeActiveBadge}>
+                      <Ionicons name="checkmark-circle" size={12} color="#059669" />
+                      <Text style={styles.feeActiveBadgeText}>Đang áp dụng</Text>
+                    </View>
+                  )}
+                </View>
+                <View style={styles.feeInputWrap}>
+                  <TextInput
+                    style={styles.feeInput}
+                    keyboardType="numeric"
+                    value={onlineMeetingFee}
+                    onChangeText={(text) => setOnlineMeetingFee(formatThousands(text))}
+                    editable={!isReadOnly}
+                    placeholder="200.000"
+                    placeholderTextColor="#9C9287"
+                  />
+                  <Text style={styles.feeCurrencySuffix}>VNĐ</Text>
+                </View>
+                <Text style={styles.feeHintText}>
+                  Khung quy định sàn: {formatVndWithDots(getFeeLimits('ONLINE_MEETING', 60).min)} - {formatVndWithDots(getFeeLimits('ONLINE_MEETING', 60).max)}
+                </Text>
               </View>
-              <View style={styles.feeInputWrap}>
-                <TextInput
-                  style={styles.feeInput}
-                  keyboardType="numeric"
-                  value={onlineMeetingFee}
-                  onChangeText={(text) => setOnlineMeetingFee(formatThousands(text))}
-                  editable={!isReadOnly}
-                  placeholder="200.000"
-                  placeholderTextColor="#9C9287"
-                />
-                <Text style={styles.feeCurrencySuffix}>VNĐ</Text>
-              </View>
-              <Text style={styles.feeHintText}>
-                Khung quy định sàn: {formatVndWithDots(getFeeLimits('ONLINE_MEETING', 60).min)} - {formatVndWithDots(getFeeLimits('ONLINE_MEETING', 60).max)}
-              </Text>
-            </View>
+            )}
 
             {/* Nhắn tin */}
-            <View style={styles.feeItem}>
-              <View style={styles.feeItemTopRow}>
-                <View style={styles.feeHeader}>
-                  <Ionicons name="chatbubbles-outline" size={16} color={theme.colors.primary} />
-                  <Text style={styles.feeLabel}>Nhắn tin tư vấn</Text>
-                </View>
-                {application?.status === 'Approved' && (
-                  <View style={styles.feeActiveBadge}>
-                    <Ionicons name="checkmark-circle" size={12} color="#059669" />
-                    <Text style={styles.feeActiveBadgeText}>Đang áp dụng</Text>
+            {isSessionTypeConfigured('CHAT') && (
+              <View style={styles.feeItem}>
+                <View style={styles.feeItemTopRow}>
+                  <View style={styles.feeHeader}>
+                    <Ionicons name="chatbubbles-outline" size={16} color={theme.colors.primary} />
+                    <Text style={styles.feeLabel}>Nhắn tin tư vấn</Text>
                   </View>
-                )}
+                  {application?.status === 'Approved' && (
+                    <View style={styles.feeActiveBadge}>
+                      <Ionicons name="checkmark-circle" size={12} color="#059669" />
+                      <Text style={styles.feeActiveBadgeText}>Đang áp dụng</Text>
+                    </View>
+                  )}
+                </View>
+                <View style={styles.feeInputWrap}>
+                  <TextInput
+                    style={styles.feeInput}
+                    keyboardType="numeric"
+                    value={chatFee}
+                    onChangeText={(text) => setChatFee(formatThousands(text))}
+                    editable={!isReadOnly}
+                    placeholder="100.000"
+                    placeholderTextColor="#9C9287"
+                  />
+                  <Text style={styles.feeCurrencySuffix}>VNĐ</Text>
+                </View>
+                <Text style={styles.feeHintText}>
+                  Khung quy định sàn: {formatVndWithDots(getFeeLimits('CHAT', 60).min)} - {formatVndWithDots(getFeeLimits('CHAT', 60).max)}
+                </Text>
               </View>
-              <View style={styles.feeInputWrap}>
-                <TextInput
-                  style={styles.feeInput}
-                  keyboardType="numeric"
-                  value={chatFee}
-                  onChangeText={(text) => setChatFee(formatThousands(text))}
-                  editable={!isReadOnly}
-                  placeholder="100.000"
-                  placeholderTextColor="#9C9287"
-                />
-                <Text style={styles.feeCurrencySuffix}>VNĐ</Text>
-              </View>
-              <Text style={styles.feeHintText}>
-                Khung quy định sàn: {formatVndWithDots(getFeeLimits('CHAT', 60).min)} - {formatVndWithDots(getFeeLimits('CHAT', 60).max)}
-              </Text>
-            </View>
+            )}
 
             {/* Gọi thoại */}
-            <View style={styles.feeItem}>
-              <View style={styles.feeItemTopRow}>
-                <View style={styles.feeHeader}>
-                  <Ionicons name="call-outline" size={16} color={theme.colors.primary} />
-                  <Text style={styles.feeLabel}>Gọi thoại trực tiếp</Text>
-                </View>
-                {application?.status === 'Approved' && (
-                  <View style={styles.feeActiveBadge}>
-                    <Ionicons name="checkmark-circle" size={12} color="#059669" />
-                    <Text style={styles.feeActiveBadgeText}>Đang áp dụng</Text>
+            {isSessionTypeConfigured('VOICE_CALL') && (
+              <View style={styles.feeItem}>
+                <View style={styles.feeItemTopRow}>
+                  <View style={styles.feeHeader}>
+                    <Ionicons name="call-outline" size={16} color={theme.colors.primary} />
+                    <Text style={styles.feeLabel}>Gọi thoại trực tiếp</Text>
                   </View>
-                )}
+                  {application?.status === 'Approved' && (
+                    <View style={styles.feeActiveBadge}>
+                      <Ionicons name="checkmark-circle" size={12} color="#059669" />
+                      <Text style={styles.feeActiveBadgeText}>Đang áp dụng</Text>
+                    </View>
+                  )}
+                </View>
+                <View style={styles.feeInputWrap}>
+                  <TextInput
+                    style={styles.feeInput}
+                    keyboardType="numeric"
+                    value={voiceCallFee}
+                    onChangeText={(text) => setVoiceCallFee(formatThousands(text))}
+                    editable={!isReadOnly}
+                    placeholder="150.000"
+                    placeholderTextColor="#9C9287"
+                  />
+                  <Text style={styles.feeCurrencySuffix}>VNĐ</Text>
+                </View>
+                <Text style={styles.feeHintText}>
+                  Khung quy định sàn: {formatVndWithDots(getFeeLimits('VOICE_CALL', 60).min)} - {formatVndWithDots(getFeeLimits('VOICE_CALL', 60).max)}
+                </Text>
               </View>
-              <View style={styles.feeInputWrap}>
-                <TextInput
-                  style={styles.feeInput}
-                  keyboardType="numeric"
-                  value={voiceCallFee}
-                  onChangeText={(text) => setVoiceCallFee(formatThousands(text))}
-                  editable={!isReadOnly}
-                  placeholder="150.000"
-                  placeholderTextColor="#9C9287"
-                />
-                <Text style={styles.feeCurrencySuffix}>VNĐ</Text>
-              </View>
-              <Text style={styles.feeHintText}>
-                Khung quy định sàn: {formatVndWithDots(getFeeLimits('VOICE_CALL', 60).min)} - {formatVndWithDots(getFeeLimits('VOICE_CALL', 60).max)}
-              </Text>
-            </View>
+            )}
           </View>
         </View>
 
@@ -1078,7 +1193,11 @@ export const ExpertApplicationScreen: React.FC = () => {
           <View style={styles.certHeaderRow}>
             <View style={{ flex: 1, paddingRight: 8 }}>
               <Text style={styles.sectionTitle}>Chứng chỉ hành nghề *</Text>
-              <Text style={styles.certSubtitle}>Chứng chỉ CPA hoặc Chứng chỉ Đại lý thuế</Text>
+              <Text style={styles.certSubtitle}>
+                {certConfigs.length > 0
+                  ? certConfigs.map((c) => c.name).join(' • ')
+                  : 'Văn bằng, chứng chỉ hành nghề thuế hợp lệ'}
+              </Text>
             </View>
             {!isReadOnly && (
               <TouchableOpacity
@@ -1565,61 +1684,67 @@ export const ExpertApplicationScreen: React.FC = () => {
               </View>
 
               {/* Ô nhập Họp trực tuyến */}
-              <View style={{ marginBottom: 12 }}>
-                <Text style={styles.inputLabel}>Họp trực tuyến (Gọi video 60 phút) *</Text>
-                <View style={styles.feeInputWrap}>
-                  <TextInput
-                    style={styles.feeInput}
-                    keyboardType="numeric"
-                    value={tempMeetingFee}
-                    onChangeText={(text) => setTempMeetingFee(formatThousands(text))}
-                    placeholder="200.000"
-                    placeholderTextColor="#9C9287"
-                  />
-                  <Text style={styles.feeCurrencySuffix}>VNĐ</Text>
+              {isSessionTypeConfigured('ONLINE_MEETING') && (
+                <View style={{ marginBottom: 12 }}>
+                  <Text style={styles.inputLabel}>Họp trực tuyến (Gọi video 60 phút) *</Text>
+                  <View style={styles.feeInputWrap}>
+                    <TextInput
+                      style={styles.feeInput}
+                      keyboardType="numeric"
+                      value={tempMeetingFee}
+                      onChangeText={(text) => setTempMeetingFee(formatThousands(text))}
+                      placeholder="200.000"
+                      placeholderTextColor="#9C9287"
+                    />
+                    <Text style={styles.feeCurrencySuffix}>VNĐ</Text>
+                  </View>
+                  <Text style={styles.feeHintText}>
+                    Khung quy định sàn: {formatVndWithDots(getFeeLimits('ONLINE_MEETING', 60).min)} - {formatVndWithDots(getFeeLimits('ONLINE_MEETING', 60).max)}
+                  </Text>
                 </View>
-                <Text style={styles.feeHintText}>
-                  Khung quy định sàn: {formatVndWithDots(getFeeLimits('ONLINE_MEETING', 60).min)} - {formatVndWithDots(getFeeLimits('ONLINE_MEETING', 60).max)}
-                </Text>
-              </View>
+              )}
 
               {/* Ô nhập Nhắn tin */}
-              <View style={{ marginBottom: 12 }}>
-                <Text style={styles.inputLabel}>Nhắn tin tư vấn (60 phút) *</Text>
-                <View style={styles.feeInputWrap}>
-                  <TextInput
-                    style={styles.feeInput}
-                    keyboardType="numeric"
-                    value={tempChatFee}
-                    onChangeText={(text) => setTempChatFee(formatThousands(text))}
-                    placeholder="100.000"
-                    placeholderTextColor="#9C9287"
-                  />
-                  <Text style={styles.feeCurrencySuffix}>VNĐ</Text>
+              {isSessionTypeConfigured('CHAT') && (
+                <View style={{ marginBottom: 12 }}>
+                  <Text style={styles.inputLabel}>Nhắn tin tư vấn (60 phút) *</Text>
+                  <View style={styles.feeInputWrap}>
+                    <TextInput
+                      style={styles.feeInput}
+                      keyboardType="numeric"
+                      value={tempChatFee}
+                      onChangeText={(text) => setTempChatFee(formatThousands(text))}
+                      placeholder="100.000"
+                      placeholderTextColor="#9C9287"
+                    />
+                    <Text style={styles.feeCurrencySuffix}>VNĐ</Text>
+                  </View>
+                  <Text style={styles.feeHintText}>
+                    Khung quy định sàn: {formatVndWithDots(getFeeLimits('CHAT', 60).min)} - {formatVndWithDots(getFeeLimits('CHAT', 60).max)}
+                  </Text>
                 </View>
-                <Text style={styles.feeHintText}>
-                  Khung quy định sàn: {formatVndWithDots(getFeeLimits('CHAT', 60).min)} - {formatVndWithDots(getFeeLimits('CHAT', 60).max)}
-                </Text>
-              </View>
+              )}
 
               {/* Ô nhập Gọi thoại */}
-              <View style={{ marginBottom: 14 }}>
-                <Text style={styles.inputLabel}>Gọi thoại trực tiếp (60 phút) *</Text>
-                <View style={styles.feeInputWrap}>
-                  <TextInput
-                    style={styles.feeInput}
-                    keyboardType="numeric"
-                    value={tempVoiceFee}
-                    onChangeText={(text) => setTempVoiceFee(formatThousands(text))}
-                    placeholder="150.000"
-                    placeholderTextColor="#9C9287"
-                  />
-                  <Text style={styles.feeCurrencySuffix}>VNĐ</Text>
+              {isSessionTypeConfigured('VOICE_CALL') && (
+                <View style={{ marginBottom: 14 }}>
+                  <Text style={styles.inputLabel}>Gọi thoại trực tiếp (60 phút) *</Text>
+                  <View style={styles.feeInputWrap}>
+                    <TextInput
+                      style={styles.feeInput}
+                      keyboardType="numeric"
+                      value={tempVoiceFee}
+                      onChangeText={(text) => setTempVoiceFee(formatThousands(text))}
+                      placeholder="150.000"
+                      placeholderTextColor="#9C9287"
+                    />
+                    <Text style={styles.feeCurrencySuffix}>VNĐ</Text>
+                  </View>
+                  <Text style={styles.feeHintText}>
+                    Khung quy định sàn: {formatVndWithDots(getFeeLimits('VOICE_CALL', 60).min)} - {formatVndWithDots(getFeeLimits('VOICE_CALL', 60).max)}
+                  </Text>
                 </View>
-                <Text style={styles.feeHintText}>
-                  Khung quy định sàn: {formatVndWithDots(getFeeLimits('VOICE_CALL', 60).min)} - {formatVndWithDots(getFeeLimits('VOICE_CALL', 60).max)}
-                </Text>
-              </View>
+              )}
             </ScrollView>
 
             <View style={styles.modalBtnRow}>
@@ -1753,7 +1878,7 @@ export const ExpertApplicationScreen: React.FC = () => {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: '#FAF7F2',
+    backgroundColor: theme.colors.background,
   },
   header: {
     flexDirection: 'row',
@@ -1761,7 +1886,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'transparent',
+    zIndex: 1,
   },
   backBtn: {
     width: 38,
@@ -1769,6 +1895,7 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: 'rgba(243, 239, 230, 0.85)',
   },
   refreshBtn: {
     width: 38,
@@ -1776,11 +1903,13 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: 'rgba(243, 239, 230, 0.85)',
   },
   headerTitle: {
     fontFamily: fonts.serifBold,
-    fontSize: 17,
-    color: theme.colors.textPrimary,
+    fontSize: 18,
+    lineHeight: 24,
+    color: theme.colors.primaryDark,
   },
   scrollContent: {
     padding: 16,

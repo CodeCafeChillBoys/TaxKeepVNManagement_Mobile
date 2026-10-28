@@ -9,12 +9,15 @@ import {
   RefreshControl,
   Modal,
   ScrollView,
+  TextInput,
+  BackHandler,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
+import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
 import { Dialog } from '../../components/common/Dialog';
 import { RootNavigationProp } from '../../navigation/types';
@@ -135,10 +138,13 @@ export const ExpertSlotsScreen: React.FC = () => {
   // Filters
   const [filter, setFilter] = useState<FilterType>('ALL');
   const [serviceFilter, setServiceFilter] = useState<ServiceFilterType>('ALL');
+  const [periodFilter, setPeriodFilter] = useState<'ALL' | 'MORNING' | 'AFTERNOON' | 'EVENING'>('ALL');
+  const [configuredSessionTypes, setConfiguredSessionTypes] = useState<SessionType[]>(['ONLINE_MEETING']);
 
   // Dropdown Picker Modals
   const [servicePickerVisible, setServicePickerVisible] = useState(false);
   const [statusPickerVisible, setStatusPickerVisible] = useState(false);
+  const [periodPickerVisible, setPeriodPickerVisible] = useState(false);
 
   // Chế độ chọn nhiều để xóa hàng loạt (Bulk Selection Mode)
   const [isSelectionMode, setIsSelectionMode] = useState(false);
@@ -148,6 +154,12 @@ export const ExpertSlotsScreen: React.FC = () => {
 
   // Modal Xác nhận Xóa tất cả theo bộ lọc (Delete All Filtered Modal)
   const [deleteAllModalVisible, setDeleteAllModalVisible] = useState(false);
+
+  // Modal Hủy lịch khẩn cấp khi slot dính booking (Emergency Cancel Modal)
+  const [emergencyCancelModalVisible, setEmergencyCancelModalVisible] = useState(false);
+  const [emergencyCancelSlot, setEmergencyCancelSlot] = useState<ExpertSlotDetailResponse | null>(null);
+  const [emergencyReason, setEmergencyReason] = useState('');
+  const [emergencySubmitting, setEmergencySubmitting] = useState(false);
 
   // Modal create/edit
   const [modalVisible, setModalVisible] = useState(false);
@@ -208,8 +220,17 @@ export const ExpertSlotsScreen: React.FC = () => {
     else setLoading(true);
 
     try {
-      const res = await consultationApi.getMySlots();
-      setSlots(Array.isArray(res) ? res : []);
+      const [res, feeConfigs] = await Promise.all([
+        consultationApi.getMySlots(),
+        consultationApi.getConsultationFeeConfigs({ isActive: true }).catch(() => []),
+      ]);
+      const slotList = Array.isArray(res) ? res : [];
+      setSlots(slotList);
+
+      const adminTypes = Array.from(
+        new Set((feeConfigs || []).filter((c) => c.isActive !== false).map((c) => c.sessionType))
+      );
+      setConfiguredSessionTypes(adminTypes.length > 0 ? adminTypes : ['ONLINE_MEETING']);
     } catch (err: any) {
       const friendly = toFriendlyConsultationError(
         err,
@@ -469,15 +490,70 @@ export const ExpertSlotsScreen: React.FC = () => {
     }
   };
 
-  // Delete Slot
-  const handleDeleteSlot = (slot: ExpertSlotDetailResponse) => {
-    if (slot.isBooked) {
+  // Open Emergency Cancel Modal for booked slot
+  const handleOpenEmergencyCancel = (slot: ExpertSlotDetailResponse) => {
+    if (isSlotExpired(slot.slotDate, slot.endTime)) {
       setDialog({
-        title: 'Khung giờ đã có khách',
-        message: 'Khung giờ này đã có khách hàng đặt lịch hẹn. Không thể xóa.',
+        title: 'Khung giờ đã qua',
+        message: 'Khung giờ này đã diễn ra trong quá khứ nên không thể hủy.',
         primaryLabel: 'Đã hiểu',
         onPrimary: () => setDialog(null),
       });
+      return;
+    }
+    setEmergencyCancelSlot(slot);
+    setEmergencyReason('');
+    setEmergencyCancelModalVisible(true);
+  };
+
+  // Confirm Emergency Cancel
+  const handleConfirmEmergencyCancel = async () => {
+    if (!emergencyCancelSlot) return;
+    const cleanReason = emergencyReason.trim();
+    if (cleanReason.length < 10) {
+      setDialog({
+        title: 'Lý do quá ngắn',
+        message: 'Vui lòng nhập lý do hủy chi tiết (tối thiểu 10 ký tự).',
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
+      return;
+    }
+
+    setEmergencySubmitting(true);
+    try {
+      const res = await consultationApi.emergencyCancelSlot(emergencyCancelSlot.id, cleanReason);
+      setEmergencyCancelModalVisible(false);
+      setEmergencyCancelSlot(null);
+      setEmergencyReason('');
+      fetchSlots();
+      setDialog({
+        title: 'Hủy ca thành công',
+        message: res?.message || 'Đã hủy ca tư vấn thành công. Tiền bảo chứng đã được hoàn lại 100% cho khách hàng.',
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
+    } catch (err: any) {
+      const friendly = toFriendlyConsultationError(
+        err,
+        'Không thể hủy khung giờ',
+        'Không thể hủy khung giờ này lúc này. Vui lòng thử lại sau.'
+      );
+      setDialog({
+        title: friendly.title,
+        message: friendly.message,
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
+    } finally {
+      setEmergencySubmitting(false);
+    }
+  };
+
+  // Delete Slot
+  const handleDeleteSlot = (slot: ExpertSlotDetailResponse) => {
+    if (slot.isBooked) {
+      handleOpenEmergencyCancel(slot);
       return;
     }
 
@@ -583,12 +659,13 @@ export const ExpertSlotsScreen: React.FC = () => {
   );
 
   // Filter state check
-  const isFiltered = filter !== 'ALL' || selectedCalendarDate !== null || serviceFilter !== 'ALL';
+  const isFiltered = filter !== 'ALL' || selectedCalendarDate !== null || serviceFilter !== 'ALL' || periodFilter !== 'ALL';
 
   const handleResetFilters = () => {
     setFilter('ALL');
     setSelectedCalendarDate(null);
     setServiceFilter('ALL');
+    setPeriodFilter('ALL');
   };
 
   // Filtered slots
@@ -610,14 +687,22 @@ export const ExpertSlotsScreen: React.FC = () => {
       // 2. Service filter
       if (serviceFilter !== 'ALL' && slot.sessionType !== serviceFilter) return false;
 
-      // 3. Calendar Date filter
+      // 3. Period of day filter
+      if (periodFilter !== 'ALL') {
+        const hour = parseInt((slot.startTime || '00:00').split(':')[0], 10);
+        if (periodFilter === 'MORNING' && hour >= 12) return false;
+        if (periodFilter === 'AFTERNOON' && (hour < 12 || hour >= 18)) return false;
+        if (periodFilter === 'EVENING' && hour < 18) return false;
+      }
+
+      // 4. Calendar Date filter
       if (selectedCalendarDate !== null && slot.slotDate !== selectedCalendarDate) {
         return false;
       }
 
       return true;
     });
-  }, [slots, filter, serviceFilter, selectedCalendarDate]);
+  }, [slots, filter, serviceFilter, periodFilter, selectedCalendarDate]);
 
   // ── XỬ LÝ CHỌN NHIỀU & XÓA HÀNG LOẠT (ĐẶT SAU KHI FILTEREDSLOTS ĐÃ KHỞI TẠO) ──
   const selectableFilteredSlots = useMemo(() => {
@@ -824,8 +909,43 @@ export const ExpertSlotsScreen: React.FC = () => {
     );
   };
 
+  const handleBack = useCallback(() => {
+    if (isSelectionMode) {
+      exitSelectionMode();
+      return;
+    }
+
+    const state = navigation.getState();
+    const routes = state?.routes || [];
+    const prevRoute = routes.length >= 2 ? routes[routes.length - 2] : null;
+
+    if (
+      prevRoute &&
+      ['BookingDetail', 'Wallet', 'PaymentResult'].includes(prevRoute.name)
+    ) {
+      navigation.navigate('Profile');
+      return;
+    }
+
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+    } else {
+      navigation.navigate('Profile');
+    }
+  }, [isSelectionMode, exitSelectionMode, navigation]);
+
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      handleBack();
+      return true;
+    });
+    return () => sub.remove();
+  }, [handleBack]);
+
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom']}>
+      <DrumPatternBackdrop variant="soft" />
+
       {/* Header */}
       {isSelectionMode ? (
         <View style={styles.selectionHeader}>
@@ -863,7 +983,7 @@ export const ExpertSlotsScreen: React.FC = () => {
         <View style={styles.header}>
           <TouchableOpacity
             style={styles.backBtn}
-            onPress={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('ExpertBookings'))}
+            onPress={handleBack}
             accessibilityRole="button"
             accessibilityLabel="Quay lại"
           >
@@ -1104,7 +1224,7 @@ export const ExpertSlotsScreen: React.FC = () => {
         )}
       </View>
 
-      {/* Thanh bộ lọc dạng Dropdown */}
+      {/* Thanh bộ lọc dạng Dropdown ngang hàng ngắn gọn */}
       <View style={styles.dropdownFiltersContainer}>
         {/* Dropdown Dịch Vụ */}
         <TouchableOpacity
@@ -1126,8 +1246,8 @@ export const ExpertSlotsScreen: React.FC = () => {
                 ? 'call'
                 : 'layers-outline'
             }
-            size={14}
-            color={serviceFilter !== 'ALL' ? theme.colors.primary : '#555555'}
+            size={13}
+            color={serviceFilter !== 'ALL' ? '#FFFFFF' : theme.colors.primary}
           />
           <Text
             style={[
@@ -1142,12 +1262,12 @@ export const ExpertSlotsScreen: React.FC = () => {
               ? 'Nhắn tin'
               : serviceFilter === 'VOICE_CALL'
               ? 'Gọi thoại'
-              : 'Tất cả dịch vụ'}
+              : 'Dịch vụ'}
           </Text>
           <Ionicons
             name="chevron-down"
-            size={14}
-            color={serviceFilter !== 'ALL' ? theme.colors.primary : '#777777'}
+            size={12}
+            color={serviceFilter !== 'ALL' ? '#FFFFFF' : '#777777'}
           />
         </TouchableOpacity>
 
@@ -1163,8 +1283,8 @@ export const ExpertSlotsScreen: React.FC = () => {
         >
           <Ionicons
             name="funnel-outline"
-            size={14}
-            color={filter !== 'ALL' ? theme.colors.primary : '#555555'}
+            size={13}
+            color={filter !== 'ALL' ? '#FFFFFF' : theme.colors.primary}
           />
           <Text
             style={[
@@ -1181,12 +1301,49 @@ export const ExpertSlotsScreen: React.FC = () => {
               ? `Hết hạn (${countExpired})`
               : filter === 'INACTIVE'
               ? `Tạm tắt (${countInactive})`
-              : `Tất cả (${slots.length})`}
+              : `Trạng thái (${slots.length})`}
           </Text>
           <Ionicons
             name="chevron-down"
-            size={14}
-            color={filter !== 'ALL' ? theme.colors.primary : '#777777'}
+            size={12}
+            color={filter !== 'ALL' ? '#FFFFFF' : '#777777'}
+          />
+        </TouchableOpacity>
+
+        {/* Dropdown Khung Buổi */}
+        <TouchableOpacity
+          style={[
+            styles.dropdownBtn,
+            periodFilter !== 'ALL' && styles.dropdownBtnActive,
+          ]}
+          onPress={() => setPeriodPickerVisible(true)}
+          accessibilityRole="button"
+          accessibilityLabel="Lọc theo buổi trong ngày"
+        >
+          <Ionicons
+            name="sunny-outline"
+            size={13}
+            color={periodFilter !== 'ALL' ? '#FFFFFF' : theme.colors.primary}
+          />
+          <Text
+            style={[
+              styles.dropdownBtnText,
+              periodFilter !== 'ALL' && styles.dropdownBtnTextActive,
+            ]}
+            numberOfLines={1}
+          >
+            {periodFilter === 'MORNING'
+              ? 'Buổi sáng'
+              : periodFilter === 'AFTERNOON'
+              ? 'Buổi chiều'
+              : periodFilter === 'EVENING'
+              ? 'Buổi tối'
+              : 'Tất cả buổi'}
+          </Text>
+          <Ionicons
+            name="chevron-down"
+            size={12}
+            color={periodFilter !== 'ALL' ? '#FFFFFF' : '#777777'}
           />
         </TouchableOpacity>
 
@@ -1562,22 +1719,25 @@ export const ExpertSlotsScreen: React.FC = () => {
                       </TouchableOpacity>
 
                       <TouchableOpacity
-                        style={[styles.cardDeleteBtn, item.isBooked && styles.btnDisabled]}
-                        disabled={item.isBooked}
+                        style={[styles.cardDeleteBtn, expired && styles.btnDisabled]}
+                        disabled={expired}
                         onPress={() => handleDeleteSlot(item)}
+                        accessibilityRole="button"
+                        accessibilityLabel={item.isBooked ? 'Hủy ca tư vấn khẩn cấp' : 'Xóa khung giờ'}
                       >
                         <Ionicons
-                          name="trash-outline"
+                          name={item.isBooked ? 'alert-circle-outline' : 'trash-outline'}
                           size={15}
-                          color={item.isBooked ? '#A3A3A3' : '#DC2626'}
+                          color={expired ? '#A3A3A3' : (item.isBooked ? '#B45309' : '#DC2626')}
                         />
                         <Text
                           style={[
                             styles.cardDeleteBtnText,
-                            item.isBooked && { color: '#A3A3A3' },
+                            expired && { color: '#A3A3A3' },
+                            !expired && item.isBooked && { color: '#B45309' },
                           ]}
                         >
-                          Xóa
+                          {item.isBooked ? 'Hủy ca' : 'Xóa'}
                         </Text>
                       </TouchableOpacity>
                     </View>
@@ -1758,14 +1918,16 @@ export const ExpertSlotsScreen: React.FC = () => {
 
                   {/* 3. Hình thức tư vấn */}
                   <Text style={[styles.formSectionLabel, { marginTop: 14 }]}>
-                    3. Hình thức phiên tư vấn:
+                    3. Hình thức phiên tư vấn (theo cấu hình Admin):
                   </Text>
                   <View style={styles.sessionTypeOptions}>
                     {[
-                      { key: 'ONLINE_MEETING', label: 'Họp trực tuyến (1-1)', icon: 'videocam' },
+                      { key: 'ONLINE_MEETING', label: 'Họp trực tuyến (Video 1-1)', icon: 'videocam' },
                       { key: 'CHAT', label: 'Nhắn tin tư vấn', icon: 'chatbubbles' },
                       { key: 'VOICE_CALL', label: 'Gọi thoại', icon: 'call' },
-                    ].map((item) => {
+                    ]
+                      .filter((item) => configuredSessionTypes.includes(item.key as SessionType))
+                      .map((item) => {
                       const isSelected = sessionType === item.key;
                       return (
                         <TouchableOpacity
@@ -1950,14 +2112,16 @@ export const ExpertSlotsScreen: React.FC = () => {
 
                   {/* 3. Hình thức phiên tư vấn */}
                   <Text style={[styles.formSectionLabel, { marginTop: 14 }]}>
-                    3. Hình thức phiên tư vấn:
+                    3. Hình thức phiên tư vấn (theo cấu hình Admin):
                   </Text>
                   <View style={styles.sessionTypeOptions}>
                     {[
-                      { key: 'ONLINE_MEETING', label: 'Họp trực tuyến (1-1)', icon: 'videocam' },
+                      { key: 'ONLINE_MEETING', label: 'Họp trực tuyến (Video 1-1)', icon: 'videocam' },
                       { key: 'CHAT', label: 'Nhắn tin tư vấn', icon: 'chatbubbles' },
                       { key: 'VOICE_CALL', label: 'Gọi thoại', icon: 'call' },
-                    ].map((item) => {
+                    ]
+                      .filter((item) => configuredSessionTypes.includes(item.key as SessionType))
+                      .map((item) => {
                       const isSelected = recurringSessionType === item.key;
                       return (
                         <TouchableOpacity
@@ -2104,13 +2268,13 @@ export const ExpertSlotsScreen: React.FC = () => {
                   id: 'ALL' as const,
                   label: 'Tất cả dịch vụ',
                   icon: 'apps-outline',
-                  desc: 'Hiển thị mọi hình thức tư vấn',
+                  desc: 'Hiển thị mọi hình thức tư vấn được cấu hình',
                 },
                 {
                   id: 'ONLINE_MEETING' as const,
-                  label: 'Họp trực tuyến (1-1)',
+                  label: 'Họp trực tuyến (Video 1-1)',
                   icon: 'videocam-outline',
-                  desc: 'Họp video qua Google Meet / phòng họp số',
+                  desc: 'Tư vấn trực tiếp qua phòng họp Video 1-1',
                 },
                 {
                   id: 'CHAT' as const,
@@ -2124,7 +2288,14 @@ export const ExpertSlotsScreen: React.FC = () => {
                   icon: 'call-outline',
                   desc: 'Tư vấn qua cuộc gọi thoại bảo mật',
                 },
-              ].map((opt) => {
+              ]
+                .filter(
+                  (opt) =>
+                    opt.id === 'ALL' ||
+                    configuredSessionTypes.includes(opt.id as SessionType) ||
+                    slots.some((s) => s.sessionType === opt.id)
+                )
+                .map((opt) => {
                 const isSelected = serviceFilter === opt.id;
                 return (
                   <TouchableOpacity
@@ -2311,6 +2482,112 @@ export const ExpertSlotsScreen: React.FC = () => {
         </TouchableOpacity>
       </Modal>
 
+      {/* Modal Dropdown Chọn Khung Buổi */}
+      <Modal
+        visible={periodPickerVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setPeriodPickerVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.pickerBackdrop}
+          activeOpacity={1}
+          onPress={() => setPeriodPickerVisible(false)}
+        >
+          <View style={styles.pickerSheet}>
+            <View style={styles.pickerHeader}>
+              <View style={styles.pickerTitleRow}>
+                <Ionicons name="sunny" size={18} color={theme.colors.primary} />
+                <Text style={styles.pickerTitle}>Lọc theo buổi trong ngày</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setPeriodPickerVisible(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Đóng"
+              >
+                <Ionicons name="close" size={20} color="#666666" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.pickerOptionsList}>
+              {[
+                {
+                  id: 'ALL' as const,
+                  label: 'Tất cả buổi trong ngày',
+                  desc: 'Hiển thị ca làm việc từ sáng đến tối',
+                  icon: 'time-outline',
+                },
+                {
+                  id: 'MORNING' as const,
+                  label: 'Buổi sáng (Trước 12:00)',
+                  desc: 'Các khung giờ bắt đầu từ 00:00 đến 11:59',
+                  icon: 'partly-sunny-outline',
+                },
+                {
+                  id: 'AFTERNOON' as const,
+                  label: 'Buổi chiều (12:00 - 18:00)',
+                  desc: 'Các khung giờ bắt đầu từ 12:00 đến 17:59',
+                  icon: 'sunny-outline',
+                },
+                {
+                  id: 'EVENING' as const,
+                  label: 'Buổi tối (Sau 18:00)',
+                  desc: 'Các khung giờ bắt đầu từ 18:00 trở đi',
+                  icon: 'moon-outline',
+                },
+              ].map((opt) => {
+                const isSelected = periodFilter === opt.id;
+                return (
+                  <TouchableOpacity
+                    key={opt.id}
+                    style={[
+                      styles.pickerOptionItem,
+                      isSelected && styles.pickerOptionItemSelected,
+                    ]}
+                    onPress={() => {
+                      setPeriodFilter(opt.id);
+                      setPeriodPickerVisible(false);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <View
+                      style={[
+                        styles.pickerOptionIconBox,
+                        isSelected && styles.pickerOptionIconBoxSelected,
+                      ]}
+                    >
+                      <Ionicons
+                        name={opt.icon as any}
+                        size={18}
+                        color={isSelected ? theme.colors.primary : '#666666'}
+                      />
+                    </View>
+                    <View style={styles.pickerOptionContent}>
+                      <Text
+                        style={[
+                          styles.pickerOptionLabel,
+                          isSelected && styles.pickerOptionLabelSelected,
+                        ]}
+                      >
+                        {opt.label}
+                      </Text>
+                      <Text style={styles.pickerOptionDesc}>{opt.desc}</Text>
+                    </View>
+                    {isSelected && (
+                      <Ionicons
+                        name="checkmark-circle"
+                        size={20}
+                        color={theme.colors.primary}
+                      />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
       {/* Modal Xác nhận Xóa tất cả theo bộ lọc tìm kiếm */}
       <Modal
         visible={deleteAllModalVisible}
@@ -2425,6 +2702,125 @@ export const ExpertSlotsScreen: React.FC = () => {
         </View>
       </Modal>
 
+      {/* Modal Hủy lịch khẩn cấp khi slot đã có khách đặt */}
+      <Modal
+        visible={emergencyCancelModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => !emergencySubmitting && setEmergencyCancelModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.emergencyModalCard}>
+            {/* Header */}
+            <View style={styles.emergencyModalHeader}>
+              <View style={styles.emergencyIconCircle}>
+                <Ionicons name="warning-outline" size={24} color="#D97706" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.emergencyModalTitle}>Hủy ca làm việc đã có người đặt</Text>
+                <Text style={styles.emergencyModalSubtitle}>
+                  Thao tác hủy lịch khẩn cấp cho khung giờ tư vấn
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setEmergencyCancelModalVisible(false)}
+                disabled={emergencySubmitting}
+                style={{ padding: 4 }}
+              >
+                <Ionicons name="close" size={22} color="#666666" />
+              </TouchableOpacity>
+            </View>
+
+            {emergencyCancelSlot && (
+              <View style={styles.emergencySlotInfoBox}>
+                <View style={styles.emergencySlotInfoRow}>
+                  <Ionicons name="calendar-outline" size={14} color="#4B5563" />
+                  <Text style={styles.emergencySlotInfoText}>
+                    Ngày: <Text style={{ fontFamily: fonts.bodyBold }}>{formatDateVi(emergencyCancelSlot.slotDate)}</Text>
+                  </Text>
+                </View>
+                <View style={styles.emergencySlotInfoRow}>
+                  <Ionicons name="time-outline" size={14} color="#4B5563" />
+                  <Text style={styles.emergencySlotInfoText}>
+                    Giờ: <Text style={{ fontFamily: fonts.bodyBold }}>{formatTime(emergencyCancelSlot.startTime)} - {formatTime(emergencyCancelSlot.endTime)}</Text>
+                  </Text>
+                </View>
+                <View style={styles.emergencySlotInfoRow}>
+                  <Ionicons name="videocam-outline" size={14} color="#4B5563" />
+                  <Text style={styles.emergencySlotInfoText}>
+                    Hình thức: <Text style={{ fontFamily: fonts.bodyBold }}>{formatSessionType(emergencyCancelSlot.sessionType).label}</Text>
+                  </Text>
+                </View>
+              </View>
+            )}
+
+            {/* Warning Box */}
+            <View style={styles.emergencyWarningBox}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                <Ionicons name="alert-circle" size={16} color="#B45309" />
+                <Text style={styles.emergencyWarningTitle}>Lưu ý quan trọng khi hủy ca:</Text>
+              </View>
+              <Text style={styles.emergencyWarningText}>
+                • Khách hàng sẽ nhận thông báo hủy ca và được hoàn 100% tiền tạm giữ vào ví.
+              </Text>
+              <Text style={styles.emergencyWarningText}>
+                • Nếu hủy sát giờ hẹn (&lt; 12 tiếng), bạn có thể bị áp dụng phí phạt theo quy chế sàn.
+              </Text>
+            </View>
+
+            {/* Reason Input */}
+            <View style={{ gap: 4, marginTop: 4 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text style={styles.emergencyInputLabel}>Lý do hủy khẩn cấp (tối thiểu 10 ký tự) *:</Text>
+                <Text style={[styles.emergencyCharCount, emergencyReason.trim().length < 10 && { color: '#DC2626' }]}>
+                  {emergencyReason.trim().length}/10 ký tự
+                </Text>
+              </View>
+              <TextInput
+                style={styles.emergencyReasonInput}
+                placeholder="VD: Chuyên gia có việc đột xuất / sự cố y tế khẩn cấp không thể tiếp tục ca tư vấn..."
+                placeholderTextColor="#9CA3AF"
+                value={emergencyReason}
+                onChangeText={setEmergencyReason}
+                multiline
+                numberOfLines={3}
+                textAlignVertical="top"
+                editable={!emergencySubmitting}
+              />
+            </View>
+
+            {/* Actions */}
+            <View style={styles.emergencyActionsRow}>
+              <TouchableOpacity
+                style={styles.emergencyCancelBtn}
+                onPress={() => setEmergencyCancelModalVisible(false)}
+                disabled={emergencySubmitting}
+              >
+                <Text style={styles.emergencyCancelBtnText}>Hủy bỏ</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.emergencyConfirmBtn,
+                  (emergencySubmitting || emergencyReason.trim().length < 10) && styles.btnDisabled,
+                ]}
+                onPress={handleConfirmEmergencyCancel}
+                disabled={emergencySubmitting || emergencyReason.trim().length < 10}
+              >
+                {emergencySubmitting ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <Ionicons name="alert-circle-outline" size={16} color="#FFFFFF" />
+                    <Text style={styles.emergencyConfirmBtnText}>Xác nhận hủy lịch</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* Thanh tác vụ cố định bên dưới khi ở chế độ chọn nhiều */}
       {isSelectionMode && (
         <View style={styles.bottomSelectionBar}>
@@ -2497,7 +2893,7 @@ export const ExpertSlotsScreen: React.FC = () => {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: '#F7F5EF',
+    backgroundColor: theme.colors.background,
   },
   header: {
     flexDirection: 'row',
@@ -2505,7 +2901,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'transparent',
+    zIndex: 1,
   },
   backBtn: {
     width: 38,
@@ -2513,12 +2910,13 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#F3EFE6',
+    backgroundColor: 'rgba(243, 239, 230, 0.85)',
   },
   headerTitle: {
     fontFamily: fonts.serifBold,
-    fontSize: 17,
-    color: theme.colors.primary,
+    fontSize: 18,
+    lineHeight: 24,
+    color: theme.colors.primaryDark,
     flex: 1,
     textAlign: 'center',
   },
@@ -2574,27 +2972,27 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-around',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'rgba(255, 253, 247, 0.94)',
     paddingVertical: 10,
     marginHorizontal: 12,
     marginTop: 10,
     borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#ECE6DA',
+    borderWidth: 1.5,
+    borderColor: '#E5D5B5',
     ...theme.shadows.card,
   },
   counterItem: {
     alignItems: 'center',
   },
   counterNum: {
-    fontFamily: fonts.bodyBold,
+    fontFamily: fonts.serifBold,
     fontSize: 18,
-    color: theme.colors.textPrimary,
+    color: theme.colors.primaryDark,
   },
   counterLabel: {
-    fontFamily: fonts.body,
+    fontFamily: fonts.bodyMedium,
     fontSize: 11,
-    color: '#777777',
+    color: '#5A4A22',
     marginTop: 1,
   },
   counterDivider: {
@@ -2844,9 +3242,9 @@ const styles = StyleSheet.create({
   dropdownFiltersContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginHorizontal: 12,
-    marginTop: 2,
-    marginBottom: 4,
+    marginHorizontal: 16,
+    marginTop: 4,
+    marginBottom: 6,
     gap: 8,
   },
   dropdownBtn: {
@@ -2854,36 +3252,35 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'rgba(255, 253, 247, 0.92)',
     borderWidth: 1,
-    borderColor: '#ECE6DA',
-    borderRadius: 10,
+    borderColor: '#E5DEC9',
+    borderRadius: 9,
     paddingHorizontal: 10,
-    paddingVertical: 9,
-    ...theme.shadows.card,
+    paddingVertical: 8,
+    gap: 4,
   },
   dropdownBtnActive: {
     borderColor: theme.colors.primary,
-    backgroundColor: '#FDFBF9',
+    backgroundColor: theme.colors.primary,
   },
   dropdownBtnText: {
     fontFamily: fonts.bodySemi,
     fontSize: 11.5,
-    color: '#444444',
+    color: theme.colors.textPrimary,
     flex: 1,
-    marginHorizontal: 6,
   },
   dropdownBtnTextActive: {
     fontFamily: fonts.bodyBold,
-    color: theme.colors.primary,
+    color: '#FFFFFF',
   },
   dropdownResetBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
+    width: 34,
+    height: 34,
+    borderRadius: 9,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#FEF2F2',
+    backgroundColor: '#FFF5F5',
     borderWidth: 1,
     borderColor: '#FECACA',
   },
@@ -3925,6 +4322,131 @@ const styles = StyleSheet.create({
   },
   deleteAllConfirmBtnText: {
     fontFamily: fonts.bodyBold,
+    fontSize: 13,
+    color: '#FFFFFF',
+  },
+  emergencyModalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 18,
+    width: '92%',
+    maxWidth: 420,
+    gap: 12,
+  },
+  emergencyModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  emergencyIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#FEF3C7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emergencyModalTitle: {
+    fontFamily: fonts.serifBold,
+    fontSize: 16,
+    color: '#1F2937',
+  },
+  emergencyModalSubtitle: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 2,
+  },
+  emergencySlotInfoBox: {
+    backgroundColor: '#F9FAFB',
+    borderRadius: 10,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    gap: 4,
+  },
+  emergencySlotInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  emergencySlotInfoText: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: '#374151',
+  },
+  emergencyWarningBox: {
+    backgroundColor: '#FFFBEB',
+    borderRadius: 10,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    gap: 3,
+  },
+  emergencyWarningTitle: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 12,
+    color: '#92400E',
+  },
+  emergencyWarningText: {
+    fontFamily: fonts.body,
+    fontSize: 11,
+    color: '#B45309',
+    lineHeight: 16,
+  },
+  emergencyInputLabel: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 12,
+    color: '#374151',
+  },
+  emergencyCharCount: {
+    fontFamily: fonts.body,
+    fontSize: 11,
+    color: '#6B7280',
+  },
+  emergencyReasonInput: {
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderRadius: 10,
+    padding: 10,
+    minHeight: 70,
+    fontFamily: fonts.body,
+    fontSize: 13,
+    color: '#111827',
+    backgroundColor: '#FFFFFF',
+  },
+  emergencyActionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 4,
+  },
+  emergencyCancelBtn: {
+    flex: 1,
+    paddingVertical: 11,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emergencyCancelBtnText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 13,
+    color: '#4B5563',
+  },
+  emergencyConfirmBtn: {
+    flex: 1.4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 11,
+    borderRadius: 8,
+    backgroundColor: '#DC2626',
+  },
+  emergencyConfirmBtnText: {
+    fontFamily: fonts.bodySemi,
     fontSize: 13,
     color: '#FFFFFF',
   },

@@ -229,6 +229,9 @@ export interface BookingDetailResponse {
   cancelledAt?: string | null;
   cancellationReason?: string | null;
   cancelledBy?: string | null;
+  completedAt?: string | null;
+  noShowType?: 'NONE' | 'USER_NO_SHOW' | 'EXPERT_NO_SHOW' | string;
+  sessionSharedNotes?: string | null;
   createdAt: string;
   attachments?: BookingAttachmentDto[];
 }
@@ -250,6 +253,7 @@ export interface BookingListItemResponse {
   specializationName: string;
   topicTitle: string;
   status: BookingStatus;
+  noShowType?: 'NONE' | 'USER_NO_SHOW' | 'EXPERT_NO_SHOW' | string;
   holdExpiresAt: string;
   approvalDeadline?: string | null;
   attachmentCount?: number;
@@ -317,13 +321,57 @@ export function formatSessionType(type?: SessionType | string): {
   }
 }
 
-export function formatBookingStatus(status?: BookingStatus | string): {
+export function formatBookingStatus(
+  status?: BookingStatus | string,
+  noShowType?: string | null,
+  isExpertView?: boolean
+): {
   label: string;
   color: string;
   bg: string;
   icon: string;
   desc: string;
 } {
+  const normalizedNoShow = (noShowType || '').trim().toUpperCase();
+
+  if (normalizedNoShow === 'USER_NO_SHOW' && (status === 'COMPLETED' || status === 'SETTLED')) {
+    if (isExpertView) {
+      return {
+        label: status === 'SETTLED' ? 'Đã quyết toán (Khách vắng mặt)' : 'Khách vắng mặt (Đã đóng ca)',
+        color: '#B45309',
+        bg: '#FEF3C7',
+        icon: 'alert-circle-outline',
+        desc: 'Khách hàng không tham gia phòng tư vấn sau 15 phút kể từ giờ hẹn. Hệ thống đã tự động đóng ca và bảo vệ quyền lợi thù lao của bạn.',
+      };
+    }
+    return {
+      label: 'Vắng mặt quá 15p (Đã đóng ca)',
+      color: '#DC2626',
+      bg: '#FEE2E2',
+      icon: 'alert-circle-outline',
+      desc: 'Hệ thống ghi nhận bạn không tham gia phòng tư vấn sau 15 phút kể từ giờ hẹn. Ca tư vấn đã tự động kết thúc và phí tư vấn được thanh toán cho chuyên gia theo quy định.',
+    };
+  }
+
+  if (normalizedNoShow === 'EXPERT_NO_SHOW' && status === 'CANCELLED_BY_EXPERT') {
+    if (isExpertView) {
+      return {
+        label: 'Chuyên gia vắng mặt (Đã hủy)',
+        color: '#DC2626',
+        bg: '#FEE2E2',
+        icon: 'close-circle-outline',
+        desc: 'Hệ thống tự động hủy ca do bạn không điểm danh vào phòng sau 15 phút kể từ giờ hẹn và hoàn 100% phí cho khách hàng.',
+      };
+    }
+    return {
+      label: 'Chuyên gia vắng mặt (Hoàn tiền)',
+      color: '#DC2626',
+      bg: '#FEE2E2',
+      icon: 'close-circle-outline',
+      desc: 'Chuyên gia không tham gia phòng tư vấn sau 15 phút kể từ giờ hẹn. Hệ thống đã tự động hủy ca và hoàn tiền 100% vào ví của bạn.',
+    };
+  }
+
   switch (status) {
     case 'PENDING_PAYMENT':
       return {
@@ -938,6 +986,23 @@ export interface RecurringSlotBatchResultResponse {
   createdSlots: ExpertSlotDetailResponse[];
 }
 
+export interface EmergencyCancelSlotRequest {
+  reason: string;
+}
+
+export interface EmergencyCancelSlotResponse {
+  slotId: string;
+  slotDate: string;
+  startTime: string;
+  endTime: string;
+  hadBooking: boolean;
+  bookingId?: string | null;
+  bookingCode?: string | null;
+  isLateCancel: boolean;
+  penaltyAmount: number;
+  message: string;
+}
+
 export interface ExpertSortOptionItem {
   value: ExpertSortBy | string;
   code: number;
@@ -1077,11 +1142,21 @@ export const formatDisputeStatus = (
   switch (status) {
     case 'PENDING_EXPERT_RESPONSE':
       return { label: 'Chờ chuyên gia giải trình', color: '#D97706', bg: '#FEF3C7' };
+    case 'AWAITING_ADMIN_RESOLUTION':
     case 'PENDING_ADMIN_REVIEW':
       return { label: 'Ban quản trị đang xử lý', color: '#2563EB', bg: '#EFF6FF' };
     case 'RESOLVED':
       return { label: 'Đã giải quyết', color: '#059669', bg: '#ECFDF5' };
+    case 'RESOLVED_FULL_REFUND':
+      return { label: 'Đã giải quyết (Hoàn 100%)', color: '#059669', bg: '#ECFDF5' };
+    case 'RESOLVED_SETTLE_EXPERT':
+      return { label: 'Đã giải quyết (Bác khiếu nại)', color: '#059669', bg: '#ECFDF5' };
+    case 'RESOLVED_PARTIAL':
+      return { label: 'Đã giải quyết (Chia tỷ lệ)', color: '#059669', bg: '#ECFDF5' };
     default:
+      if (status && status.startsWith('RESOLVED')) {
+        return { label: 'Đã giải quyết', color: '#059669', bg: '#ECFDF5' };
+      }
       return { label: status || 'Đang xử lý', color: '#6B7280', bg: '#F3F4F6' };
   }
 };

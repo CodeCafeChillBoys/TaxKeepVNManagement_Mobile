@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -9,12 +9,15 @@ import {
   ActivityIndicator,
   RefreshControl,
   ScrollView,
+  BackHandler,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
+import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { consultationApi } from '../../api/consultationApi';
@@ -28,13 +31,31 @@ import {
   isValidAvatarUrl,
 } from '../../types/consultation';
 
-const STATUS_TABS: { key: string; label: string; status?: BookingStatus }[] = [
-  { key: 'ALL', label: 'Tất cả' },
-  { key: 'PENDING_PAYMENT', label: 'Chờ thanh toán', status: 'PENDING_PAYMENT' },
-  { key: 'AWAITING_EXPERT_APPROVAL', label: 'Chờ duyệt', status: 'AWAITING_EXPERT_APPROVAL' },
-  { key: 'CONFIRMED', label: 'Đã xác nhận', status: 'CONFIRMED' },
-  { key: 'COMPLETED', label: 'Hoàn thành', status: 'COMPLETED' },
-  { key: 'CANCELLED_BY_USER', label: 'Đã hủy', status: 'CANCELLED_BY_USER' },
+const STATUS_TABS: { key: string; label: string; shortLabel: string; status?: BookingStatus }[] = [
+  { key: 'ALL', label: 'Tất cả trạng thái', shortLabel: 'Trạng thái' },
+  { key: 'PENDING_PAYMENT', label: 'Chờ thanh toán', shortLabel: 'Chờ thanh toán', status: 'PENDING_PAYMENT' },
+  { key: 'AWAITING_EXPERT_APPROVAL', label: 'Chờ chuyên gia duyệt', shortLabel: 'Chờ duyệt', status: 'AWAITING_EXPERT_APPROVAL' },
+  { key: 'CONFIRMED', label: 'Đã xác nhận', shortLabel: 'Đã xác nhận', status: 'CONFIRMED' },
+  { key: 'IN_PROGRESS', label: 'Đang tư vấn', shortLabel: 'Đang tư vấn', status: 'IN_PROGRESS' },
+  { key: 'COMPLETED', label: 'Đã hoàn thành', shortLabel: 'Hoàn thành', status: 'COMPLETED' },
+  { key: 'UNDER_DISPUTE', label: 'Đang khiếu nại', shortLabel: 'Khiếu nại', status: 'UNDER_DISPUTE' },
+  { key: 'USER_NO_SHOW', label: 'Khách vắng mặt (Đóng ca)', shortLabel: 'Khách vắng mặt' },
+  { key: 'CANCELLED_BY_USER', label: 'Đã hủy lịch', shortLabel: 'Đã hủy', status: 'CANCELLED_BY_USER' },
+];
+
+const SESSION_FILTER_OPTIONS: { key: 'ALL' | 'ONLINE_MEETING' | 'CHAT' | 'VOICE_CALL'; label: string; shortLabel: string; icon: string }[] = [
+  { key: 'ALL', label: 'Tất cả dịch vụ', shortLabel: 'Dịch vụ', icon: 'layers-outline' },
+  { key: 'ONLINE_MEETING', label: 'Họp trực tuyến (Video 1-1)', shortLabel: 'Video 1-1', icon: 'videocam-outline' },
+  { key: 'CHAT', label: 'Nhắn tin tư vấn (Chat)', shortLabel: 'Nhắn tin', icon: 'chatbubbles-outline' },
+  { key: 'VOICE_CALL', label: 'Gọi thoại tư vấn (Audio)', shortLabel: 'Gọi thoại', icon: 'call-outline' },
+];
+
+const DATE_FILTER_OPTIONS: { key: 'ALL' | 'TODAY' | 'UPCOMING' | '7DAYS' | 'THIS_MONTH'; label: string; shortLabel: string }[] = [
+  { key: 'ALL', label: 'Tất cả thời gian', shortLabel: 'Thời gian' },
+  { key: 'TODAY', label: 'Hôm nay', shortLabel: 'Hôm nay' },
+  { key: 'UPCOMING', label: 'Lịch sắp tới', shortLabel: 'Sắp tới' },
+  { key: '7DAYS', label: 'Trong 7 ngày qua', shortLabel: '7 ngày qua' },
+  { key: 'THIS_MONTH', label: 'Trong tháng này', shortLabel: 'Tháng này' },
 ];
 
 export const MyBookingsScreen: React.FC = () => {
@@ -42,6 +63,13 @@ export const MyBookingsScreen: React.FC = () => {
   const route = useRoute<RouteProp<RootStackParamList, 'MyBookings'>>();
 
   const [activeTabKey, setActiveTabKey] = useState<string>(route.params?.initialStatus || 'ALL');
+  const [sessionFilter, setSessionFilter] = useState<'ALL' | 'ONLINE_MEETING' | 'CHAT' | 'VOICE_CALL'>('ALL');
+  const [dateFilter, setDateFilter] = useState<'ALL' | 'TODAY' | 'UPCOMING' | '7DAYS' | 'THIS_MONTH'>('ALL');
+  const [configuredSessionTypes, setConfiguredSessionTypes] = useState<string[]>(['ONLINE_MEETING']);
+  const [statusModalVisible, setStatusModalVisible] = useState(false);
+  const [sessionModalVisible, setSessionModalVisible] = useState(false);
+  const [dateModalVisible, setDateModalVisible] = useState(false);
+
   const [bookings, setBookings] = useState<BookingListItemResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -49,6 +77,30 @@ export const MyBookingsScreen: React.FC = () => {
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+
+  const displayedBookings = useMemo(() => {
+    const todayStr = new Date().toISOString().split('T')[0];
+    const now = new Date();
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 3600 * 1000).toISOString().split('T')[0];
+    const currentMonthPrefix = todayStr.slice(0, 7);
+
+    return bookings.filter((item) => {
+      if (activeTabKey === 'USER_NO_SHOW' && item.noShowType !== 'USER_NO_SHOW') {
+        return false;
+      }
+      if (sessionFilter !== 'ALL' && item.sessionType !== sessionFilter) {
+        return false;
+      }
+      if (dateFilter !== 'ALL') {
+        const slotDate = (item.slotDate || '').split('T')[0];
+        if (dateFilter === 'TODAY' && slotDate !== todayStr) return false;
+        if (dateFilter === 'UPCOMING' && slotDate < todayStr) return false;
+        if (dateFilter === '7DAYS' && slotDate < sevenDaysAgo) return false;
+        if (dateFilter === 'THIS_MONTH' && !slotDate.startsWith(currentMonthPrefix)) return false;
+      }
+      return true;
+    });
+  }, [bookings, activeTabKey, sessionFilter, dateFilter]);
 
   // Countdown tick state
   const [currentTimeMs, setCurrentTimeMs] = useState(Date.now());
@@ -58,6 +110,22 @@ export const MyBookingsScreen: React.FC = () => {
       setCurrentTimeMs(Date.now());
     }, 1000);
     return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    consultationApi
+      .getConsultationFeeConfigs({ isActive: true })
+      .then((configs) => {
+        if (Array.isArray(configs)) {
+          const activeTypes = Array.from(
+            new Set(configs.filter((c) => c.isActive !== false).map((c) => c.sessionType))
+          );
+          if (activeTypes.length > 0) {
+            setConfiguredSessionTypes(activeTypes);
+          }
+        }
+      })
+      .catch(() => {});
   }, []);
 
   const fetchBookings = useCallback(
@@ -120,17 +188,17 @@ export const MyBookingsScreen: React.FC = () => {
 
       if (diffSec <= 0) {
         return (
-          <View style={styles.expiredBadge}>
-            <Ionicons name="time-outline" size={12} color="#DC2626" />
-            <Text style={styles.expiredBadgeText}>Đã hết hạn giữ chỗ</Text>
+          <View style={styles.timerMetaRow}>
+            <Ionicons name="alert-circle" size={13} color="#DC2626" />
+            <Text style={styles.timerMetaExpired}>Đã hết hạn giữ chỗ</Text>
           </View>
         );
       }
 
       return (
-        <View style={styles.countdownBadge}>
-          <Ionicons name="stopwatch-outline" size={12} color="#D97706" />
-          <Text style={styles.countdownBadgeText}>
+        <View style={styles.timerMetaRow}>
+          <Ionicons name="time" size={13} color="#D97706" />
+          <Text style={styles.timerMetaWarning}>
             Giữ chỗ còn: {mins}:{secs.toString().padStart(2, '0')}
           </Text>
         </View>
@@ -145,16 +213,17 @@ export const MyBookingsScreen: React.FC = () => {
 
       if (diffSec <= 0) {
         return (
-          <View style={styles.expiredBadge}>
-            <Text style={styles.expiredBadgeText}>Hết hạn 2 giờ duyệt</Text>
+          <View style={styles.timerMetaRow}>
+            <Ionicons name="alert-circle" size={13} color="#DC2626" />
+            <Text style={styles.timerMetaExpired}>Hết hạn 2 giờ duyệt</Text>
           </View>
         );
       }
 
       return (
-        <View style={styles.approvalCountdownBadge}>
-          <Ionicons name="hourglass-outline" size={12} color="#2563EB" />
-          <Text style={styles.approvalCountdownText}>
+        <View style={styles.timerMetaRow}>
+          <Ionicons name="hourglass" size={13} color="#2563EB" />
+          <Text style={styles.timerMetaInfo}>
             Hạn duyệt: {hours}h {mins}p
           </Text>
         </View>
@@ -164,12 +233,39 @@ export const MyBookingsScreen: React.FC = () => {
     return null;
   };
 
+  const handleBack = useCallback(() => {
+    const state = navigation.getState();
+    const routes = state?.routes || [];
+    const prevRoute = routes.length >= 2 ? routes[routes.length - 2] : null;
+
+    if (prevRoute && ['BookingDetail', 'PaymentResult', 'BookingCreate'].includes(prevRoute.name)) {
+      navigation.navigate('Home');
+      return;
+    }
+
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+    } else {
+      navigation.navigate('Home');
+    }
+  }, [navigation]);
+
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      handleBack();
+      return true;
+    });
+    return () => sub.remove();
+  }, [handleBack]);
+
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
+      <DrumPatternBackdrop variant="soft" />
+
       {/* ── HEADER ── */}
       <View style={styles.header}>
         <TouchableOpacity
-          onPress={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('Home'))}
+          onPress={handleBack}
           style={styles.backBtn}
           accessibilityRole="button"
           accessibilityLabel="Quay lại"
@@ -188,28 +284,122 @@ export const MyBookingsScreen: React.FC = () => {
       </View>
       <GoldDoubleRule />
 
-      {/* ── STATUS FILTER TABS ── */}
-      <View style={styles.tabsWrap}>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.tabsScrollContent}
+      {/* ── COMPACT HORIZONTAL DROPDOWN FILTERS ── */}
+      <View style={styles.filterDropdownRow}>
+        {/* 1. Dropdown Trạng thái */}
+        <TouchableOpacity
+          style={[
+            styles.dropdownFilterBtn,
+            activeTabKey !== 'ALL' && styles.dropdownFilterBtnActive,
+          ]}
+          onPress={() => setStatusModalVisible(true)}
+          activeOpacity={0.85}
+          accessibilityRole="button"
+          accessibilityLabel="Lọc theo trạng thái lịch hẹn"
         >
-          {STATUS_TABS.map((tab) => {
-            const active = activeTabKey === tab.key;
-            return (
-              <TouchableOpacity
-                key={tab.key}
-                style={[styles.tabChip, active && styles.tabChipActive]}
-                onPress={() => setActiveTabKey(tab.key)}
-              >
-                <Text style={[styles.tabChipText, active && styles.tabChipTextActive]}>
-                  {tab.label}
-                </Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
+          <Ionicons
+            name="funnel-outline"
+            size={13}
+            color={activeTabKey !== 'ALL' ? '#FFFFFF' : theme.colors.primary}
+          />
+          <Text
+            style={[
+              styles.dropdownFilterBtnText,
+              activeTabKey !== 'ALL' && styles.dropdownFilterBtnTextActive,
+            ]}
+            numberOfLines={1}
+          >
+            {STATUS_TABS.find((t) => t.key === activeTabKey)?.shortLabel || 'Trạng thái'}
+          </Text>
+          <Ionicons
+            name="chevron-down"
+            size={12}
+            color={activeTabKey !== 'ALL' ? '#FFFFFF' : theme.colors.textSecondary}
+          />
+        </TouchableOpacity>
+
+        {/* 2. Dropdown Hình thức dịch vụ */}
+        <TouchableOpacity
+          style={[
+            styles.dropdownFilterBtn,
+            sessionFilter !== 'ALL' && styles.dropdownFilterBtnActive,
+          ]}
+          onPress={() => setSessionModalVisible(true)}
+          activeOpacity={0.85}
+          accessibilityRole="button"
+          accessibilityLabel="Lọc theo hình thức dịch vụ"
+        >
+          <Ionicons
+            name={
+              (SESSION_FILTER_OPTIONS.find((s) => s.key === sessionFilter)?.icon ||
+                'layers-outline') as any
+            }
+            size={13}
+            color={sessionFilter !== 'ALL' ? '#FFFFFF' : theme.colors.primary}
+          />
+          <Text
+            style={[
+              styles.dropdownFilterBtnText,
+              sessionFilter !== 'ALL' && styles.dropdownFilterBtnTextActive,
+            ]}
+            numberOfLines={1}
+          >
+            {SESSION_FILTER_OPTIONS.find((s) => s.key === sessionFilter)?.shortLabel || 'Dịch vụ'}
+          </Text>
+          <Ionicons
+            name="chevron-down"
+            size={12}
+            color={sessionFilter !== 'ALL' ? '#FFFFFF' : theme.colors.textSecondary}
+          />
+        </TouchableOpacity>
+
+        {/* 3. Dropdown Thời gian */}
+        <TouchableOpacity
+          style={[
+            styles.dropdownFilterBtn,
+            dateFilter !== 'ALL' && styles.dropdownFilterBtnActive,
+          ]}
+          onPress={() => setDateModalVisible(true)}
+          activeOpacity={0.85}
+          accessibilityRole="button"
+          accessibilityLabel="Lọc theo thời gian"
+        >
+          <Ionicons
+            name="calendar-outline"
+            size={13}
+            color={dateFilter !== 'ALL' ? '#FFFFFF' : theme.colors.primary}
+          />
+          <Text
+            style={[
+              styles.dropdownFilterBtnText,
+              dateFilter !== 'ALL' && styles.dropdownFilterBtnTextActive,
+            ]}
+            numberOfLines={1}
+          >
+            {DATE_FILTER_OPTIONS.find((d) => d.key === dateFilter)?.shortLabel || 'Thời gian'}
+          </Text>
+          <Ionicons
+            name="chevron-down"
+            size={12}
+            color={dateFilter !== 'ALL' ? '#FFFFFF' : theme.colors.textSecondary}
+          />
+        </TouchableOpacity>
+
+        {/* Nút xóa lọc nhanh */}
+        {(activeTabKey !== 'ALL' || sessionFilter !== 'ALL' || dateFilter !== 'ALL') && (
+          <TouchableOpacity
+            style={styles.filterResetIconBtn}
+            onPress={() => {
+              setActiveTabKey('ALL');
+              setSessionFilter('ALL');
+              setDateFilter('ALL');
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="Xóa bộ lọc"
+          >
+            <Ionicons name="refresh" size={14} color={theme.colors.primary} />
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* ── BOOKINGS LIST ── */}
@@ -229,7 +419,7 @@ export const MyBookingsScreen: React.FC = () => {
         </View>
       ) : (
         <FlatList
-          data={bookings}
+          data={displayedBookings}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.listContent}
           refreshControl={
@@ -246,9 +436,9 @@ export const MyBookingsScreen: React.FC = () => {
               <Ionicons name="calendar-clear-outline" size={54} color="#D1C7B7" />
               <Text style={styles.emptyTitle}>Chưa có lịch hẹn nào</Text>
               <Text style={styles.emptySubtitle}>
-                {activeTabKey === 'ALL'
+                {activeTabKey === 'ALL' && sessionFilter === 'ALL' && dateFilter === 'ALL'
                   ? 'Bạn chưa đặt lịch hẹn tư vấn nào. Hãy tìm chuyên gia để được giải đáp thắc mắc về thuế.'
-                  : 'Không có lịch hẹn nào ở trạng thái này.'}
+                  : 'Không có lịch hẹn nào khớp với bộ lọc hiện tại.'}
               </Text>
               <TouchableOpacity
                 style={styles.findExpertBtn}
@@ -260,7 +450,7 @@ export const MyBookingsScreen: React.FC = () => {
             </View>
           }
           renderItem={({ item }) => {
-            const statusInfo = formatBookingStatus(item.status);
+            const statusInfo = formatBookingStatus(item.status, item.noShowType, false);
             const sessionInfo = formatSessionType(item.sessionType);
 
             return (
@@ -269,17 +459,18 @@ export const MyBookingsScreen: React.FC = () => {
                 activeOpacity={0.88}
                 onPress={() => navigation.navigate('BookingDetail', { bookingId: item.id })}
               >
-                {/* Header: Session Badge & Status */}
+                {/* Header: Session & Status Indicator */}
                 <View style={styles.cardHeader}>
-                  <View style={[styles.sessionBadge, { backgroundColor: `${sessionInfo.color}15` }]}>
-                    <Ionicons name={sessionInfo.icon as any} size={12} color={sessionInfo.color} />
-                    <Text style={[styles.sessionBadgeText, { color: sessionInfo.color }]}>
+                  <View style={styles.sessionMeta}>
+                    <Ionicons name={sessionInfo.icon as any} size={14} color="#666666" />
+                    <Text style={styles.sessionMetaText}>
                       {sessionInfo.label}
                     </Text>
                   </View>
 
-                  <View style={[styles.statusBadge, { backgroundColor: statusInfo.bg }]}>
-                    <Text style={[styles.statusBadgeText, { color: statusInfo.color }]}>
+                  <View style={styles.statusIndicatorRow}>
+                    <View style={[styles.statusDot, { backgroundColor: statusInfo.color }]} />
+                    <Text style={[styles.statusIndicatorText, { color: statusInfo.color }]}>
                       {statusInfo.label}
                     </Text>
                   </View>
@@ -287,6 +478,50 @@ export const MyBookingsScreen: React.FC = () => {
 
                 {/* Countdown banner if applicable */}
                 {renderHoldTimer(item)}
+
+                {/* No-Show Notice Strip */}
+                {item.noShowType === 'USER_NO_SHOW' && (
+                  <View
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      backgroundColor: '#FFF7ED',
+                      borderWidth: 1,
+                      borderColor: '#FED7AA',
+                      borderRadius: 8,
+                      paddingHorizontal: 10,
+                      paddingVertical: 7,
+                      marginBottom: 10,
+                      gap: 6,
+                    }}
+                  >
+                    <Ionicons name="alert-circle" size={15} color="#C2410C" />
+                    <Text style={{ flex: 1, fontFamily: fonts.bodySemi, fontSize: 12, color: '#9A3412' }}>
+                      Bạn không tham gia phòng tư vấn sau 15 phút • Hệ thống tự động đóng ca
+                    </Text>
+                  </View>
+                )}
+                {item.noShowType === 'EXPERT_NO_SHOW' && (
+                  <View
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      backgroundColor: '#ECFDF5',
+                      borderWidth: 1,
+                      borderColor: '#A7F3D0',
+                      borderRadius: 8,
+                      paddingHorizontal: 10,
+                      paddingVertical: 7,
+                      marginBottom: 10,
+                      gap: 6,
+                    }}
+                  >
+                    <Ionicons name="shield-checkmark" size={15} color="#059669" />
+                    <Text style={{ flex: 1, fontFamily: fonts.bodySemi, fontSize: 12, color: '#065F46' }}>
+                      Chuyên gia vắng mặt quá 15 phút • Đã hoàn tiền 100% về ví
+                    </Text>
+                  </View>
+                )}
 
                 {/* Expert info row */}
                 <View style={styles.expertRow}>
@@ -327,13 +562,6 @@ export const MyBookingsScreen: React.FC = () => {
                       ({formatTimeRange(item.startTime, item.endTime)})
                     </Text>
                   </View>
-
-                  <View style={[styles.sessionBadge, { backgroundColor: `${sessionInfo.color}18` }]}>
-                    <Ionicons name={sessionInfo.icon as any} size={11} color={sessionInfo.color} />
-                    <Text style={[styles.sessionBadgeText, { color: sessionInfo.color }]}>
-                      {sessionInfo.label}
-                    </Text>
-                  </View>
                 </View>
 
                 {/* Card footer: Fee & action */}
@@ -361,6 +589,141 @@ export const MyBookingsScreen: React.FC = () => {
           }
         />
       )}
+
+      {/* ── MODAL LỌC TRẠNG THÁI ── */}
+      <Modal
+        visible={statusModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setStatusModalVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.dropdownModalOverlay}
+          activeOpacity={1}
+          onPress={() => setStatusModalVisible(false)}
+        >
+          <View style={styles.dropdownModalCard}>
+            <View style={styles.dropdownModalHeader}>
+              <Text style={styles.dropdownModalTitle}>Lọc theo trạng thái</Text>
+              <TouchableOpacity onPress={() => setStatusModalVisible(false)}>
+                <Ionicons name="close" size={20} color="#666666" />
+              </TouchableOpacity>
+            </View>
+            {STATUS_TABS.map((opt) => {
+              const selected = activeTabKey === opt.key;
+              return (
+                <TouchableOpacity
+                  key={opt.key}
+                  style={[styles.dropdownOptionItem, selected && styles.dropdownOptionItemActive]}
+                  onPress={() => {
+                    setActiveTabKey(opt.key);
+                    setStatusModalVisible(false);
+                  }}
+                >
+                  <Text style={[styles.dropdownOptionText, selected && styles.dropdownOptionTextActive]}>
+                    {opt.label}
+                  </Text>
+                  {selected && <Ionicons name="checkmark-circle" size={18} color={theme.colors.primary} />}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* ── MODAL LỌC DỊCH VỤ ── */}
+      <Modal
+        visible={sessionModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSessionModalVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.dropdownModalOverlay}
+          activeOpacity={1}
+          onPress={() => setSessionModalVisible(false)}
+        >
+          <View style={styles.dropdownModalCard}>
+            <View style={styles.dropdownModalHeader}>
+              <Text style={styles.dropdownModalTitle}>Lọc theo hình thức dịch vụ</Text>
+              <TouchableOpacity onPress={() => setSessionModalVisible(false)}>
+                <Ionicons name="close" size={20} color="#666666" />
+              </TouchableOpacity>
+            </View>
+            {SESSION_FILTER_OPTIONS.filter(
+              (opt) =>
+                opt.key === 'ALL' ||
+                configuredSessionTypes.includes(opt.key) ||
+                bookings.some((b) => b.sessionType === opt.key)
+            ).map((opt) => {
+              const selected = sessionFilter === opt.key;
+              return (
+                <TouchableOpacity
+                  key={opt.key}
+                  style={[styles.dropdownOptionItem, selected && styles.dropdownOptionItemActive]}
+                  onPress={() => {
+                    setSessionFilter(opt.key);
+                    setSessionModalVisible(false);
+                  }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Ionicons
+                      name={opt.icon as any}
+                      size={16}
+                      color={selected ? theme.colors.primary : '#555555'}
+                    />
+                    <Text style={[styles.dropdownOptionText, selected && styles.dropdownOptionTextActive]}>
+                      {opt.label}
+                    </Text>
+                  </View>
+                  {selected && <Ionicons name="checkmark-circle" size={18} color={theme.colors.primary} />}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* ── MODAL LỌC THỜI GIAN ── */}
+      <Modal
+        visible={dateModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setDateModalVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.dropdownModalOverlay}
+          activeOpacity={1}
+          onPress={() => setDateModalVisible(false)}
+        >
+          <View style={styles.dropdownModalCard}>
+            <View style={styles.dropdownModalHeader}>
+              <Text style={styles.dropdownModalTitle}>Lọc theo thời gian</Text>
+              <TouchableOpacity onPress={() => setDateModalVisible(false)}>
+                <Ionicons name="close" size={20} color="#666666" />
+              </TouchableOpacity>
+            </View>
+            {DATE_FILTER_OPTIONS.map((opt) => {
+              const selected = dateFilter === opt.key;
+              return (
+                <TouchableOpacity
+                  key={opt.key}
+                  style={[styles.dropdownOptionItem, selected && styles.dropdownOptionItemActive]}
+                  onPress={() => {
+                    setDateFilter(opt.key);
+                    setDateModalVisible(false);
+                  }}
+                >
+                  <Text style={[styles.dropdownOptionText, selected && styles.dropdownOptionTextActive]}>
+                    {opt.label}
+                  </Text>
+                  {selected && <Ionicons name="checkmark-circle" size={18} color={theme.colors.primary} />}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -376,7 +739,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'transparent',
+    zIndex: 1,
   },
   backBtn: {
     width: 38,
@@ -384,12 +748,13 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#F3EFE6',
+    backgroundColor: 'rgba(243, 239, 230, 0.85)',
   },
   headerTitle: {
     fontFamily: fonts.serifBold,
-    fontSize: 16,
-    color: theme.colors.primary,
+    fontSize: 18,
+    lineHeight: 24,
+    color: theme.colors.primaryDark,
   },
   newBookingBtn: {
     width: 38,
@@ -397,40 +762,109 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#FAF5EE',
+    backgroundColor: 'rgba(255, 253, 247, 0.92)',
     borderWidth: 1,
     borderColor: theme.colors.goldLight,
   },
 
-  tabsWrap: {
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-  },
-  tabsScrollContent: {
+  filterDropdownRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 10,
     gap: 8,
+    backgroundColor: 'transparent',
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
   },
-  tabChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 18,
-    backgroundColor: '#F5EFE4',
+  dropdownFilterBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(255, 253, 247, 0.92)',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 9,
     borderWidth: 1,
-    borderColor: '#E6DDD0',
+    borderColor: '#E5DEC9',
+    gap: 4,
   },
-  tabChipActive: {
+  dropdownFilterBtnActive: {
     backgroundColor: theme.colors.primary,
     borderColor: theme.colors.primary,
   },
-  tabChipText: {
+  dropdownFilterBtnText: {
+    flex: 1,
     fontFamily: fonts.bodySemi,
-    fontSize: 12,
-    color: '#666666',
+    fontSize: 11.5,
+    color: theme.colors.textPrimary,
   },
-  tabChipTextActive: {
+  dropdownFilterBtnTextActive: {
     color: '#FFFFFF',
+    fontFamily: fonts.bodyBold,
+  },
+  filterResetIconBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 9,
+    backgroundColor: '#FFF5F5',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  dropdownModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  dropdownModalCard: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: '#FFFDF7',
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: '#E6D5B8',
+    ...theme.shadows.card,
+  },
+  dropdownModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingBottom: 10,
+    marginBottom: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: '#EFE8D8',
+  },
+  dropdownModalTitle: {
+    fontFamily: fonts.serifBold,
+    fontSize: 15,
+    color: theme.colors.primaryDark,
+  },
+  dropdownOptionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 11,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+  },
+  dropdownOptionItemActive: {
+    backgroundColor: '#FDF8EE',
+  },
+  dropdownOptionText: {
+    fontFamily: fonts.body,
+    fontSize: 13,
+    color: theme.colors.textPrimary,
+  },
+  dropdownOptionTextActive: {
+    fontFamily: fonts.bodyBold,
+    color: theme.colors.primary,
   },
 
   listContent: {
@@ -464,62 +898,49 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: theme.colors.primary,
   },
-  statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 4,
-  },
-  statusBadgeText: {
-    fontFamily: fonts.bodyBold,
-    fontSize: 11,
-  },
-
-  countdownBadge: {
+  sessionMeta: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FEF3C7',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-    gap: 4,
-    marginBottom: 10,
-    alignSelf: 'flex-start',
+    gap: 5,
   },
-  countdownBadgeText: {
-    fontFamily: fonts.bodyBold,
-    fontSize: 11,
-    color: '#B45309',
+  sessionMetaText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 12,
+    color: '#4B5563',
   },
-  approvalCountdownBadge: {
+  statusIndicatorRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#DBEAFE',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-    gap: 4,
-    marginBottom: 10,
-    alignSelf: 'flex-start',
+    gap: 6,
   },
-  approvalCountdownText: {
-    fontFamily: fonts.bodyBold,
-    fontSize: 11,
-    color: '#1E40AF',
+  statusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
   },
-  expiredBadge: {
+  statusIndicatorText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 12,
+  },
+  timerMetaRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FEE2E2',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-    gap: 4,
-    marginBottom: 10,
-    alignSelf: 'flex-start',
+    gap: 5,
+    marginBottom: 8,
   },
-  expiredBadgeText: {
+  timerMetaWarning: {
     fontFamily: fonts.bodyBold,
-    fontSize: 11,
+    fontSize: 11.5,
+    color: '#D97706',
+  },
+  timerMetaInfo: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 11.5,
+    color: '#2563EB',
+  },
+  timerMetaExpired: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 11.5,
     color: '#DC2626',
   },
 
@@ -598,18 +1019,7 @@ const styles = StyleSheet.create({
     color: '#555555',
     fontVariant: ['tabular-nums'],
   },
-  sessionBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-    gap: 3,
-  },
-  sessionBadgeText: {
-    fontFamily: fonts.bodySemi,
-    fontSize: 10,
-  },
+
 
   cardFooter: {
     flexDirection: 'row',

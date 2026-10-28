@@ -117,6 +117,15 @@ export const HomeScreen: React.FC = () => {
       const count = await notificationApi.getUnreadCount();
       setUnreadCount(count);
 
+      notificationApi
+        .getNotifications({ size: 20 })
+        .then((notifData) => {
+          if (notifData?.items) {
+            setNotifications(notifData.items);
+          }
+        })
+        .catch(() => {});
+
       // Nhắc nhở ca họp trực tuyến sắp diễn ra
       consultationApi
         .getUpcomingMeetingReminder()
@@ -244,8 +253,85 @@ export const HomeScreen: React.FC = () => {
     await Promise.all(unreadItems.map((n) => notificationApi.markAsRead(n.notificationId)));
   };
 
+  const extractConsultationBookingTarget = useCallback(
+    (
+      item: NotificationItem
+    ): { bookingId?: string; isExpertView: boolean; isConsultationNotif: boolean } => {
+      const url = item.targetActionUrl || '';
+      const type = item.notificationType || '';
+      const expertMatch = url.match(/\/expert\/bookings\/([0-9a-fA-F-]{36})/i);
+      if (expertMatch?.[1]) {
+        return { bookingId: expertMatch[1], isExpertView: true, isConsultationNotif: true };
+      }
+      const userMatch = url.match(/\/(?:consultation\/bookings|consultations|bookings)\/([0-9a-fA-F-]{36})/i);
+      const isExpertType =
+        type === 'USER_NO_SHOW_EXPERT_NOTIFIED' || type === 'EXPERT_NO_SHOW_PENALTY';
+      if (userMatch?.[1]) {
+        return {
+          bookingId: userMatch[1],
+          isExpertView: isExpertType,
+          isConsultationNotif: true,
+        };
+      }
+      const isConsultationNotif =
+        [
+          'USER_NO_SHOW',
+          'USER_NO_SHOW_CLOSED',
+          'USER_NO_SHOW_EXPERT_NOTIFIED',
+          'EXPERT_NO_SHOW_REFUND',
+          'EXPERT_NO_SHOW_REFUNDED',
+          'EXPERT_NO_SHOW_PENALTY',
+          'CONSULTATION_COMPLETED',
+          'CONSULTATION_BOOKING',
+          'DISPUTE_RESOLVED',
+        ].includes(type) ||
+        url.includes('/consultation') ||
+        url.includes('/bookings');
+
+      return {
+        bookingId: undefined,
+        isExpertView: isExpertType,
+        isConsultationNotif,
+      };
+    },
+    []
+  );
+
+  const unreadNoShowNotifications = useMemo(
+    () =>
+      notifications.filter(
+        (n) =>
+          !n.isRead &&
+          [
+            'USER_NO_SHOW',
+            'USER_NO_SHOW_CLOSED',
+            'USER_NO_SHOW_EXPERT_NOTIFIED',
+            'EXPERT_NO_SHOW_REFUND',
+            'EXPERT_NO_SHOW_REFUNDED',
+            'EXPERT_NO_SHOW_PENALTY',
+          ].includes(n.notificationType)
+      ),
+    [notifications]
+  );
+
   const handleNotificationPress = async (item: NotificationItem) => {
     await handleMarkAsRead(item);
+
+    const consultationTarget = extractConsultationBookingTarget(item);
+    if (consultationTarget.isConsultationNotif) {
+      setNotifModalVisible(false);
+      if (consultationTarget.bookingId) {
+        navigation.navigate('BookingDetail', {
+          bookingId: consultationTarget.bookingId,
+          isExpertView: consultationTarget.isExpertView,
+        });
+      } else if (consultationTarget.isExpertView) {
+        navigation.navigate('ExpertBookings');
+      } else {
+        navigation.navigate('MyBookings');
+      }
+      return;
+    }
 
     if (
       item.notificationType === 'AGE_TRANSITION_ALERT' ||
@@ -431,6 +517,83 @@ export const HomeScreen: React.FC = () => {
               </TouchableOpacity>
             ))
           )}
+
+          {/* ── BANNER CẢNH BÁO CA TƯ VẤN ĐÓNG DO VẮNG MẶT (NO-SHOW) CHƯA ĐỌC ── */}
+          {unreadNoShowNotifications.map((notif) => {
+            const isUserNoShowForCustomer =
+              notif.notificationType === 'USER_NO_SHOW' ||
+              notif.notificationType === 'USER_NO_SHOW_CLOSED';
+            const isExpertProtected = notif.notificationType === 'USER_NO_SHOW_EXPERT_NOTIFIED';
+            return (
+              <TouchableOpacity
+                key={notif.notificationId}
+                activeOpacity={0.85}
+                onPress={() => handleNotificationPress(notif)}
+                style={{
+                  backgroundColor: isExpertProtected
+                    ? '#ECFDF5'
+                    : isUserNoShowForCustomer
+                    ? '#FFF7ED'
+                    : '#FEF2F2',
+                  borderWidth: 1,
+                  borderColor: isExpertProtected
+                    ? '#A7F3D0'
+                    : isUserNoShowForCustomer
+                    ? '#FED7AA'
+                    : '#FECACA',
+                  borderRadius: 12,
+                  padding: 14,
+                  marginBottom: 14,
+                }}
+                testID={`homeNoShowAlert_${notif.notificationId}`}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <Ionicons
+                    name={isExpertProtected ? 'shield-checkmark' : 'alert-circle'}
+                    size={18}
+                    color={isExpertProtected ? '#059669' : isUserNoShowForCustomer ? '#C2410C' : '#DC2626'}
+                  />
+                  <Text
+                    style={{
+                      flex: 1,
+                      fontFamily: fonts.serifBold,
+                      fontSize: 14,
+                      color: isExpertProtected ? '#065F46' : isUserNoShowForCustomer ? '#9A3412' : '#991B1B',
+                    }}
+                  >
+                    {notif.title}
+                  </Text>
+                </View>
+                <Text
+                  style={{
+                    fontFamily: fonts.body,
+                    fontSize: 12.5,
+                    lineHeight: 18,
+                    color: isExpertProtected ? '#047857' : isUserNoShowForCustomer ? '#C2410C' : '#B91C1C',
+                    marginBottom: 8,
+                  }}
+                >
+                  {notif.message}
+                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
+                  <Text
+                    style={{
+                      fontFamily: fonts.bodyBold,
+                      fontSize: 12,
+                      color: isExpertProtected ? '#059669' : isUserNoShowForCustomer ? '#C2410C' : '#DC2626',
+                    }}
+                  >
+                    Xem chi tiết ca tư vấn
+                  </Text>
+                  <Ionicons
+                    name="chevron-forward"
+                    size={14}
+                    color={isExpertProtected ? '#059669' : isUserNoShowForCustomer ? '#C2410C' : '#DC2626'}
+                  />
+                </View>
+              </TouchableOpacity>
+            );
+          })}
 
           {/* Banner lịch hẹn trực tuyến sắp diễn ra */}
           {upcomingMeeting && upcomingMeeting.hasUpcomingMeeting ? (
@@ -792,9 +955,22 @@ export const HomeScreen: React.FC = () => {
                 const isAgeReminder =
                   item.notificationType === 'AGE_TRANSITION_ALERT' ||
                   item.title.toLowerCase().includes('18 tuổi');
+                const consultationTarget = extractConsultationBookingTarget(item);
+                const isNoShowAlert = [
+                  'USER_NO_SHOW',
+                  'USER_NO_SHOW_CLOSED',
+                  'USER_NO_SHOW_EXPERT_NOTIFIED',
+                  'EXPERT_NO_SHOW_REFUND',
+                  'EXPERT_NO_SHOW_REFUNDED',
+                  'EXPERT_NO_SHOW_PENALTY',
+                ].includes(item.notificationType);
                 return (
                   <TouchableOpacity
-                    style={[styles.notifCard, !item.isRead && styles.notifCardUnread]}
+                    style={[
+                      styles.notifCard,
+                      !item.isRead && styles.notifCardUnread,
+                      isNoShowAlert && !item.isRead && { borderColor: '#FED7AA', backgroundColor: '#FFFBF5' },
+                    ]}
                     activeOpacity={0.7}
                     onPress={() => handleNotificationPress(item)}
                   >
@@ -808,7 +984,11 @@ export const HomeScreen: React.FC = () => {
                       })}
                     </Text>
                     <Text
-                      style={[styles.notifItemTitle, !item.isRead && styles.notifItemTitleUnread]}
+                      style={[
+                        styles.notifItemTitle,
+                        !item.isRead && styles.notifItemTitleUnread,
+                        isNoShowAlert && { color: '#9A3412' },
+                      ]}
                       numberOfLines={2}
                     >
                       {humanizeGroupCodes(item.title)}
@@ -818,6 +998,8 @@ export const HomeScreen: React.FC = () => {
                     </Text>
                     {isAgeReminder ? (
                       <Text style={styles.notifActionPrompt}>Bổ sung giấy tờ</Text>
+                    ) : consultationTarget.isConsultationNotif ? (
+                      <Text style={styles.notifActionPrompt}>Xem chi tiết ca tư vấn →</Text>
                     ) : null}
                   </TouchableOpacity>
                 );

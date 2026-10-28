@@ -3,6 +3,7 @@ import {
   canUserDispute,
   canConfirmSatisfaction,
   canExpertComplete,
+  isBookingScheduleArrived,
   validateReviewInput,
   validateDisputeInput,
   validateExpertResponse,
@@ -31,6 +32,11 @@ describe('consultationBookingDetailUtils', () => {
 
     it('returns false when review eligibility is explicitly false', () => {
       expect(canUserReview('COMPLETED', false, { canReview: false, alreadyReviewed: true })).toBe(false);
+    });
+
+    it('returns false when noShowType is USER_NO_SHOW', () => {
+      expect(canUserReview('COMPLETED', false, { canReview: true, alreadyReviewed: false }, false, 'USER_NO_SHOW')).toBe(false);
+      expect(canUserReview('SETTLED', false, null, false, 'USER_NO_SHOW')).toBe(false);
     });
   });
 
@@ -64,7 +70,7 @@ describe('consultationBookingDetailUtils', () => {
       expect(canExpertComplete('COMPLETED', false)).toBe(false);
     });
 
-    it('returns true for expert view when status is CONFIRMED or IN_PROGRESS', () => {
+    it('returns true for expert view when status is CONFIRMED or IN_PROGRESS (fallback without slot)', () => {
       expect(canExpertComplete('CONFIRMED', true)).toBe(true);
       expect(canExpertComplete('IN_PROGRESS', true)).toBe(true);
     });
@@ -74,6 +80,68 @@ describe('consultationBookingDetailUtils', () => {
       expect(canExpertComplete('SETTLED', true)).toBe(false);
       expect(canExpertComplete('CANCELLED', true)).toBe(false);
       expect(canExpertComplete('AWAITING_EXPERT_APPROVAL', true)).toBe(false);
+    });
+
+    it('hides complete button (returns false) when status is CONFIRMED but schedule has NOT arrived', () => {
+      const refDate = new Date('2026-10-27T10:00:00');
+
+      // Ngày tương lai
+      expect(canExpertComplete('CONFIRMED', true, '2026-10-28', '09:00:00', refDate)).toBe(false);
+      expect(canExpertComplete('CONFIRMED', true, '2026-11-01', '14:00:00', refDate)).toBe(false);
+
+      // Cùng ngày nhưng chưa đến giờ hẹn
+      expect(canExpertComplete('CONFIRMED', true, '2026-10-27', '10:30:00', refDate)).toBe(false);
+      expect(canExpertComplete('CONFIRMED', true, '2026-10-27', '14:00', refDate)).toBe(false);
+    });
+
+    it('shows complete button (returns true) when status is CONFIRMED and schedule HAS arrived', () => {
+      const refDate = new Date('2026-10-27T10:00:00');
+
+      // Ngày quá khứ
+      expect(canExpertComplete('CONFIRMED', true, '2026-10-26', '09:00:00', refDate)).toBe(true);
+      expect(canExpertComplete('CONFIRMED', true, '2026-10-20', '15:00:00', refDate)).toBe(true);
+
+      // Cùng ngày và đã đến/qua giờ hẹn
+      expect(canExpertComplete('CONFIRMED', true, '2026-10-27', '09:00:00', refDate)).toBe(true);
+      expect(canExpertComplete('CONFIRMED', true, '2026-10-27', '10:00:00', refDate)).toBe(true);
+    });
+
+    it('always shows complete button for IN_PROGRESS even if slot is upcoming', () => {
+      const refDate = new Date('2026-10-27T10:00:00');
+      expect(canExpertComplete('IN_PROGRESS', true, '2026-10-28', '14:00:00', refDate)).toBe(true);
+    });
+  });
+
+  describe('isBookingScheduleArrived', () => {
+    const refDate = new Date('2026-10-27T14:30:00');
+
+    it('returns false for missing date or time', () => {
+      expect(isBookingScheduleArrived(undefined, '14:00:00', refDate)).toBe(false);
+      expect(isBookingScheduleArrived('2026-10-27', undefined, refDate)).toBe(false);
+    });
+
+    it('returns false when meeting date is in the future', () => {
+      expect(isBookingScheduleArrived('2026-10-28', '09:00:00', refDate)).toBe(false);
+    });
+
+    it('returns true when meeting date is in the past', () => {
+      expect(isBookingScheduleArrived('2026-10-26', '16:00:00', refDate)).toBe(true);
+    });
+
+    it('returns false when meeting is today but start time is in the future', () => {
+      expect(isBookingScheduleArrived('2026-10-27', '15:00:00', refDate)).toBe(false);
+      expect(isBookingScheduleArrived('2026-10-27', '14:31', refDate)).toBe(false);
+    });
+
+    it('returns true when meeting is today and start time has arrived or passed', () => {
+      expect(isBookingScheduleArrived('2026-10-27', '14:30:00', refDate)).toBe(true);
+      expect(isBookingScheduleArrived('2026-10-27', '14:00', refDate)).toBe(true);
+      expect(isBookingScheduleArrived('2026-10-27', '08:00:00', refDate)).toBe(true);
+    });
+
+    it('correctly handles ISO date string format', () => {
+      expect(isBookingScheduleArrived('2026-10-27T00:00:00.000Z', '14:00', refDate)).toBe(true);
+      expect(isBookingScheduleArrived('2026-10-28T00:00:00.000Z', '14:00', refDate)).toBe(false);
     });
   });
 

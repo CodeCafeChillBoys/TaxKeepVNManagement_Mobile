@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -11,12 +11,17 @@ import {
   RefreshControl,
   ScrollView,
   Modal,
+  BackHandler,
+  Dimensions,
+  NativeSyntheticEvent,
+  NativeScrollEvent,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
+import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
 import { RootNavigationProp } from '../../navigation/types';
 import { consultationApi } from '../../api/consultationApi';
@@ -37,6 +42,11 @@ const TIME_FILTERS: { key: ExpertTimeFilter; label: string }[] = [
   { key: 'Next7Days', label: '7 ngày tới' },
 ];
 
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const BANNER_CARD_WIDTH = Math.max(280, SCREEN_WIDTH - 32);
+const BANNER_CARD_GAP = 12;
+const BANNER_SNAP_INTERVAL = BANNER_CARD_WIDTH + BANNER_CARD_GAP;
+
 const SORT_OPTIONS: { key: ExpertSortBy; label: string }[] = [
   { key: 'Recommended', label: 'Đề xuất ưu tiên' },
   { key: 'RatingDesc', label: 'Đánh giá cao nhất' },
@@ -45,6 +55,316 @@ const SORT_OPTIONS: { key: ExpertSortBy; label: string }[] = [
   { key: 'ExperienceDesc', label: 'Kinh nghiệm nhiều nhất' },
   { key: 'CompletedSessionsDesc', label: 'Nhiều ca hoàn thành' },
 ];
+
+interface FeaturedBannerSlideItemProps {
+  item: ExpertListItemResponse;
+  rank: number;
+  onPress: () => void;
+}
+
+const FeaturedBannerSlideItem: React.FC<FeaturedBannerSlideItemProps> = ({
+  item,
+  rank,
+  onPress,
+}) => {
+  const [imgError, setImgError] = useState(false);
+  const isValidHttp = isValidAvatarUrl(item.avatarUrl);
+  const nameParts = (item.fullName || 'Chuyên gia').trim().split(/\s+/);
+  const displayInitial = (nameParts[nameParts.length - 1]?.charAt(0) || 'C').toUpperCase();
+
+  return (
+    <TouchableOpacity
+      style={styles.bannerSlideCard}
+      activeOpacity={0.9}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`Chuyên gia đề xuất hạng ${rank} ${item.fullName}`}
+    >
+      {/* Decorative top gold accent line */}
+      <View style={styles.bannerGoldTopAccent} />
+
+      {/* Top Ribbon: Rank + Verified Certs + Slot Availability */}
+      <View style={styles.bannerTopBar}>
+        <View style={styles.bannerTopLeftBadges}>
+          <View style={styles.bannerRankBadge}>
+            <Ionicons name="trophy" size={11} color="#6B1414" />
+            <Text style={styles.bannerRankText}>TOP #{rank} ĐỀ XUẤT</Text>
+          </View>
+          {item.verifiedCertificateCount > 0 && (
+            <View style={styles.bannerCertBadge}>
+              <Ionicons name="shield-checkmark" size={11} color="#FDE68A" />
+              <Text style={styles.bannerCertText}>
+                {item.verifiedCertificateCount} chứng chỉ
+              </Text>
+            </View>
+          )}
+        </View>
+
+        {item.hasAvailableSlotSoon ? (
+          <View style={styles.bannerSlotReadyPill}>
+            <View style={styles.bannerSlotDot} />
+            <Text style={styles.bannerSlotReadyText} numberOfLines={1}>
+              {item.earliestAvailableDate
+                ? `Lịch sớm: ${formatVietnameseDate(item.earliestAvailableDate)}`
+                : 'Có lịch rảnh'}
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.bannerSlotFlexPill}>
+            <Ionicons name="time-outline" size={10} color="#E5D5B5" />
+            <Text style={styles.bannerSlotFlexText}>Lịch linh hoạt</Text>
+          </View>
+        )}
+      </View>
+
+      {/* Main Content: Avatar + Details */}
+      <View style={styles.bannerBodyRow}>
+        <View style={styles.bannerAvatarContainer}>
+          {isValidHttp && !imgError ? (
+            <Image
+              source={{ uri: item.avatarUrl! }}
+              style={styles.bannerAvatarImg}
+              onError={() => setImgError(true)}
+            />
+          ) : (
+            <View style={styles.bannerAvatarFallback}>
+              <Text style={styles.bannerAvatarInitial}>{displayInitial}</Text>
+            </View>
+          )}
+          <View style={styles.bannerVerifiedBadge}>
+            <Ionicons name="checkmark" size={10} color="#FFFFFF" />
+          </View>
+        </View>
+
+        <View style={styles.bannerInfoCol}>
+          <Text style={styles.bannerExpertName} numberOfLines={1}>
+            {item.fullName}
+          </Text>
+          <Text style={styles.bannerJobCompany} numberOfLines={1}>
+            {item.jobTitle || 'Chuyên gia tư vấn thuế'}
+            {item.companyName ? ` • ${item.companyName}` : ''}
+          </Text>
+
+          {/* Metrics Row */}
+          <View style={styles.bannerMetricsRow}>
+            <View style={styles.bannerRatingPill}>
+              <Ionicons name="star" size={11} color="#FBBF24" />
+              <Text style={styles.bannerRatingVal}>
+                {item.rating > 0 ? item.rating.toFixed(1) : '5.0'}
+              </Text>
+              <Text style={styles.bannerReviewCnt}>({item.totalReviews})</Text>
+            </View>
+
+            {item.yearsOfExperience > 0 && (
+              <View style={styles.bannerMetricDividerPill}>
+                <Text style={styles.bannerMetricText}>{item.yearsOfExperience} năm KN</Text>
+              </View>
+            )}
+
+            <View style={styles.bannerMetricDividerPill}>
+              <Text style={styles.bannerMetricText}>
+                {item.completedConsultationsCount} ca tư vấn
+              </Text>
+            </View>
+          </View>
+
+          {/* Specializations Row */}
+          {item.specializationNames && item.specializationNames.length > 0 && (
+            <View style={styles.bannerSpecsRow}>
+              {item.specializationNames.slice(0, 2).map((specName, idx) => (
+                <View key={idx} style={styles.bannerSpecChip}>
+                  <Text style={styles.bannerSpecChipText} numberOfLines={1}>
+                    {specName}
+                  </Text>
+                </View>
+              ))}
+              {item.specializationNames.length > 2 && (
+                <View style={styles.bannerSpecMoreChip}>
+                  <Text style={styles.bannerSpecMoreText}>
+                    +{item.specializationNames.length - 2}
+                  </Text>
+                </View>
+              )}
+            </View>
+          )}
+        </View>
+      </View>
+
+      {/* Bottom Footer Bar: Starting Fee + Book Now CTA */}
+      <View style={styles.bannerFooterBar}>
+        <View style={styles.bannerFeeWrap}>
+          <Text style={styles.bannerFeeLabel}>Phí tư vấn từ </Text>
+          <Text style={styles.bannerFeeValue}>{formatVnd(item.startingFee)}</Text>
+        </View>
+
+        <View style={styles.bannerCtaBtn}>
+          <Text style={styles.bannerCtaBtnText}>Đặt lịch ngay</Text>
+          <Ionicons name="arrow-forward" size={13} color="#6B1414" />
+        </View>
+      </View>
+    </TouchableOpacity>
+  );
+};
+
+interface FeaturedExpertBannerCarouselProps {
+  items: ExpertListItemResponse[];
+  onPressExpert: (expertId: string) => void;
+}
+
+const FeaturedExpertBannerCarousel: React.FC<FeaturedExpertBannerCarouselProps> = ({
+  items,
+  onPressExpert,
+}) => {
+  const [activeIndex, setActiveIndex] = useState(0);
+  const flatListRef = useRef<FlatList<ExpertListItemResponse>>(null);
+  const isUserDraggingRef = useRef(false);
+
+  const safeIndex = items.length > 0 ? Math.min(activeIndex, items.length - 1) : 0;
+
+  const scrollToSlide = useCallback(
+    (targetIndex: number) => {
+      if (items.length === 0) return;
+      const clamped = ((targetIndex % items.length) + items.length) % items.length;
+      setActiveIndex(clamped);
+      flatListRef.current?.scrollToOffset({
+        offset: clamped * BANNER_SNAP_INTERVAL,
+        animated: true,
+      });
+    },
+    [items.length]
+  );
+
+  // Auto-slide every 4 seconds when there are multiple featured experts
+  useEffect(() => {
+    if (items.length <= 1) return;
+    const interval = setInterval(() => {
+      if (isUserDraggingRef.current) return;
+      setActiveIndex((prev) => {
+        const next = (prev + 1) % items.length;
+        flatListRef.current?.scrollToOffset({
+          offset: next * BANNER_SNAP_INTERVAL,
+          animated: true,
+        });
+        return next;
+      });
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, [items.length]);
+
+  const handleMomentumScrollEnd = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      isUserDraggingRef.current = false;
+      const offsetX = e.nativeEvent.contentOffset.x;
+      const idx = Math.round(offsetX / BANNER_SNAP_INTERVAL);
+      if (idx >= 0 && idx < items.length) {
+        setActiveIndex(idx);
+      }
+    },
+    [items.length]
+  );
+
+  if (items.length === 0) return null;
+
+  return (
+    <View style={styles.featuredContainer}>
+      {/* Header Row with Title & Slide Controls */}
+      <View style={styles.bannerHeaderRow}>
+        <View style={styles.sectionTitleRow}>
+          <View style={styles.sectionIconBadge}>
+            <Ionicons name="ribbon" size={14} color="#FFFDF7" />
+          </View>
+          <View>
+            <Text style={styles.sectionTitle}>Chuyên gia đề xuất hàng đầu</Text>
+            <Text style={styles.sectionSubtitle}>Xếp hạng tự động theo tiêu chí hệ thống</Text>
+          </View>
+        </View>
+
+        {items.length > 1 && (
+          <View style={styles.bannerNavControls}>
+            <TouchableOpacity
+              style={styles.bannerArrowBtn}
+              onPress={() => scrollToSlide(safeIndex - 1)}
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+              accessibilityLabel="Chuyên gia trước"
+            >
+              <Ionicons name="chevron-back" size={14} color={theme.colors.primary} />
+            </TouchableOpacity>
+            <Text style={styles.bannerCounterText}>
+              {safeIndex + 1}/{items.length}
+            </Text>
+            <TouchableOpacity
+              style={styles.bannerArrowBtn}
+              onPress={() => scrollToSlide(safeIndex + 1)}
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+              accessibilityLabel="Chuyên gia tiếp theo"
+            >
+              <Ionicons name="chevron-forward" size={14} color={theme.colors.primary} />
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
+
+      {/* Horizontal Paging Banner Slide */}
+      <FlatList
+        ref={flatListRef}
+        data={items}
+        keyExtractor={(item) => `featured-slide-${item.id}`}
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        snapToInterval={BANNER_SNAP_INTERVAL}
+        snapToAlignment="start"
+        decelerationRate="fast"
+        contentContainerStyle={styles.bannerFlatListContent}
+        onScrollBeginDrag={() => {
+          isUserDraggingRef.current = true;
+        }}
+        onScrollEndDrag={() => {
+          setTimeout(() => {
+            isUserDraggingRef.current = false;
+          }, 600);
+        }}
+        onMomentumScrollEnd={handleMomentumScrollEnd}
+        getItemLayout={(_, index) => ({
+          length: BANNER_SNAP_INTERVAL,
+          offset: BANNER_SNAP_INTERVAL * index,
+          index,
+        })}
+        renderItem={({ item, index }) => (
+          <View
+            style={{
+              width: BANNER_CARD_WIDTH,
+              marginRight: index === items.length - 1 ? 0 : BANNER_CARD_GAP,
+            }}
+          >
+            <FeaturedBannerSlideItem
+              item={item}
+              rank={index + 1}
+              onPress={() => onPressExpert(item.id)}
+            />
+          </View>
+        )}
+      />
+
+      {/* Pagination Indicator Dots */}
+      {items.length > 1 && (
+        <View style={styles.bannerDotsRow}>
+          {items.map((exp, idx) => {
+            const active = idx === safeIndex;
+            return (
+              <TouchableOpacity
+                key={`dot-${exp.id}`}
+                onPress={() => scrollToSlide(idx)}
+                hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+                style={[styles.bannerDot, active && styles.bannerDotActive]}
+              />
+            );
+          })}
+        </View>
+      )}
+    </View>
+  );
+};
 
 interface ExpertListItemCardProps {
   item: ExpertListItemResponse;
@@ -124,6 +444,15 @@ const ExpertListItemCard: React.FC<ExpertListItemCardProps> = ({ item, onPress }
                 </Text>
               </View>
             )}
+
+            {item.verifiedCertificateCount > 0 && (
+              <View style={styles.certHighlightBadge}>
+                <Ionicons name="shield-checkmark" size={10} color="#065F46" />
+                <Text style={styles.certHighlightText}>
+                  {item.verifiedCertificateCount} chứng chỉ
+                </Text>
+              </View>
+            )}
           </View>
         </View>
       </View>
@@ -187,11 +516,14 @@ export const ExpertListScreen: React.FC = () => {
   const currentUser = useAuthStore((s) => s.user);
 
   const [keyword, setKeyword] = useState('');
+  const [debouncedKeyword, setDebouncedKeyword] = useState('');
   const [selectedSpecId, setSelectedSpecId] = useState<number | null>(null);
   const [timeFilter, setTimeFilter] = useState<ExpertTimeFilter>('All');
-  const [sortBy, setSortBy] = useState<ExpertSortBy>('Recommended');
+  const [userSelectedSortBy, setUserSelectedSortBy] = useState<ExpertSortBy | null>(null);
   const [dynamicSortOptions, setDynamicSortOptions] = useState<{ key: ExpertSortBy; label: string }[]>(SORT_OPTIONS);
   const [defaultSortKey, setDefaultSortKey] = useState<ExpertSortBy>('Recommended');
+  const sortBy: ExpertSortBy = userSelectedSortBy ?? defaultSortKey;
+
   const [sortModalVisible, setSortModalVisible] = useState(false);
   const [specModalVisible, setSpecModalVisible] = useState(false);
   const [timeModalVisible, setTimeModalVisible] = useState(false);
@@ -206,6 +538,14 @@ export const ExpertListScreen: React.FC = () => {
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+
+  // Debounce từ khóa tìm kiếm để đồng bộ mượt với SearchableFields của Admin
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedKeyword(keyword.trim());
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [keyword]);
 
   // Hàm xác định xem chuyên gia có phải là chính bản thân người dùng đang đăng nhập hay không
   const isSelfExpert = useCallback(
@@ -237,43 +577,45 @@ export const ExpertListScreen: React.FC = () => {
     return featuredExperts.filter((e) => !isSelfExpert(e));
   }, [featuredExperts, isSelfExpert]);
 
-  // Tải danh mục lĩnh vực, chuyên gia nổi bật & cấu hình sắp xếp tìm kiếm từ Admin ban đầu
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        const [specs, featured, sortConfig] = await Promise.all([
-          consultationApi.getSpecializations(true),
-          consultationApi.getFeaturedExperts(5),
-          consultationApi.getExpertSortOptions().catch(() => null),
-        ]);
-        if (mounted) {
-          setSpecializations(specs);
-          setFeaturedExperts(featured);
-          if (sortConfig?.options && sortConfig.options.length > 0) {
-            setDynamicSortOptions(
-              sortConfig.options.map((opt) => ({
-                key: opt.value as ExpertSortBy,
-                label: opt.label,
-              }))
-            );
-            if (sortConfig.defaultSortBy) {
-              const defKey = sortConfig.defaultSortBy as ExpertSortBy;
-              setDefaultSortKey(defKey);
-              setSortBy(defKey);
-            }
-          }
-        }
-      } catch (e) {
-        console.warn('Load specs/featured/sortConfig error:', e);
+  // Tải danh mục lĩnh vực, chuyên gia đề xuất (6 chuyên gia chuẩn BE) & cấu hình sắp xếp từ Admin
+  const loadMetadataAndFeatured = useCallback(async () => {
+    try {
+      const [specs, featured, sortConfig] = await Promise.all([
+        consultationApi.getSpecializations(true).catch(() => []),
+        consultationApi.getFeaturedExperts(6).catch(() => []),
+        consultationApi.getExpertSortOptions().catch(() => null),
+      ]);
+      if (specs.length > 0) {
+        setSpecializations(specs);
       }
-    })();
-    return () => {
-      mounted = false;
-    };
+      setFeaturedExperts(featured);
+      if (sortConfig?.options && sortConfig.options.length > 0) {
+        const mappedOptions = sortConfig.options.map((opt) => ({
+          key: opt.value as ExpertSortBy,
+          label: opt.label,
+        }));
+        setDynamicSortOptions(mappedOptions);
+        if (sortConfig.defaultSortBy) {
+          const defKey = sortConfig.defaultSortBy as ExpertSortBy;
+          setDefaultSortKey(defKey);
+        }
+        setUserSelectedSortBy((prev) => {
+          if (prev && !mappedOptions.some((o) => o.key === prev)) {
+            return null;
+          }
+          return prev;
+        });
+      }
+    } catch (e) {
+      console.warn('Load specs/featured/sortConfig error:', e);
+    }
   }, []);
 
-  // Fetch danh sách chuyên gia
+  useEffect(() => {
+    loadMetadataAndFeatured();
+  }, [loadMetadataAndFeatured]);
+
+  // Fetch danh sách chuyên gia (Khi userSelectedSortBy === null, truyền sortBy: undefined để BE tự lấy DefaultSortBy của Admin)
   const fetchExperts = useCallback(
     async (isRefresh = false, pageNum = 1) => {
       if (isRefresh) setRefreshing(true);
@@ -283,10 +625,10 @@ export const ExpertListScreen: React.FC = () => {
       setError(null);
       try {
         const result = await consultationApi.searchExperts({
-          keyword: keyword.trim() || undefined,
+          keyword: debouncedKeyword || undefined,
           specializationIds: selectedSpecId ? [selectedSpecId] : undefined,
           timeFilter,
-          sortBy,
+          sortBy: userSelectedSortBy ?? undefined,
           page: pageNum,
           size: 10,
         });
@@ -306,7 +648,7 @@ export const ExpertListScreen: React.FC = () => {
         setLoadingMore(false);
       }
     },
-    [keyword, selectedSpecId, timeFilter, sortBy]
+    [debouncedKeyword, selectedSpecId, timeFilter, userSelectedSortBy]
   );
 
   useEffect(() => {
@@ -314,6 +656,7 @@ export const ExpertListScreen: React.FC = () => {
   }, [fetchExperts]);
 
   const handleRefresh = () => {
+    loadMetadataAndFeatured();
     fetchExperts(true, 1);
   };
 
@@ -325,9 +668,10 @@ export const ExpertListScreen: React.FC = () => {
 
   const resetFilters = () => {
     setKeyword('');
+    setDebouncedKeyword('');
     setSelectedSpecId(null);
     setTimeFilter('All');
-    setSortBy(defaultSortKey);
+    setUserSelectedSortBy(null);
   };
 
   const currentSortLabel = useMemo(() => {
@@ -348,18 +692,45 @@ export const ExpertListScreen: React.FC = () => {
   }, [timeFilter]);
 
   const hasActiveFilters = Boolean(
-    selectedSpecId !== null || timeFilter !== 'All' || sortBy !== defaultSortKey
+    selectedSpecId !== null || timeFilter !== 'All' || (userSelectedSortBy !== null && userSelectedSortBy !== defaultSortKey)
   );
+
+  const handleBack = useCallback(() => {
+    const state = navigation.getState();
+    const routes = state?.routes || [];
+    const prevRoute = routes.length >= 2 ? routes[routes.length - 2] : null;
+
+    if (prevRoute && ['BookingDetail', 'PaymentResult', 'BookingCreate'].includes(prevRoute.name)) {
+      navigation.navigate('Home');
+      return;
+    }
+
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+    } else {
+      navigation.navigate('Home');
+    }
+  }, [navigation]);
+
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      handleBack();
+      return true;
+    });
+    return () => sub.remove();
+  }, [handleBack]);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
+      <DrumPatternBackdrop variant="soft" />
+
       {/* ── HEADER ── */}
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.headerBtn}
-          onPress={() => navigation.navigate('Home')}
+          onPress={handleBack}
           accessibilityRole="button"
-          accessibilityLabel="Về trang chủ"
+          accessibilityLabel="Quay lại"
         >
           <Ionicons name="arrow-back" size={24} color={theme.colors.textPrimary} />
         </TouchableOpacity>
@@ -523,7 +894,7 @@ export const ExpertListScreen: React.FC = () => {
             {sortBy !== defaultSortKey && (
               <View style={styles.activeFilterPill}>
                 <Text style={styles.activeFilterPillText}>{currentSortLabel}</Text>
-                <TouchableOpacity onPress={() => setSortBy(defaultSortKey)}>
+                <TouchableOpacity onPress={() => setUserSelectedSortBy(null)}>
                   <Ionicons name="close-circle" size={13} color="#8B1E1E" />
                 </TouchableOpacity>
               </View>
@@ -567,71 +938,25 @@ export const ExpertListScreen: React.FC = () => {
           onEndReachedThreshold={0.3}
           ListHeaderComponent={
             <>
-              {/* Chuyên gia nổi bật (Hiển thị khi không gõ tìm kiếm và trang 1) */}
-              {displayedFeatured.length > 0 && !keyword && (
-                <View style={styles.featuredContainer}>
-                  <View style={styles.sectionTitleRow}>
-                    <Ionicons name="ribbon" size={18} color={theme.colors.gold} />
-                    <Text style={styles.sectionTitle}>Chuyên gia đề xuất hàng đầu</Text>
-                  </View>
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={styles.featuredScroll}
-                  >
-                    {displayedFeatured.map((exp) => (
-                      <TouchableOpacity
-                        key={exp.id}
-                        style={styles.featuredCard}
-                        activeOpacity={0.85}
-                        onPress={() =>
-                          navigation.navigate('ExpertDetail', { expertProfileId: exp.id })
-                        }
-                      >
-                        <View style={styles.featuredAvatarWrap}>
-                          {isValidAvatarUrl(exp.avatarUrl) ? (
-                            <Image source={{ uri: exp.avatarUrl! }} style={styles.featuredAvatar} />
-                          ) : (
-                            <View style={styles.avatarPlaceholder}>
-                              <Text style={styles.avatarLetter}>
-                                {exp.fullName.trim().charAt(exp.fullName.trim().length - 1)}
-                              </Text>
-                            </View>
-                          )}
-                          <View style={styles.verifiedDot}>
-                            <Ionicons name="checkmark" size={10} color="#FFFFFF" />
-                          </View>
-                        </View>
-                        <Text style={styles.featuredName} numberOfLines={1}>
-                          {exp.fullName}
-                        </Text>
-                        <Text style={styles.featuredJob} numberOfLines={1}>
-                          {exp.jobTitle || 'Chuyên gia thuế'}
-                        </Text>
-                        <View style={styles.featuredRatingRow}>
-                          <Ionicons name="star" size={13} color="#F59E0B" />
-                          <Text style={styles.featuredRatingText}>
-                            {exp.rating > 0 ? exp.rating.toFixed(1) : '5.0'}
-                          </Text>
-                          <Text style={styles.featuredSessionsText}>
-                            ({exp.completedConsultationsCount} ca)
-                          </Text>
-                        </View>
-                        <View style={styles.featuredFeeBadge}>
-                          <Text style={styles.featuredFeeText}>
-                            Từ {formatVnd(exp.startingFee)}
-                          </Text>
-                        </View>
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
-                </View>
+              {/* Banner Slide Chuyên gia đề xuất hàng đầu (Hiển thị khi không gõ tìm kiếm) */}
+              {displayedFeatured.length > 0 && !keyword.trim() && (
+                <FeaturedExpertBannerCarousel
+                  items={displayedFeatured}
+                  onPressExpert={(expertId) =>
+                    navigation.navigate('ExpertDetail', { expertProfileId: expertId })
+                  }
+                />
               )}
 
               <View style={styles.listHeaderRow}>
                 <Text style={styles.listCountText}>
                   Tìm thấy <Text style={styles.boldText}>{displayedExperts.length}</Text> chuyên gia
                 </Text>
+                {sortBy && (
+                  <Text style={styles.listSortHintText}>
+                    Xếp theo: <Text style={styles.boldText}>{currentSortLabel}</Text>
+                  </Text>
+                )}
               </View>
             </>
           }
@@ -819,12 +1144,13 @@ export const ExpertListScreen: React.FC = () => {
                   key={opt.key}
                   style={[styles.sortOptionRow, selected && styles.sortOptionSelected]}
                   onPress={() => {
-                    setSortBy(opt.key);
+                    setUserSelectedSortBy(opt.key === defaultSortKey ? null : opt.key);
                     setSortModalVisible(false);
                   }}
                 >
                   <Text style={[styles.sortOptionText, selected && styles.sortOptionTextActive]}>
                     {opt.label}
+                    {opt.key === defaultSortKey ? ' (Mặc định)' : ''}
                   </Text>
                   {selected && (
                     <Ionicons name="checkmark-circle" size={18} color={theme.colors.primary} />
@@ -849,7 +1175,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'transparent',
+    zIndex: 1,
   },
   headerBtn: {
     width: 38,
@@ -857,7 +1184,7 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#F3EFE6',
+    backgroundColor: 'rgba(243, 239, 230, 0.85)',
   },
   headerTitleWrap: {
     flex: 1,
@@ -866,12 +1193,13 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontFamily: fonts.serifBold,
     fontSize: 18,
-    color: theme.colors.primary,
+    lineHeight: 24,
+    color: theme.colors.primaryDark,
   },
   headerSubtitle: {
-    fontFamily: fonts.body,
-    fontSize: 11,
-    color: theme.colors.textSecondary,
+    fontFamily: fonts.bodyMedium,
+    fontSize: 11.5,
+    color: '#5A4A22',
     marginTop: 1,
   },
   headerActionBtn: {
@@ -880,34 +1208,34 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,
-    backgroundColor: '#FAF6EE',
+    backgroundColor: 'rgba(255, 253, 247, 0.92)',
     borderWidth: 1,
     borderColor: theme.colors.goldLight,
     gap: 4,
   },
   headerActionText: {
-    fontFamily: fonts.bodySemi,
+    fontFamily: fonts.bodyBold,
     fontSize: 12,
     color: theme.colors.primary,
   },
 
   searchSection: {
-    backgroundColor: '#FFFFFF',
-    paddingTop: 8,
-    paddingBottom: 6,
+    backgroundColor: 'transparent',
+    paddingTop: 10,
+    paddingBottom: 8,
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
   },
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: theme.colors.inputBackground,
+    backgroundColor: 'rgba(255, 253, 247, 0.94)',
     marginHorizontal: 16,
     borderRadius: 10,
     paddingHorizontal: 12,
     height: 40,
     borderWidth: 1,
-    borderColor: theme.colors.border,
+    borderColor: '#E5D5B5',
   },
   searchIcon: {
     marginRight: 8,
@@ -1008,111 +1336,357 @@ const styles = StyleSheet.create({
     paddingBottom: 32,
   },
 
-  // Featured experts
+  // Featured experts Banner Slide Carousel
   featuredContainer: {
-    marginBottom: 16,
+    marginBottom: 18,
+  },
+  bannerHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
   },
   sectionTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    marginBottom: 10,
+    gap: 8,
+    flex: 1,
+  },
+  sectionIconBadge: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    backgroundColor: theme.colors.primary,
+    borderWidth: 1,
+    borderColor: '#D4AF37',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   sectionTitle: {
     fontFamily: fonts.serifBold,
-    fontSize: 14,
-    color: theme.colors.primary,
+    fontSize: 15,
+    color: theme.colors.primaryDark,
   },
-  featuredScroll: {
-    gap: 12,
-    paddingRight: 16,
-  },
-  featuredCard: {
-    width: 140,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 10,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#EBDDC0',
-    ...theme.shadows.card,
-  },
-  featuredAvatarWrap: {
-    position: 'relative',
-    marginBottom: 6,
-  },
-  featuredAvatar: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-  },
-  avatarPlaceholder: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: '#8B1E1E22',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  avatarLetter: {
-    fontFamily: fonts.serifBold,
-    fontSize: 20,
-    color: theme.colors.primary,
-  },
-  verifiedDot: {
-    position: 'absolute',
-    right: 0,
-    bottom: 0,
-    backgroundColor: '#059669',
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: '#FFFFFF',
-  },
-  featuredName: {
-    fontFamily: fonts.bodyBold,
-    fontSize: 12,
-    color: theme.colors.textPrimary,
-    textAlign: 'center',
-  },
-  featuredJob: {
+  sectionSubtitle: {
     fontFamily: fonts.body,
-    fontSize: 10,
-    color: theme.colors.textSecondary,
-    textAlign: 'center',
-    marginBottom: 4,
+    fontSize: 10.5,
+    color: '#7A6A53',
+    marginTop: 1,
   },
-  featuredRatingRow: {
+  bannerNavControls: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 3,
-    marginBottom: 6,
-  },
-  featuredRatingText: {
-    fontFamily: fonts.bodyBold,
-    fontSize: 11,
-    color: '#D97706',
-  },
-  featuredSessionsText: {
-    fontFamily: fonts.body,
-    fontSize: 10,
-    color: '#888888',
-  },
-  featuredFeeBadge: {
-    backgroundColor: '#FEF3C7',
-    paddingHorizontal: 8,
+    backgroundColor: '#FAF5EA',
+    borderWidth: 1,
+    borderColor: '#E5D5B5',
+    borderRadius: 16,
+    paddingHorizontal: 6,
     paddingVertical: 3,
-    borderRadius: 4,
-    width: '100%',
+    gap: 6,
+  },
+  bannerArrowBtn: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    justifyContent: 'center',
     alignItems: 'center',
   },
-  featuredFeeText: {
+  bannerCounterText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 11,
+    color: theme.colors.primaryDark,
+    fontVariant: ['tabular-nums'],
+  },
+  bannerFlatListContent: {
+    paddingVertical: 2,
+  },
+  bannerSlideCard: {
+    backgroundColor: '#7A1616',
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1.5,
+    borderColor: '#D4AF37',
+    overflow: 'hidden',
+    shadowColor: '#4A0D0D',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.22,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  bannerGoldTopAccent: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 3,
+    backgroundColor: '#FBBF24',
+  },
+  bannerTopBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+    gap: 8,
+  },
+  bannerTopLeftBadges: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexShrink: 1,
+  },
+  bannerRankBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FDE68A',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    gap: 4,
+  },
+  bannerRankText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 10,
+    color: '#6B1414',
+    letterSpacing: 0.3,
+  },
+  bannerCertBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 253, 247, 0.14)',
+    borderWidth: 0.5,
+    borderColor: 'rgba(253, 230, 138, 0.45)',
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
+    borderRadius: 6,
+    gap: 3,
+  },
+  bannerCertText: {
     fontFamily: fonts.bodySemi,
     fontSize: 10,
-    color: '#B45309',
+    color: '#FDE68A',
+  },
+  bannerSlotReadyPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(16, 185, 129, 0.22)',
+    borderWidth: 0.5,
+    borderColor: '#6EE7B7',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+    gap: 4,
+    maxWidth: '46%',
+  },
+  bannerSlotDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#34D399',
+  },
+  bannerSlotReadyText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 10,
+    color: '#D1FAE5',
+    flexShrink: 1,
+  },
+  bannerSlotFlexPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+    gap: 3,
+  },
+  bannerSlotFlexText: {
+    fontFamily: fonts.body,
+    fontSize: 10,
+    color: '#E5D5B5',
+  },
+  bannerBodyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  bannerAvatarContainer: {
+    position: 'relative',
+  },
+  bannerAvatarImg: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    borderWidth: 2,
+    borderColor: '#FDE68A',
+    backgroundColor: '#5C1010',
+  },
+  bannerAvatarFallback: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    borderWidth: 2,
+    borderColor: '#FDE68A',
+    backgroundColor: '#5C1010',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  bannerAvatarInitial: {
+    fontFamily: fonts.serifBold,
+    fontSize: 24,
+    color: '#FDE68A',
+  },
+  bannerVerifiedBadge: {
+    position: 'absolute',
+    right: -1,
+    bottom: -1,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#059669',
+    borderWidth: 1.5,
+    borderColor: '#FFFDF7',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  bannerInfoCol: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  bannerExpertName: {
+    fontFamily: fonts.serifBold,
+    fontSize: 16.5,
+    color: '#FFFDF7',
+  },
+  bannerJobCompany: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 12,
+    color: '#FDE68A',
+    marginTop: 2,
+  },
+  bannerMetricsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 6,
+  },
+  bannerRatingPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(251, 191, 36, 0.2)',
+    borderWidth: 0.5,
+    borderColor: 'rgba(251, 191, 36, 0.5)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 5,
+    gap: 3,
+  },
+  bannerRatingVal: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 11,
+    color: '#FDE68A',
+  },
+  bannerReviewCnt: {
+    fontFamily: fonts.body,
+    fontSize: 10,
+    color: '#F3E8D2',
+  },
+  bannerMetricDividerPill: {
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 5,
+  },
+  bannerMetricText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 10.5,
+    color: '#FFFDF7',
+  },
+  bannerSpecsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 7,
+  },
+  bannerSpecChip: {
+    backgroundColor: 'rgba(255, 253, 247, 0.12)',
+    borderWidth: 0.5,
+    borderColor: 'rgba(235, 221, 192, 0.35)',
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
+    borderRadius: 5,
+    maxWidth: '46%',
+    flexShrink: 1,
+  },
+  bannerSpecChipText: {
+    fontFamily: fonts.body,
+    fontSize: 10.5,
+    color: '#F5EFE6',
+  },
+  bannerSpecMoreChip: {
+    backgroundColor: 'rgba(253, 230, 138, 0.2)',
+    paddingHorizontal: 6,
+    paddingVertical: 2.5,
+    borderRadius: 5,
+  },
+  bannerSpecMoreText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 10,
+    color: '#FDE68A',
+  },
+  bannerFooterBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(253, 230, 138, 0.22)',
+  },
+  bannerFeeWrap: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+  },
+  bannerFeeLabel: {
+    fontFamily: fonts.body,
+    fontSize: 11.5,
+    color: '#E5D5B5',
+  },
+  bannerFeeValue: {
+    fontFamily: fonts.serifBold,
+    fontSize: 16,
+    color: '#FDE68A',
+    fontVariant: ['tabular-nums'],
+  },
+  bannerCtaBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FDE68A',
+    paddingHorizontal: 12,
+    paddingVertical: 6.5,
+    borderRadius: 8,
+    gap: 5,
+  },
+  bannerCtaBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12,
+    color: '#6B1414',
+  },
+  bannerDotsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 10,
+    gap: 6,
+  },
+  bannerDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: '#D6C7B2',
+  },
+  bannerDotActive: {
+    width: 22,
+    backgroundColor: theme.colors.primary,
   },
 
   listHeaderRow: {
@@ -1125,6 +1699,11 @@ const styles = StyleSheet.create({
     fontFamily: fonts.body,
     fontSize: 12,
     color: theme.colors.textSecondary,
+  },
+  listSortHintText: {
+    fontFamily: fonts.body,
+    fontSize: 11.5,
+    color: '#7A6A53',
   },
   boldText: {
     fontFamily: fonts.bodyBold,
@@ -1240,6 +1819,22 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bodySemi,
     fontSize: 10.5,
     color: '#4B5563',
+  },
+  certHighlightBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    borderWidth: 0.5,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    gap: 3,
+  },
+  certHighlightText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 10,
+    color: '#065F46',
   },
 
   specTagsRow: {

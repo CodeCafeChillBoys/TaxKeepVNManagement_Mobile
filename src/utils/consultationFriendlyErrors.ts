@@ -120,6 +120,38 @@ export function toFriendlyConsultationError(
     };
   }
 
+  if (
+    upperCode === 'INSUFFICIENT_WALLET_BALANCE' ||
+    upperMsg.includes('INSUFFICIENT_WALLET_BALANCE') ||
+    upperMsg.includes('SỐ DƯ VÍ KHẢ DỤNG') ||
+    upperMsg.includes('KHÔNG ĐỦ ĐỂ THANH TOÁN')
+  ) {
+    return {
+      title: 'Số dư ví không đủ',
+      message:
+        cleanRawTechnicalStrings(rawMsg) ||
+        'Số dư khả dụng trong ví cá nhân không đủ để thanh toán cho ca tư vấn này. Vui lòng nạp thêm tiền vào ví hoặc chọn thanh toán qua cổng VNPay / VietQR.',
+    };
+  }
+
+  if (upperCode === 'HOLD_SLOT_EXPIRED' || upperMsg.includes('HOLD_SLOT_EXPIRED')) {
+    return {
+      title: 'Hết thời gian giữ chỗ',
+      message:
+        cleanRawTechnicalStrings(rawMsg) ||
+        'Thời gian tạm giữ khung giờ (10 phút) đã hết hạn. Vui lòng đặt lại lịch hẹn mới.',
+    };
+  }
+
+  if (upperCode === 'INVALID_BOOKING_STATUS' || upperMsg.includes('INVALID_BOOKING_STATUS')) {
+    return {
+      title: 'Trạng thái lịch hẹn đã thay đổi',
+      message:
+        cleanRawTechnicalStrings(rawMsg) ||
+        'Trạng thái lịch hẹn đã được cập nhật, không thể thực hiện thao tác thanh toán này.',
+    };
+  }
+
   if (upperCode === 'ROOM_NOT_OPEN_YET' || upperMsg.includes('ROOM_NOT_OPEN_YET')) {
     return {
       title: 'Phòng tư vấn chưa mở',

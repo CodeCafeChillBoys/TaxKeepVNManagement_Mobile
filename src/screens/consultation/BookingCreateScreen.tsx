@@ -9,12 +9,15 @@ import {
   ActivityIndicator,
   Image,
   Platform,
+  BackHandler,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
+import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
 import { Dialog } from '../../components/common/Dialog';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
@@ -45,12 +48,17 @@ export const BookingCreateScreen: React.FC = () => {
   const [specializations, setSpecializations] = useState<SpecializationDto[]>([]);
 
   // Form states
+  const [configuredSessionTypes, setConfiguredSessionTypes] = useState<SessionType[]>(['ONLINE_MEETING']);
   const [selectedSessionType, setSelectedSessionType] = useState<SessionType>('ONLINE_MEETING');
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [selectedSlotId, setSelectedSlotId] = useState<string>(initialSlotId || '');
   const [selectedSpecId, setSelectedSpecId] = useState<number>(initialSpecId || 0);
   const [topicTitle, setTopicTitle] = useState('');
   const [problemDescription, setProblemDescription] = useState('');
+  const [slotPeriodFilter, setSlotPeriodFilter] = useState<'ALL' | 'MORNING' | 'AFTERNOON' | 'EVENING'>('ALL');
+  const [slotSessionModalVisible, setSlotSessionModalVisible] = useState(false);
+  const [slotPeriodModalVisible, setSlotPeriodModalVisible] = useState(false);
+  const [specModalVisible, setSpecModalVisible] = useState(false);
 
   // Loading & Preview states
   const [loadingInitial, setLoadingInitial] = useState(true);
@@ -76,16 +84,31 @@ export const BookingCreateScreen: React.FC = () => {
     (async () => {
       setLoadingInitial(true);
       try {
-        const [detail, slots, specs] = await Promise.all([
+        const [detail, slots, specs, feeConfigs] = await Promise.all([
           consultationApi.getExpertDetail(expertProfileId),
           consultationApi.getAvailableSlotsForBooking(expertProfileId, undefined, 14),
           consultationApi.getSpecializations(true),
+          consultationApi.getConsultationFeeConfigs({ isActive: true }).catch(() => []),
         ]);
 
         if (mounted) {
           setExpert(detail);
           setAvailableSlots(slots);
           setSpecializations(specs);
+
+          const activeAdminTypes: SessionType[] =
+            Array.isArray(feeConfigs) && feeConfigs.length > 0
+              ? (Array.from(
+                  new Set(
+                    feeConfigs
+                      .filter((c) => c.isActive !== false)
+                      .map((c) => c.sessionType as SessionType)
+                  )
+                ) as SessionType[])
+              : ['ONLINE_MEETING'];
+          if (activeAdminTypes.length > 0) {
+            setConfiguredSessionTypes(activeAdminTypes);
+          }
 
           // Default specialization if not selected
           if (!initialSpecId && specs.length > 0) {
@@ -100,7 +123,10 @@ export const BookingCreateScreen: React.FC = () => {
               setSelectedDate(initSlot.slotDate);
             }
           } else if (detail.feePackages && detail.feePackages.length > 0) {
-            const firstType = detail.feePackages[0].sessionType;
+            const activePkg =
+              detail.feePackages.find((p) => activeAdminTypes.includes(p.sessionType)) ||
+              detail.feePackages[0];
+            const firstType = activePkg.sessionType;
             setSelectedSessionType(firstType);
             const slotsForType = slots.filter((s) => s.sessionType === firstType);
             if (slotsForType.length > 0) {
@@ -148,13 +174,25 @@ const getSlotDurationMinutes = (startTime?: string, endTime?: string): number =>
   }
 };
 
-  // Danh sách các gói dịch vụ tư vấn niêm yết của chuyên gia gom nhóm duy nhất theo sessionType (Tránh Duplicate Key)
+  // Danh sách các gói dịch vụ tư vấn niêm yết của chuyên gia gom nhóm duy nhất theo sessionType (đồng bộ theo cấu hình Admin)
   const dynamicServicePackages = useMemo(() => {
     if (!expert) return [];
 
-    const feeSessionTypes = expert.feePackages ? expert.feePackages.map((p) => p.sessionType) : [];
-    const slotSessionTypes = availableSlots.map((s) => s.sessionType);
-    const distinctTypes = Array.from(new Set([...feeSessionTypes, ...slotSessionTypes]));
+    const feeSessionTypes = expert.feePackages
+      ? expert.feePackages
+          .map((p) => p.sessionType)
+          .filter((t) => configuredSessionTypes.includes(t))
+      : [];
+    const slotSessionTypes = availableSlots
+      .map((s) => s.sessionType)
+      .filter((t) => configuredSessionTypes.includes(t) || availableSlots.some((s) => s.sessionType === t));
+    const distinctTypes = Array.from(
+      new Set(
+        [...feeSessionTypes, ...slotSessionTypes].length > 0
+          ? [...feeSessionTypes, ...slotSessionTypes]
+          : configuredSessionTypes
+      )
+    );
 
     return distinctTypes.map((type) => {
       const sInfo = formatSessionType(type);
@@ -202,7 +240,7 @@ const getSlotDurationMinutes = (startTime?: string, endTime?: string): number =>
             : 'Tư vấn trực tiếp qua đường truyền thoại',
       };
     });
-  }, [expert, availableSlots]);
+  }, [expert, availableSlots, configuredSessionTypes]);
 
   // Switch session type: reset slot and update date
   const handleSelectSessionType = (type: SessionType) => {
@@ -244,8 +282,17 @@ const getSlotDurationMinutes = (startTime?: string, endTime?: string): number =>
 
   const slotsForSelectedDate = useMemo(() => {
     if (!selectedDate) return [];
-    return slotsForSelectedSession.filter((s) => s.slotDate === selectedDate);
-  }, [slotsForSelectedSession, selectedDate]);
+    return slotsForSelectedSession.filter((s) => {
+      if (s.slotDate !== selectedDate) return false;
+      if (slotPeriodFilter !== 'ALL') {
+        const hour = parseInt((s.startTime || '00:00').split(':')[0], 10);
+        if (slotPeriodFilter === 'MORNING' && hour >= 12) return false;
+        if (slotPeriodFilter === 'AFTERNOON' && (hour < 12 || hour >= 18)) return false;
+        if (slotPeriodFilter === 'EVENING' && hour < 18) return false;
+      }
+      return true;
+    });
+  }, [slotsForSelectedSession, selectedDate, slotPeriodFilter]);
 
   // Dry-run preview calculation triggered when slot or specialization changes
   const runPreview = useCallback(async () => {
@@ -338,13 +385,19 @@ const getSlotDurationMinutes = (startTime?: string, endTime?: string): number =>
         problemDescription: problemDescription.trim(),
       });
 
+      const holdMins = result.holdExpiresAt
+        ? Math.max(1, Math.round((new Date(result.holdExpiresAt).getTime() - Date.now()) / 60000))
+        : null;
+
       setDialog({
         title: 'Đặt lịch hẹn thành công!',
-        message: 'Khung giờ đã được tạm giữ trong 10 phút. Vui lòng hoàn tất thanh toán để lịch hẹn được xác nhận.',
+        message: holdMins
+          ? `Khung giờ đã được tạm giữ trong ${holdMins} phút. Vui lòng hoàn tất thanh toán để lịch hẹn được xác nhận.`
+          : 'Khung giờ đã được tạm giữ. Vui lòng hoàn tất thanh toán để lịch hẹn được xác nhận.',
         primaryLabel: 'Xem chi tiết lịch hẹn',
         onPrimary: () => {
           setDialog(null);
-          navigation.replace('BookingDetail', { bookingId: result.id });
+          navigation.replace('BookingDetail', { bookingId: result.id, autoPay: true });
         },
       });
     } catch (err: any) {
@@ -364,6 +417,22 @@ const getSlotDurationMinutes = (startTime?: string, endTime?: string): number =>
     }
   };
 
+  const handleBack = useCallback(() => {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+    } else {
+      navigation.navigate('ExpertList');
+    }
+  }, [navigation]);
+
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      handleBack();
+      return true;
+    });
+    return () => sub.remove();
+  }, [handleBack]);
+
   const selectedSlot = useMemo(() => {
     return availableSlots.find((s) => s.id === selectedSlotId);
   }, [availableSlots, selectedSlotId]);
@@ -371,9 +440,10 @@ const getSlotDurationMinutes = (startTime?: string, endTime?: string): number =>
   if (loadingInitial) {
     return (
       <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
+        <DrumPatternBackdrop variant="soft" />
         <View style={styles.header}>
           <TouchableOpacity
-            onPress={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('ExpertList'))}
+            onPress={handleBack}
             style={styles.backBtn}
             accessibilityRole="button"
             accessibilityLabel="Quay lại"
@@ -402,10 +472,12 @@ const getSlotDurationMinutes = (startTime?: string, endTime?: string): number =>
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
+      <DrumPatternBackdrop variant="soft" />
+
       {/* ── HEADER ── */}
       <View style={styles.header}>
         <TouchableOpacity
-          onPress={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('ExpertList'))}
+          onPress={handleBack}
           style={styles.backBtn}
           accessibilityRole="button"
           accessibilityLabel="Quay lại"
@@ -577,8 +649,77 @@ const getSlotDurationMinutes = (startTime?: string, endTime?: string): number =>
             <Text style={styles.requiredMark}>*</Text>
           </View>
           <Text style={styles.sectionHint}>
-            Chọn ngày và khung giờ thuận tiện (tuân thủ lead-time tối thiểu 4 tiếng)
+            Chọn ngày và khung giờ tư vấn phù hợp với lịch trình của bạn
           </Text>
+
+          {/* Compact Horizontal Dropdown Filter Row */}
+          <View style={styles.filterDropdownRow}>
+            <TouchableOpacity
+              style={styles.dropdownFilterBtn}
+              onPress={() => setSlotSessionModalVisible(true)}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="Chọn hình thức dịch vụ"
+            >
+              <Ionicons
+                name={formatSessionType(selectedSessionType).icon as any}
+                size={13}
+                color={theme.colors.primary}
+              />
+              <Text style={styles.dropdownFilterBtnText} numberOfLines={1}>
+                {formatSessionType(selectedSessionType).label}
+              </Text>
+              <Ionicons name="chevron-down" size={12} color={theme.colors.textSecondary} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.dropdownFilterBtn,
+                slotPeriodFilter !== 'ALL' && styles.dropdownFilterBtnActive,
+              ]}
+              onPress={() => setSlotPeriodModalVisible(true)}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="Lọc theo buổi trong ngày"
+            >
+              <Ionicons
+                name="sunny-outline"
+                size={13}
+                color={slotPeriodFilter !== 'ALL' ? '#FFFFFF' : theme.colors.primary}
+              />
+              <Text
+                style={[
+                  styles.dropdownFilterBtnText,
+                  slotPeriodFilter !== 'ALL' && styles.dropdownFilterBtnTextActive,
+                ]}
+                numberOfLines={1}
+              >
+                {slotPeriodFilter === 'MORNING'
+                  ? 'Buổi sáng'
+                  : slotPeriodFilter === 'AFTERNOON'
+                  ? 'Buổi chiều'
+                  : slotPeriodFilter === 'EVENING'
+                  ? 'Buổi tối'
+                  : 'Tất cả buổi'}
+              </Text>
+              <Ionicons
+                name="chevron-down"
+                size={12}
+                color={slotPeriodFilter !== 'ALL' ? '#FFFFFF' : theme.colors.textSecondary}
+              />
+            </TouchableOpacity>
+
+            {slotPeriodFilter !== 'ALL' && (
+              <TouchableOpacity
+                style={styles.filterResetIconBtn}
+                onPress={() => setSlotPeriodFilter('ALL')}
+                accessibilityRole="button"
+                accessibilityLabel="Đặt lại lọc buổi"
+              >
+                <Ionicons name="refresh" size={14} color={theme.colors.primary} />
+              </TouchableOpacity>
+            )}
+          </View>
 
           {uniqueDatesForSession.length === 0 ? (
             <View style={styles.emptySlotWarning}>
@@ -699,27 +840,20 @@ const getSlotDurationMinutes = (startTime?: string, endTime?: string): number =>
             Chọn lĩnh vực để chuyên gia chuẩn bị tài liệu và giải đáp trọng tâm
           </Text>
 
-          <View style={styles.specChipsContainer}>
-            {specializations.map((spec) => {
-              const isSelected = selectedSpecId === spec.id;
-              return (
-                <TouchableOpacity
-                  key={spec.id}
-                  style={[styles.specPickChip, isSelected && styles.specPickChipActive]}
-                  onPress={() => setSelectedSpecId(spec.id)}
-                  activeOpacity={0.8}
-                >
-                  <Text
-                    style={[styles.specPickChipText, isSelected && styles.specPickChipTextActive]}
-                    numberOfLines={2}
-                    ellipsizeMode="tail"
-                  >
-                    {spec.name}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
+          <TouchableOpacity
+            style={styles.dropdownFilterBtn}
+            onPress={() => setSpecModalVisible(true)}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="Chọn lĩnh vực chuyên môn"
+          >
+            <Ionicons name="ribbon-outline" size={14} color={theme.colors.primary} />
+            <Text style={styles.dropdownFilterBtnText} numberOfLines={1}>
+              {specializations.find((s) => s.id === selectedSpecId)?.name ||
+                'Chọn lĩnh vực chuyên môn'}
+            </Text>
+            <Ionicons name="chevron-down" size={14} color={theme.colors.textSecondary} />
+          </TouchableOpacity>
         </View>
 
         {/* ── 4. TIÊU ĐỀ & MÔ TẢ NỘI DUNG VẤN ĐỀ ── */}
@@ -841,11 +975,154 @@ const getSlotDurationMinutes = (startTime?: string, endTime?: string): number =>
           ) : (
             <>
               <Ionicons name="shield-checkmark" size={18} color="#FFFFFF" />
-              <Text style={styles.submitBtnText}>Xác nhận đặt lịch - Giữ chỗ 10 phút</Text>
+              <Text style={styles.submitBtnText}>Xác nhận đặt lịch tư vấn</Text>
             </>
           )}
         </TouchableOpacity>
       </ScrollView>
+
+      {/* ── MODAL CHỌN HÌNH THỨC DỊCH VỤ ── */}
+      <Modal
+        visible={slotSessionModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSlotSessionModalVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.dropdownModalOverlay}
+          activeOpacity={1}
+          onPress={() => setSlotSessionModalVisible(false)}
+        >
+          <View style={styles.dropdownModalCard}>
+            <View style={styles.dropdownModalHeader}>
+              <Text style={styles.dropdownModalTitle}>Chọn hình thức tư vấn</Text>
+              <TouchableOpacity onPress={() => setSlotSessionModalVisible(false)}>
+                <Ionicons name="close" size={20} color="#666666" />
+              </TouchableOpacity>
+            </View>
+            {Array.from(
+              new Set([
+                ...configuredSessionTypes,
+                ...dynamicServicePackages.map((p) => p.sessionType),
+              ])
+            ).map((type) => {
+              const sInfo = formatSessionType(type);
+              const selected = selectedSessionType === type;
+              return (
+                <TouchableOpacity
+                  key={type}
+                  style={[styles.dropdownOptionItem, selected && styles.dropdownOptionItemActive]}
+                  onPress={() => {
+                    handleSelectSessionType(type);
+                    setSlotSessionModalVisible(false);
+                  }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Ionicons
+                      name={sInfo.icon as any}
+                      size={16}
+                      color={selected ? theme.colors.primary : '#555555'}
+                    />
+                    <Text style={[styles.dropdownOptionText, selected && styles.dropdownOptionTextActive]}>
+                      {sInfo.fullLabel || sInfo.label}
+                    </Text>
+                  </View>
+                  {selected && <Ionicons name="checkmark-circle" size={18} color={theme.colors.primary} />}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* ── MODAL LỌC BUỔI TRONG NGÀY ── */}
+      <Modal
+        visible={slotPeriodModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSlotPeriodModalVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.dropdownModalOverlay}
+          activeOpacity={1}
+          onPress={() => setSlotPeriodModalVisible(false)}
+        >
+          <View style={styles.dropdownModalCard}>
+            <View style={styles.dropdownModalHeader}>
+              <Text style={styles.dropdownModalTitle}>Lọc theo buổi trong ngày</Text>
+              <TouchableOpacity onPress={() => setSlotPeriodModalVisible(false)}>
+                <Ionicons name="close" size={20} color="#666666" />
+              </TouchableOpacity>
+            </View>
+            {([
+              { key: 'ALL', label: 'Tất cả buổi trong ngày' },
+              { key: 'MORNING', label: 'Buổi sáng (Trước 12:00)' },
+              { key: 'AFTERNOON', label: 'Buổi chiều (12:00 - 18:00)' },
+              { key: 'EVENING', label: 'Buổi tối (Sau 18:00)' },
+            ] as const).map((opt) => {
+              const selected = slotPeriodFilter === opt.key;
+              return (
+                <TouchableOpacity
+                  key={opt.key}
+                  style={[styles.dropdownOptionItem, selected && styles.dropdownOptionItemActive]}
+                  onPress={() => {
+                    setSlotPeriodFilter(opt.key);
+                    setSlotPeriodModalVisible(false);
+                  }}
+                >
+                  <Text style={[styles.dropdownOptionText, selected && styles.dropdownOptionTextActive]}>
+                    {opt.label}
+                  </Text>
+                  {selected && <Ionicons name="checkmark-circle" size={18} color={theme.colors.primary} />}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* ── MODAL CHỌN LĨNH VỰC CHUYÊN MÔN ── */}
+      <Modal
+        visible={specModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSpecModalVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.dropdownModalOverlay}
+          activeOpacity={1}
+          onPress={() => setSpecModalVisible(false)}
+        >
+          <View style={styles.dropdownModalCard}>
+            <View style={styles.dropdownModalHeader}>
+              <Text style={styles.dropdownModalTitle}>Chọn lĩnh vực chuyên môn</Text>
+              <TouchableOpacity onPress={() => setSpecModalVisible(false)}>
+                <Ionicons name="close" size={20} color="#666666" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={{ maxHeight: 340 }}>
+              {specializations.map((spec) => {
+                const selected = selectedSpecId === spec.id;
+                return (
+                  <TouchableOpacity
+                    key={spec.id}
+                    style={[styles.dropdownOptionItem, selected && styles.dropdownOptionItemActive]}
+                    onPress={() => {
+                      setSelectedSpecId(spec.id);
+                      setSpecModalVisible(false);
+                    }}
+                  >
+                    <Text style={[styles.dropdownOptionText, selected && styles.dropdownOptionTextActive]}>
+                      {spec.name}
+                    </Text>
+                    {selected && <Ionicons name="checkmark-circle" size={18} color={theme.colors.primary} />}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
       <Dialog
         visible={Boolean(dialog)}
@@ -873,7 +1150,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'transparent',
+    zIndex: 1,
   },
   backBtn: {
     width: 38,
@@ -881,12 +1159,13 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#F3EFE6',
+    backgroundColor: 'rgba(243, 239, 230, 0.85)',
   },
   headerTitle: {
     fontFamily: fonts.serifBold,
-    fontSize: 16,
-    color: theme.colors.primary,
+    fontSize: 18,
+    lineHeight: 24,
+    color: theme.colors.primaryDark,
   },
 
   scrollContent: {
@@ -979,8 +1258,8 @@ const styles = StyleSheet.create({
     color: theme.colors.primary,
   },
   requiredMark: {
+    fontFamily: fonts.bodyBold,
     color: theme.colors.error,
-    fontWeight: '700',
     fontSize: 14,
   },
   sectionCounter: {
@@ -1220,34 +1499,102 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
 
-  // Specialization chips
-  specChipsContainer: {
+  // Compact Horizontal Dropdown Filter Row
+  filterDropdownRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
+    alignItems: 'center',
+    paddingVertical: 10,
     gap: 8,
   },
-  specPickChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 8,
-    backgroundColor: '#FAF5EE',
+  dropdownFilterBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(255, 253, 247, 0.92)',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 9,
     borderWidth: 1,
-    borderColor: '#E8DEC8',
-    maxWidth: '100%',
-    flexShrink: 1,
+    borderColor: '#E5DEC9',
+    gap: 6,
   },
-  specPickChipActive: {
+  dropdownFilterBtnActive: {
     backgroundColor: theme.colors.primary,
     borderColor: theme.colors.primary,
   },
-  specPickChipText: {
+  dropdownFilterBtnText: {
+    flex: 1,
     fontFamily: fonts.bodySemi,
     fontSize: 12,
     color: theme.colors.textPrimary,
-    flexShrink: 1,
   },
-  specPickChipTextActive: {
+  dropdownFilterBtnTextActive: {
     color: '#FFFFFF',
+    fontFamily: fonts.bodyBold,
+  },
+  filterResetIconBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 9,
+    backgroundColor: '#FFF5F5',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  dropdownModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  dropdownModalCard: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: '#FFFDF7',
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: '#E6D5B8',
+    ...theme.shadows.card,
+  },
+  dropdownModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingBottom: 10,
+    marginBottom: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: '#EFE8D8',
+  },
+  dropdownModalTitle: {
+    fontFamily: fonts.serifBold,
+    fontSize: 15,
+    color: theme.colors.primaryDark,
+  },
+  dropdownOptionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 11,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+  },
+  dropdownOptionItemActive: {
+    backgroundColor: '#FDF8EE',
+  },
+  dropdownOptionText: {
+    flex: 1,
+    fontFamily: fonts.body,
+    fontSize: 13,
+    color: theme.colors.textPrimary,
+  },
+  dropdownOptionTextActive: {
+    fontFamily: fonts.bodyBold,
+    color: theme.colors.primary,
   },
 
   // Inputs

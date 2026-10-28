@@ -10,12 +10,14 @@ import {
   FlatList,
   Modal,
   Linking,
+  BackHandler,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
+import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
 import { Dialog } from '../../components/common/Dialog';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
@@ -47,13 +49,20 @@ export const ExpertDetailScreen: React.FC = () => {
 
   // Slots & booking state
   const [availableSlots, setAvailableSlots] = useState<ExpertAvailableSlotDto[]>([]);
+  const [configuredSessionTypes, setConfiguredSessionTypes] = useState<SessionType[]>(['ONLINE_MEETING']);
   const [selectedSessionType, setSelectedSessionType] = useState<SessionType>('ONLINE_MEETING');
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<ExpertAvailableSlotDto | null>(null);
+  const [slotPeriodFilter, setSlotPeriodFilter] = useState<'ALL' | 'MORNING' | 'AFTERNOON' | 'EVENING'>('ALL');
+  const [slotSessionModalVisible, setSlotSessionModalVisible] = useState(false);
+  const [slotPeriodModalVisible, setSlotPeriodModalVisible] = useState(false);
 
   // Reviews state
   const [reviews, setReviews] = useState<ExpertPublicReviewDto[]>([]);
   const [selectedRatingFilter, setSelectedRatingFilter] = useState<number | null>(null);
+  const [reviewSort, setReviewSort] = useState<'NEWEST' | 'HIGHEST' | 'LOWEST'>('NEWEST');
+  const [reviewRatingModalVisible, setReviewRatingModalVisible] = useState(false);
+  const [reviewSortModalVisible, setReviewSortModalVisible] = useState(false);
   const [loadingReviews, setLoadingReviews] = useState(false);
 
   // Active sub-tab: 'INFO' | 'SCHEDULE' | 'REVIEWS'
@@ -98,18 +107,36 @@ export const ExpertDetailScreen: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const [detail, slots] = await Promise.all([
+      const [detail, slots, feeConfigs] = await Promise.all([
         consultationApi.getExpertDetail(expertProfileId),
         consultationApi.getAvailableSlotsForBooking(expertProfileId, undefined, 14),
+        consultationApi.getConsultationFeeConfigs({ isActive: true }).catch(() => []),
       ]);
       setExpert(detail);
       setAvailableSlots(slots);
       setReviews(detail.recentReviews || []);
 
-      // Auto-select session type that has available slots or from first fee package
-      let initialType: SessionType = 'ONLINE_MEETING';
-      if (detail.feePackages && detail.feePackages.length > 0) {
-        initialType = detail.feePackages[0].sessionType;
+      const activeAdminTypes: SessionType[] =
+        Array.isArray(feeConfigs) && feeConfigs.length > 0
+          ? (Array.from(
+              new Set(
+                feeConfigs
+                  .filter((c) => c.isActive !== false)
+                  .map((c) => c.sessionType as SessionType)
+              )
+            ) as SessionType[])
+          : ['ONLINE_MEETING'];
+      if (activeAdminTypes.length > 0) {
+        setConfiguredSessionTypes(activeAdminTypes);
+      }
+
+      // Auto-select session type that is configured by Admin or has available slots
+      let initialType: SessionType = activeAdminTypes[0] || 'ONLINE_MEETING';
+      const activeFeePkg = (detail.feePackages || []).find((p) =>
+        activeAdminTypes.includes(p.sessionType)
+      );
+      if (activeFeePkg) {
+        initialType = activeFeePkg.sessionType;
       } else if (slots.length > 0) {
         initialType = slots[0].sessionType;
       }
@@ -163,13 +190,25 @@ export const ExpertDetailScreen: React.FC = () => {
     }
   };
 
-  // Danh sách các gói dịch vụ tư vấn niêm yết của chuyên gia gom nhóm duy nhất theo sessionType (Tránh Duplicate Key)
+  // Danh sách các gói dịch vụ tư vấn niêm yết của chuyên gia gom nhóm duy nhất theo sessionType (đồng bộ theo cấu hình Admin)
   const dynamicServicePackages = useMemo(() => {
     if (!expert) return [];
 
-    const feeSessionTypes = expert.feePackages ? expert.feePackages.map((p) => p.sessionType) : [];
-    const slotSessionTypes = availableSlots.map((s) => s.sessionType);
-    const distinctTypes = Array.from(new Set([...feeSessionTypes, ...slotSessionTypes]));
+    const feeSessionTypes = expert.feePackages
+      ? expert.feePackages
+          .map((p) => p.sessionType)
+          .filter((t) => configuredSessionTypes.includes(t))
+      : [];
+    const slotSessionTypes = availableSlots
+      .map((s) => s.sessionType)
+      .filter((t) => configuredSessionTypes.includes(t) || availableSlots.some((s) => s.sessionType === t));
+    const distinctTypes = Array.from(
+      new Set(
+        [...feeSessionTypes, ...slotSessionTypes].length > 0
+          ? [...feeSessionTypes, ...slotSessionTypes]
+          : configuredSessionTypes
+      )
+    );
 
     return distinctTypes.map((type) => {
       const sInfo = formatSessionType(type);
@@ -217,7 +256,7 @@ export const ExpertDetailScreen: React.FC = () => {
             : 'Tư vấn trực tiếp qua đường truyền thoại',
       };
     });
-  }, [expert, availableSlots]);
+  }, [expert, availableSlots, configuredSessionTypes]);
 
   // Slots filtered by chosen service type
   const slotsForSelectedSession = useMemo(() => {
@@ -230,11 +269,33 @@ export const ExpertDetailScreen: React.FC = () => {
     return dates.sort();
   }, [slotsForSelectedSession]);
 
-  // Filter slots for currently selected date & service type
+  // Filter slots for currently selected date, service type & period of day
   const slotsForSelectedDate = useMemo(() => {
     if (!selectedDate) return [];
-    return slotsForSelectedSession.filter((s) => s.slotDate === selectedDate);
-  }, [slotsForSelectedSession, selectedDate]);
+    return slotsForSelectedSession.filter((s) => {
+      if (s.slotDate !== selectedDate) return false;
+      if (slotPeriodFilter !== 'ALL') {
+        const hour = parseInt((s.startTime || '00:00').split(':')[0], 10);
+        if (slotPeriodFilter === 'MORNING' && hour >= 12) return false;
+        if (slotPeriodFilter === 'AFTERNOON' && (hour < 12 || hour >= 18)) return false;
+        if (slotPeriodFilter === 'EVENING' && hour < 18) return false;
+      }
+      return true;
+    });
+  }, [slotsForSelectedSession, selectedDate, slotPeriodFilter]);
+
+  const sortedReviews = useMemo(() => {
+    const list = [...reviews];
+    if (reviewSort === 'HIGHEST') {
+      return list.sort((a, b) => b.rating - a.rating);
+    }
+    if (reviewSort === 'LOWEST') {
+      return list.sort((a, b) => a.rating - b.rating);
+    }
+    return list.sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+  }, [reviews, reviewSort]);
 
   // Proceed to booking screen
   const handleProceedToBooking = () => {
@@ -245,12 +306,38 @@ export const ExpertDetailScreen: React.FC = () => {
     });
   };
 
+  const handleBack = useCallback(() => {
+    const state = navigation.getState();
+    const routes = state?.routes || [];
+    const prevRoute = routes.length >= 2 ? routes[routes.length - 2] : null;
+
+    if (prevRoute && ['BookingDetail', 'PaymentResult', 'BookingCreate'].includes(prevRoute.name)) {
+      navigation.navigate('ExpertList');
+      return;
+    }
+
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+    } else {
+      navigation.navigate('ExpertList');
+    }
+  }, [navigation]);
+
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      handleBack();
+      return true;
+    });
+    return () => sub.remove();
+  }, [handleBack]);
+
   if (loading) {
     return (
       <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
+        <DrumPatternBackdrop variant="soft" />
         <View style={styles.header}>
           <TouchableOpacity
-            onPress={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('ExpertList'))}
+            onPress={handleBack}
             style={styles.backBtn}
             accessibilityRole="button"
             accessibilityLabel="Quay lại"
@@ -272,9 +359,10 @@ export const ExpertDetailScreen: React.FC = () => {
   if (error || !expert) {
     return (
       <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
+        <DrumPatternBackdrop variant="soft" />
         <View style={styles.header}>
           <TouchableOpacity
-            onPress={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('ExpertList'))}
+            onPress={handleBack}
             style={styles.backBtn}
             accessibilityRole="button"
             accessibilityLabel="Quay lại"
@@ -299,10 +387,12 @@ export const ExpertDetailScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
+      <DrumPatternBackdrop variant="soft" />
+
       {/* ── HEADER ── */}
       <View style={styles.header}>
         <TouchableOpacity
-          onPress={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('ExpertList'))}
+          onPress={handleBack}
           style={styles.backBtn}
           accessibilityRole="button"
           accessibilityLabel="Quay lại"
@@ -692,6 +782,75 @@ export const ExpertDetailScreen: React.FC = () => {
                 Chỉ hiển thị các khung giờ còn trống và thỏa mãn quy định đặt trước tối thiểu 4 giờ
               </Text>
 
+              {/* Compact Horizontal Dropdown Filter Row for Schedule */}
+              <View style={styles.filterDropdownRow}>
+                <TouchableOpacity
+                  style={styles.dropdownFilterBtn}
+                  onPress={() => setSlotSessionModalVisible(true)}
+                  activeOpacity={0.85}
+                  accessibilityRole="button"
+                  accessibilityLabel="Chọn hình thức dịch vụ"
+                >
+                  <Ionicons
+                    name={formatSessionType(selectedSessionType).icon as any}
+                    size={13}
+                    color={theme.colors.primary}
+                  />
+                  <Text style={styles.dropdownFilterBtnText} numberOfLines={1}>
+                    {formatSessionType(selectedSessionType).label}
+                  </Text>
+                  <Ionicons name="chevron-down" size={12} color={theme.colors.textSecondary} />
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.dropdownFilterBtn,
+                    slotPeriodFilter !== 'ALL' && styles.dropdownFilterBtnActive,
+                  ]}
+                  onPress={() => setSlotPeriodModalVisible(true)}
+                  activeOpacity={0.85}
+                  accessibilityRole="button"
+                  accessibilityLabel="Lọc theo buổi trong ngày"
+                >
+                  <Ionicons
+                    name="sunny-outline"
+                    size={13}
+                    color={slotPeriodFilter !== 'ALL' ? '#FFFFFF' : theme.colors.primary}
+                  />
+                  <Text
+                    style={[
+                      styles.dropdownFilterBtnText,
+                      slotPeriodFilter !== 'ALL' && styles.dropdownFilterBtnTextActive,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {slotPeriodFilter === 'MORNING'
+                      ? 'Buổi sáng'
+                      : slotPeriodFilter === 'AFTERNOON'
+                      ? 'Buổi chiều'
+                      : slotPeriodFilter === 'EVENING'
+                      ? 'Buổi tối'
+                      : 'Tất cả buổi'}
+                  </Text>
+                  <Ionicons
+                    name="chevron-down"
+                    size={12}
+                    color={slotPeriodFilter !== 'ALL' ? '#FFFFFF' : theme.colors.textSecondary}
+                  />
+                </TouchableOpacity>
+
+                {slotPeriodFilter !== 'ALL' && (
+                  <TouchableOpacity
+                    style={styles.filterResetIconBtn}
+                    onPress={() => setSlotPeriodFilter('ALL')}
+                    accessibilityRole="button"
+                    accessibilityLabel="Đặt lại lọc buổi"
+                  >
+                    <Ionicons name="refresh" size={14} color={theme.colors.primary} />
+                  </TouchableOpacity>
+                )}
+              </View>
+
               {uniqueDatesForSession.length === 0 ? (
                 <View style={styles.emptySlotBox}>
                   <Ionicons name="calendar-outline" size={36} color="#CCCCCC" />
@@ -818,63 +977,101 @@ export const ExpertDetailScreen: React.FC = () => {
                 </View>
               </View>
 
-              {/* Star Filter Chips */}
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.starFilterScroll}
-              >
+              {/* Compact Horizontal Dropdown Filter Row for Reviews */}
+              <View style={styles.filterDropdownRow}>
                 <TouchableOpacity
                   style={[
-                    styles.starFilterChip,
-                    selectedRatingFilter === null && styles.starFilterChipActive,
+                    styles.dropdownFilterBtn,
+                    selectedRatingFilter !== null && styles.dropdownFilterBtnActive,
                   ]}
-                  onPress={() => fetchReviewsByRating(null)}
+                  onPress={() => setReviewRatingModalVisible(true)}
+                  activeOpacity={0.85}
+                  accessibilityRole="button"
+                  accessibilityLabel="Lọc theo mức sao đánh giá"
                 >
+                  <Ionicons
+                    name="star"
+                    size={13}
+                    color={selectedRatingFilter !== null ? '#FFFFFF' : '#F59E0B'}
+                  />
                   <Text
                     style={[
-                      styles.starFilterText,
-                      selectedRatingFilter === null && styles.starFilterTextActive,
+                      styles.dropdownFilterBtnText,
+                      selectedRatingFilter !== null && styles.dropdownFilterBtnTextActive,
                     ]}
+                    numberOfLines={1}
                   >
-                    Tất cả
+                    {selectedRatingFilter !== null ? `${selectedRatingFilter} sao` : 'Tất cả đánh giá'}
                   </Text>
+                  <Ionicons
+                    name="chevron-down"
+                    size={12}
+                    color={selectedRatingFilter !== null ? '#FFFFFF' : theme.colors.textSecondary}
+                  />
                 </TouchableOpacity>
-                {[5, 4, 3, 2, 1].map((star) => {
-                  const active = selectedRatingFilter === star;
-                  return (
-                    <TouchableOpacity
-                      key={star}
-                      style={[styles.starFilterChip, active && styles.starFilterChipActive]}
-                      onPress={() => fetchReviewsByRating(star)}
-                    >
-                      <Ionicons
-                        name="star"
-                        size={12}
-                        color={active ? '#FFFFFF' : '#F59E0B'}
-                      />
-                      <Text
-                        style={[styles.starFilterText, active && styles.starFilterTextActive]}
-                      >
-                        {star} sao
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
+
+                <TouchableOpacity
+                  style={[
+                    styles.dropdownFilterBtn,
+                    reviewSort !== 'NEWEST' && styles.dropdownFilterBtnActive,
+                  ]}
+                  onPress={() => setReviewSortModalVisible(true)}
+                  activeOpacity={0.85}
+                  accessibilityRole="button"
+                  accessibilityLabel="Sắp xếp đánh giá"
+                >
+                  <Ionicons
+                    name="swap-vertical-outline"
+                    size={13}
+                    color={reviewSort !== 'NEWEST' ? '#FFFFFF' : theme.colors.primary}
+                  />
+                  <Text
+                    style={[
+                      styles.dropdownFilterBtnText,
+                      reviewSort !== 'NEWEST' && styles.dropdownFilterBtnTextActive,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {reviewSort === 'HIGHEST'
+                      ? 'Điểm cao nhất'
+                      : reviewSort === 'LOWEST'
+                      ? 'Điểm thấp nhất'
+                      : 'Mới nhất'}
+                  </Text>
+                  <Ionicons
+                    name="chevron-down"
+                    size={12}
+                    color={reviewSort !== 'NEWEST' ? '#FFFFFF' : theme.colors.textSecondary}
+                  />
+                </TouchableOpacity>
+
+                {(selectedRatingFilter !== null || reviewSort !== 'NEWEST') && (
+                  <TouchableOpacity
+                    style={styles.filterResetIconBtn}
+                    onPress={() => {
+                      fetchReviewsByRating(null);
+                      setReviewSort('NEWEST');
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Đặt lại lọc đánh giá"
+                  >
+                    <Ionicons name="refresh" size={14} color={theme.colors.primary} />
+                  </TouchableOpacity>
+                )}
+              </View>
 
               {loadingReviews ? (
                 <View style={styles.reviewLoading}>
                   <ActivityIndicator size="small" color={theme.colors.primary} />
                 </View>
-              ) : reviews.length === 0 ? (
+              ) : sortedReviews.length === 0 ? (
                 <View style={styles.emptyReviews}>
                   <Ionicons name="chatbox-ellipses-outline" size={32} color="#CCCCCC" />
                   <Text style={styles.emptyReviewsText}>Chưa có nhận xét nào trong mục này.</Text>
                 </View>
               ) : (
                 <View style={styles.reviewsList}>
-                  {reviews.map((r) => (
+                  {sortedReviews.map((r) => (
                     <View key={r.id} style={styles.reviewCard}>
                       <View style={styles.reviewHeader}>
                         <View style={styles.reviewerAvatar}>
@@ -1064,6 +1261,195 @@ export const ExpertDetailScreen: React.FC = () => {
         </View>
       </Modal>
 
+      {/* ── MODAL LỌC HÌNH THỨC DỊCH VỤ (LỊCH LÀM VIỆC) ── */}
+      <Modal
+        visible={slotSessionModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSlotSessionModalVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.dropdownModalOverlay}
+          activeOpacity={1}
+          onPress={() => setSlotSessionModalVisible(false)}
+        >
+          <View style={styles.dropdownModalCard}>
+            <View style={styles.dropdownModalHeader}>
+              <Text style={styles.dropdownModalTitle}>Chọn hình thức tư vấn</Text>
+              <TouchableOpacity onPress={() => setSlotSessionModalVisible(false)}>
+                <Ionicons name="close" size={20} color="#666666" />
+              </TouchableOpacity>
+            </View>
+            {Array.from(
+              new Set([
+                ...configuredSessionTypes,
+                ...dynamicServicePackages.map((p) => p.sessionType),
+              ])
+            ).map((type) => {
+              const sInfo = formatSessionType(type);
+              const selected = selectedSessionType === type;
+              return (
+                <TouchableOpacity
+                  key={type}
+                  style={[styles.dropdownOptionItem, selected && styles.dropdownOptionItemActive]}
+                  onPress={() => {
+                    handleSelectSessionType(type);
+                    setSlotSessionModalVisible(false);
+                  }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Ionicons
+                      name={sInfo.icon as any}
+                      size={16}
+                      color={selected ? theme.colors.primary : '#555555'}
+                    />
+                    <Text style={[styles.dropdownOptionText, selected && styles.dropdownOptionTextActive]}>
+                      {sInfo.fullLabel || sInfo.label}
+                    </Text>
+                  </View>
+                  {selected && <Ionicons name="checkmark-circle" size={18} color={theme.colors.primary} />}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* ── MODAL LỌC BUỔI TRONG NGÀY (LỊCH LÀM VIỆC) ── */}
+      <Modal
+        visible={slotPeriodModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSlotPeriodModalVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.dropdownModalOverlay}
+          activeOpacity={1}
+          onPress={() => setSlotPeriodModalVisible(false)}
+        >
+          <View style={styles.dropdownModalCard}>
+            <View style={styles.dropdownModalHeader}>
+              <Text style={styles.dropdownModalTitle}>Lọc theo buổi trong ngày</Text>
+              <TouchableOpacity onPress={() => setSlotPeriodModalVisible(false)}>
+                <Ionicons name="close" size={20} color="#666666" />
+              </TouchableOpacity>
+            </View>
+            {([
+              { key: 'ALL', label: 'Tất cả buổi trong ngày' },
+              { key: 'MORNING', label: 'Buổi sáng (Trước 12:00)' },
+              { key: 'AFTERNOON', label: 'Buổi chiều (12:00 - 18:00)' },
+              { key: 'EVENING', label: 'Buổi tối (Sau 18:00)' },
+            ] as const).map((opt) => {
+              const selected = slotPeriodFilter === opt.key;
+              return (
+                <TouchableOpacity
+                  key={opt.key}
+                  style={[styles.dropdownOptionItem, selected && styles.dropdownOptionItemActive]}
+                  onPress={() => {
+                    setSlotPeriodFilter(opt.key);
+                    setSlotPeriodModalVisible(false);
+                  }}
+                >
+                  <Text style={[styles.dropdownOptionText, selected && styles.dropdownOptionTextActive]}>
+                    {opt.label}
+                  </Text>
+                  {selected && <Ionicons name="checkmark-circle" size={18} color={theme.colors.primary} />}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* ── MODAL LỌC MỨC SAO ĐÁNH GIÁ ── */}
+      <Modal
+        visible={reviewRatingModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setReviewRatingModalVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.dropdownModalOverlay}
+          activeOpacity={1}
+          onPress={() => setReviewRatingModalVisible(false)}
+        >
+          <View style={styles.dropdownModalCard}>
+            <View style={styles.dropdownModalHeader}>
+              <Text style={styles.dropdownModalTitle}>Lọc theo mức đánh giá</Text>
+              <TouchableOpacity onPress={() => setReviewRatingModalVisible(false)}>
+                <Ionicons name="close" size={20} color="#666666" />
+              </TouchableOpacity>
+            </View>
+            {[null, 5, 4, 3, 2, 1].map((star) => {
+              const selected = selectedRatingFilter === star;
+              return (
+                <TouchableOpacity
+                  key={String(star)}
+                  style={[styles.dropdownOptionItem, selected && styles.dropdownOptionItemActive]}
+                  onPress={() => {
+                    fetchReviewsByRating(star);
+                    setReviewRatingModalVisible(false);
+                  }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Ionicons name="star" size={15} color="#F59E0B" />
+                    <Text style={[styles.dropdownOptionText, selected && styles.dropdownOptionTextActive]}>
+                      {star === null ? 'Tất cả đánh giá' : `Đánh giá ${star} sao`}
+                    </Text>
+                  </View>
+                  {selected && <Ionicons name="checkmark-circle" size={18} color={theme.colors.primary} />}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* ── MODAL SẮP XẾP ĐÁNH GIÁ ── */}
+      <Modal
+        visible={reviewSortModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setReviewSortModalVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.dropdownModalOverlay}
+          activeOpacity={1}
+          onPress={() => setReviewSortModalVisible(false)}
+        >
+          <View style={styles.dropdownModalCard}>
+            <View style={styles.dropdownModalHeader}>
+              <Text style={styles.dropdownModalTitle}>Sắp xếp nhận xét</Text>
+              <TouchableOpacity onPress={() => setReviewSortModalVisible(false)}>
+                <Ionicons name="close" size={20} color="#666666" />
+              </TouchableOpacity>
+            </View>
+            {([
+              { key: 'NEWEST', label: 'Mới nhất' },
+              { key: 'HIGHEST', label: 'Điểm đánh giá cao nhất' },
+              { key: 'LOWEST', label: 'Điểm đánh giá thấp nhất' },
+            ] as const).map((opt) => {
+              const selected = reviewSort === opt.key;
+              return (
+                <TouchableOpacity
+                  key={opt.key}
+                  style={[styles.dropdownOptionItem, selected && styles.dropdownOptionItemActive]}
+                  onPress={() => {
+                    setReviewSort(opt.key);
+                    setReviewSortModalVisible(false);
+                  }}
+                >
+                  <Text style={[styles.dropdownOptionText, selected && styles.dropdownOptionTextActive]}>
+                    {opt.label}
+                  </Text>
+                  {selected && <Ionicons name="checkmark-circle" size={18} color={theme.colors.primary} />}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
       <Dialog
         visible={Boolean(dialog)}
         title={dialog?.title || ''}
@@ -1087,7 +1473,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'transparent',
+    zIndex: 1,
   },
   backBtn: {
     width: 38,
@@ -1095,12 +1482,13 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#F3EFE6',
+    backgroundColor: 'rgba(243, 239, 230, 0.85)',
   },
   headerTitle: {
     fontFamily: fonts.serifBold,
-    fontSize: 16,
-    color: theme.colors.primary,
+    fontSize: 18,
+    lineHeight: 24,
+    color: theme.colors.primaryDark,
     flex: 1,
     textAlign: 'center',
     marginHorizontal: 10,
@@ -1111,7 +1499,7 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#FAF5EE',
+    backgroundColor: 'rgba(255, 253, 247, 0.92)',
     borderWidth: 1,
     borderColor: theme.colors.goldLight,
   },
@@ -1123,11 +1511,11 @@ const styles = StyleSheet.create({
 
   // Hero Card
   heroCard: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'rgba(255, 253, 247, 0.94)',
     borderRadius: 14,
     padding: 16,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
+    borderWidth: 1.5,
+    borderColor: '#E5D5B5',
     ...theme.shadows.card,
     marginBottom: 14,
   },
@@ -1888,32 +2276,100 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#777777',
   },
-  starFilterScroll: {
-    gap: 6,
-    paddingVertical: 10,
-  },
-  starFilterChip: {
+  filterDropdownRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 6,
-    backgroundColor: '#F5EFE4',
-    borderWidth: 1,
-    borderColor: '#E4D9C7',
-    gap: 3,
+    paddingVertical: 10,
+    gap: 8,
   },
-  starFilterChipActive: {
+  dropdownFilterBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(255, 253, 247, 0.92)',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 9,
+    borderWidth: 1,
+    borderColor: '#E5DEC9',
+    gap: 5,
+  },
+  dropdownFilterBtnActive: {
     backgroundColor: theme.colors.primary,
     borderColor: theme.colors.primary,
   },
-  starFilterText: {
+  dropdownFilterBtnText: {
+    flex: 1,
     fontFamily: fonts.bodySemi,
-    fontSize: 11,
-    color: '#555555',
+    fontSize: 11.5,
+    color: theme.colors.textPrimary,
   },
-  starFilterTextActive: {
+  dropdownFilterBtnTextActive: {
     color: '#FFFFFF',
+    fontFamily: fonts.bodyBold,
+  },
+  filterResetIconBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 9,
+    backgroundColor: '#FFF5F5',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  dropdownModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  dropdownModalCard: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: '#FFFDF7',
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: '#E6D5B8',
+    ...theme.shadows.card,
+  },
+  dropdownModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingBottom: 10,
+    marginBottom: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: '#EFE8D8',
+  },
+  dropdownModalTitle: {
+    fontFamily: fonts.serifBold,
+    fontSize: 15,
+    color: theme.colors.primaryDark,
+  },
+  dropdownOptionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 11,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+  },
+  dropdownOptionItemActive: {
+    backgroundColor: '#FDF8EE',
+  },
+  dropdownOptionText: {
+    fontFamily: fonts.body,
+    fontSize: 13,
+    color: theme.colors.textPrimary,
+  },
+  dropdownOptionTextActive: {
+    fontFamily: fonts.bodyBold,
+    color: theme.colors.primary,
   },
   reviewLoading: {
     paddingVertical: 20,

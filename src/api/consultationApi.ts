@@ -33,6 +33,7 @@ import type {
   ExpertSortOptionsResponse,
   ExpertSlotFilterParameters,
   ExpertSlotDetailResponse,
+  EmergencyCancelSlotResponse,
   CreateReviewRequest,
   ReviewDetailResponse,
   ReviewEligibilityResponse,
@@ -553,18 +554,23 @@ export const consultationApi = {
   // ══════════════════════════════════════════════════════════════════
 
   /**
-   * Khởi tạo hoặc lấy lại link thanh toán VNPay & mã VietQR
+   * Khởi tạo hoặc lấy lại link thanh toán VNPay & mã VietQR hoặc thanh toán bằng ví
    * POST /api/v1/bookings/{bookingId}/payment-link
    */
   async createPaymentLink(
     bookingId: string,
-    returnUrl?: string
+    returnUrl?: string,
+    paymentMethod: 'GATEWAY' | 'WALLET' = 'GATEWAY'
   ): Promise<PaymentLinkResponse> {
+    const payload: { returnUrl?: string; paymentMethod: 'GATEWAY' | 'WALLET' } = {
+      paymentMethod,
+    };
+    if (returnUrl) payload.returnUrl = returnUrl;
     const res = await apiClient.post<ApiResponse<PaymentLinkResponse>>(
       `/api/v1/bookings/${bookingId}/payment-link`,
-      returnUrl ? { returnUrl } : {}
+      payload
     );
-    return unwrap(res, 'Không thể tạo đường dẫn thanh toán VNPay/VietQR.');
+    return unwrap(res, 'Không thể khởi tạo giao dịch thanh toán.');
   },
 
   /**
@@ -789,6 +795,21 @@ export const consultationApi = {
   async deleteSlot(id: string): Promise<void> {
     const res = await apiClient.delete<ApiResponse<any>>(`/api/v1/expert/slots/${id}`);
     unwrapVoid(res, 'Không thể xóa khung giờ làm việc.');
+  },
+
+  /**
+   * Hủy lịch làm việc khẩn cấp (kể cả khi đã có khách hàng đặt lịch)
+   * POST /api/v1/expert/slots/{id}/emergency-cancel
+   */
+  async emergencyCancelSlot(
+    id: string,
+    reason: string
+  ): Promise<EmergencyCancelSlotResponse> {
+    const res = await apiClient.post<ApiResponse<EmergencyCancelSlotResponse>>(
+      `/api/v1/expert/slots/${id}/emergency-cancel`,
+      { reason: reason.trim() }
+    );
+    return unwrap(res, 'Không thể hủy khung giờ làm việc khẩn cấp.');
   },
 
   // ══════════════════════════════════════════════════════════════════

@@ -18,17 +18,20 @@ import { useNavigation, useRoute, useFocusEffect, RouteProp } from '@react-navig
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
+import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
 import { Dialog } from '../../components/common/Dialog';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { consultationApi } from '../../api/consultationApi';
+import { walletApi, WalletResponse, WalletTopUpResponse } from '../../api/walletApi';
 import { toFriendlyConsultationError, formatRefundStatus } from '../../utils/consultationFriendlyErrors';
 import { config } from '../../constants/config';
 import type {
   BookingDetailResponse,
   PaymentLinkResponse,
   EscrowTransactionResponse,
+  ConsultationSessionResponse,
   SharedTaxDossierResponse,
   ReviewDetailResponse,
   ReviewEligibilityResponse,
@@ -53,6 +56,7 @@ import {
   canUserDispute,
   canConfirmSatisfaction,
   canExpertComplete,
+  isBookingScheduleArrived,
   validateReviewInput,
   validateDisputeInput,
   validateExpertResponse,
@@ -89,7 +93,7 @@ const DISPUTE_REASONS: { code: DisputeReasonCode; label: string; desc: string }[
 export const BookingDetailScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
   const route = useRoute<RouteProp<RootStackParamList, 'BookingDetail'>>();
-  const { bookingId, isExpertView: isExpertViewParam } = route.params;
+  const { bookingId, isExpertView: isExpertViewParam, autoPay } = route.params;
 
   const currentUser = useAuthStore((s) => s.user);
   const userRole = (currentUser?.role || '').toLowerCase();
@@ -115,28 +119,50 @@ export const BookingDetailScreen: React.FC = () => {
   }, [isExpertViewParam, isExpertRole, booking, currentUser?.id, currentUser?.fullName]);
 
   const handleBack = useCallback(() => {
-    if (navigation.canGoBack()) {
+    const state = navigation.getState();
+    const routes = state?.routes || [];
+    const prevRoute = routes.length >= 2 ? routes[routes.length - 2] : null;
+
+    // 1. Nếu màn hình trước là "Lịch hẹn của tôi" -> quay lại MyBookings
+    if (prevRoute && prevRoute.name === 'MyBookings') {
       navigation.goBack();
-    } else {
-      if (isExpertView || isExpertRole) {
-        navigation.navigate('ExpertBookings');
-      } else {
-        navigation.navigate('MyBookings');
-      }
+      return;
     }
-  }, [navigation, isExpertView, isExpertRole]);
+
+    // 2. Nếu màn hình trước là "Quản lý ca tư vấn của chuyên gia" -> quay lại ExpertBookings
+    if (prevRoute && prevRoute.name === 'ExpertBookings') {
+      navigation.goBack();
+      return;
+    }
+
+    // 3. Nếu màn hình trước là màn hình tạo lịch (BookingCreate) -> quay về "Lịch hẹn của tôi"
+    if (prevRoute && prevRoute.name === 'BookingCreate') {
+      navigation.navigate('MyBookings');
+      return;
+    }
+
+    // 4. Nếu có thể quay lại bình thường và không bị vòng lặp với Wallet / BookingDetail
+    if (prevRoute && prevRoute.name !== 'Wallet' && prevRoute.name !== 'BookingDetail' && navigation.canGoBack()) {
+      navigation.goBack();
+      return;
+    }
+
+    // 5. Fallback an toàn: Dựa vào vai trò thực tế của ca tư vấn (chuyên gia hay khách hàng)
+    if (isExpertView) {
+      navigation.navigate('ExpertBookings');
+    } else {
+      navigation.navigate('MyBookings');
+    }
+  }, [navigation, isExpertView]);
 
   useEffect(() => {
     const onBackPress = () => {
-      if (!navigation.canGoBack()) {
-        handleBack();
-        return true;
-      }
-      return false;
+      handleBack();
+      return true;
     };
     const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
     return () => sub.remove();
-  }, [handleBack, navigation]);
+  }, [handleBack]);
 
   // Countdown timer state
   const [currentTimeMs, setCurrentTimeMs] = useState(Date.now());
@@ -155,8 +181,27 @@ export const BookingDetailScreen: React.FC = () => {
   const [paymentData, setPaymentData] = useState<PaymentLinkResponse | null>(null);
   const [checkingPayment, setCheckingPayment] = useState(false);
 
+  // Enhanced Wallet & Payment Options states
+  const [paymentOptionsModalVisible, setPaymentOptionsModalVisible] = useState(false);
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<'WALLET' | 'GATEWAY'>('WALLET');
+  const [selectedWalletSource, setSelectedWalletSource] = useState<'USER' | 'EXPERT'>('USER');
+  const [userWallet, setUserWallet] = useState<WalletResponse | null>(null);
+  const [expertWallet, setExpertWallet] = useState<WalletResponse | null>(null);
+  const [loadingWallets, setLoadingWallets] = useState(false);
+  const [submittingWalletPay, setSubmittingWalletPay] = useState(false);
+
+  // Quick Top-up Modal states
+  const [quickTopUpModalVisible, setQuickTopUpModalVisible] = useState(false);
+  const [quickTopUpStep, setQuickTopUpStep] = useState<'AMOUNT' | 'QR'>('AMOUNT');
+  const [quickTopUpAmount, setQuickTopUpAmount] = useState('100000');
+  const [submittingQuickTopUp, setSubmittingQuickTopUp] = useState(false);
+  const [quickTopUpData, setQuickTopUpData] = useState<WalletTopUpResponse | null>(null);
+  const [checkingQuickTopUp, setCheckingQuickTopUp] = useState(false);
+
   // Live Consultation & Dossier states
   const [joiningMeeting, setJoiningMeeting] = useState(false);
+  const [sessionData, setSessionData] = useState<ConsultationSessionResponse | null>(null);
+  const [hasNotifiedNoShow, setHasNotifiedNoShow] = useState(false);
   const [dossierModalVisible, setDossierModalVisible] = useState(false);
   const [dossierLoading, setDossierLoading] = useState(false);
   const [dossierData, setDossierData] = useState<SharedTaxDossierResponse | null>(null);
@@ -166,11 +211,7 @@ export const BookingDetailScreen: React.FC = () => {
   const [sharedNotes, setSharedNotes] = useState('');
   const [completing, setCompleting] = useState(false);
 
-  // Report No-Show modal
-  const [noShowModalVisible, setNoShowModalVisible] = useState(false);
-  const [noShowParty, setNoShowParty] = useState<'CUSTOMER' | 'EXPERT'>('CUSTOMER');
-  const [noShowReason, setNoShowReason] = useState('');
-  const [reportingNoShow, setReportingNoShow] = useState(false);
+
 
   // Escrow detail modal
   const [escrowModalVisible, setEscrowModalVisible] = useState(false);
@@ -233,19 +274,24 @@ export const BookingDetailScreen: React.FC = () => {
       const data = await consultationApi.getBookingDetail(bookingId);
       setBooking(data);
 
-      // Khi ca tư vấn đã hoàn thành, đã quyết toán hoặc đang có tranh chấp
+      // Tải thông tin phiên tư vấn, đánh giá và khiếu nại (bất kỳ ca nào ngoài PENDING_PAYMENT và AWAITING_EXPERT_APPROVAL)
       if (
-        data.status === 'COMPLETED' ||
-        data.status === 'SETTLED' ||
-        data.status === 'UNDER_DISPUTE'
+        data.status !== 'PENDING_PAYMENT' &&
+        data.status !== 'AWAITING_EXPERT_APPROVAL'
       ) {
-        const [reviewRes, reviewEligRes, disputeRes, disputeEligRes] = await Promise.allSettled([
+        const [sessionRes, reviewRes, reviewEligRes, disputeRes, disputeEligRes] = await Promise.allSettled([
+          consultationApi.getConsultationSession(bookingId),
           consultationApi.getBookingReview(bookingId),
           consultationApi.checkReviewEligibility(bookingId),
           consultationApi.getBookingDispute(bookingId),
           consultationApi.checkDisputeEligibility(bookingId),
         ]);
 
+        let latestSession: ConsultationSessionResponse | null = null;
+        if (sessionRes.status === 'fulfilled' && sessionRes.value) {
+          latestSession = sessionRes.value;
+          setSessionData(sessionRes.value);
+        }
         if (reviewRes.status === 'fulfilled') {
           setBookingReview(reviewRes.value);
         }
@@ -258,6 +304,40 @@ export const BookingDetailScreen: React.FC = () => {
         if (disputeEligRes.status === 'fulfilled') {
           setDisputeEligibility(disputeEligRes.value);
         }
+
+        // Kiểm tra và hiển thị thông báo khi khách hàng hoặc chuyên gia vắng mặt quá 15 phút (No-Show)
+        const resolvedNoShow = (
+          (data.noShowType && data.noShowType !== 'NONE' ? data.noShowType : latestSession?.noShowType) ||
+          'NONE'
+        )
+          .trim()
+          .toUpperCase();
+
+        if (resolvedNoShow === 'USER_NO_SHOW' && !hasNotifiedNoShow) {
+          setHasNotifiedNoShow(true);
+          setDialog({
+            title: isExpertView
+              ? 'Đã đóng ca do Khách hàng vắng mặt'
+              : 'Vắng mặt tại phiên tư vấn trực tuyến',
+            message: isExpertView
+              ? `Khách hàng không tham gia phòng tư vấn #${data.bookingCode} sau 15 phút kể từ giờ hẹn (${formatTimeRange(data.startTime, data.endTime)}). Hệ thống đã tự động đóng ca và chuyển thù lao của bạn sang trạng thái chờ giải ngân.`
+              : `Hệ thống ghi nhận bạn đã không tham gia phòng tư vấn #${data.bookingCode} sau 15 phút kể từ giờ hẹn (${formatTimeRange(data.startTime, data.endTime)}). Phiên tư vấn đã tự động kết thúc và phí tư vấn được thanh toán cho Chuyên gia để bảo vệ quyền lợi thời gian của chuyên gia theo quy định.`,
+            primaryLabel: 'Đã hiểu',
+            onPrimary: () => setDialog(null),
+          });
+        } else if (resolvedNoShow === 'EXPERT_NO_SHOW' && !hasNotifiedNoShow) {
+          setHasNotifiedNoShow(true);
+          setDialog({
+            title: isExpertView
+              ? 'Ca tư vấn đã hủy do vắng mặt'
+              : 'Chuyên gia vắng mặt – Hoàn tiền 100%',
+            message: isExpertView
+              ? `Bạn không điểm danh vào phòng tư vấn #${data.bookingCode} sau 15 phút kể từ giờ hẹn. Hệ thống đã tự động hủy ca và hoàn trả 100% chi phí cho khách hàng.`
+              : `Chuyên gia đã không có mặt trong phòng tư vấn #${data.bookingCode} sau 15 phút kể từ giờ hẹn. Hệ thống đã tự động hủy ca và hoàn trả 100% chi phí (${formatVnd(data.fee)}) vào ví cá nhân của bạn.`,
+            primaryLabel: 'Đã hiểu',
+            onPrimary: () => setDialog(null),
+          });
+        }
       }
     } catch (err: any) {
       setError(err?.response?.data?.message || err?.message || 'Không thể tải chi tiết lịch hẹn.');
@@ -266,7 +346,19 @@ export const BookingDetailScreen: React.FC = () => {
         setLoading(false);
       }
     }
-  }, [bookingId]);
+  }, [bookingId, hasNotifiedNoShow, isExpertView]);
+
+  // Tự động kiểm tra định kỳ mỗi 15 giây khi ca CONFIRMED đã đến giờ hẹn để kịp thời cập nhật trạng thái vắng mặt (No-Show)
+  useEffect(() => {
+    if (!booking || booking.status !== 'CONFIRMED') return;
+    if (!isBookingScheduleArrived(booking.slotDate, booking.startTime, new Date())) return;
+
+    const pollTimer = setInterval(() => {
+      fetchDetail(true);
+    }, 15000);
+
+    return () => clearInterval(pollTimer);
+  }, [booking?.status, booking?.slotDate, booking?.startTime, fetchDetail]);
 
   useFocusEffect(
     useCallback(() => {
@@ -436,12 +528,109 @@ export const BookingDetailScreen: React.FC = () => {
     }
   };
 
-  // Handle Payment Link
-  const handleOpenPayment = async () => {
+  // Load wallets for payment
+  const fetchWalletsForPayment = useCallback(async () => {
+    setLoadingWallets(true);
+    try {
+      const [uRes, eRes] = await Promise.allSettled([
+        walletApi.getMyWallet('USER'),
+        walletApi.getMyWallet('EXPERT'),
+      ]);
+      if (uRes.status === 'fulfilled') setUserWallet(uRes.value);
+      if (eRes.status === 'fulfilled') setExpertWallet(eRes.value);
+    } catch (err) {
+      console.warn('Lỗi lấy thông tin ví:', err);
+    } finally {
+      setLoadingWallets(false);
+    }
+  }, []);
+
+  // Open Payment Method Modal
+  const handleOpenPaymentOptions = async () => {
+    setSelectedPaymentMethod('WALLET');
+    setSelectedWalletSource('USER');
+    setPaymentOptionsModalVisible(true);
+    await fetchWalletsForPayment();
+  };
+
+  // Wallet payment execution
+  const handleConfirmWalletPayment = async () => {
+    if (!booking) return;
+    setSubmittingWalletPay(true);
+    try {
+      const res = await consultationApi.createPaymentLink(bookingId, undefined, 'WALLET');
+      setPaymentOptionsModalVisible(false);
+
+      // Nếu trước đó đã khởi tạo link cổng thanh toán (PendingPayment + CheckoutUrl),
+      // Backend trả về link cổng thanh toán hiện hữu thay vì trừ ví.
+      if (
+        res &&
+        res.escrowStatus === 'PendingPayment' &&
+        res.paymentGateway !== 'WALLET' &&
+        (res.checkoutUrl || res.qrCode)
+      ) {
+        setPaymentData(res);
+        setPaymentModalVisible(true);
+        return;
+      }
+
+      // Tải lại chi tiết lịch hẹn (để chuyển trạng thái sang AWAITING_EXPERT_APPROVAL) và số dư ví ngay lập tức
+      await Promise.allSettled([fetchDetail(true), fetchWalletsForPayment()]);
+
+      setDialog({
+        title: 'Thanh toán thành công!',
+        message: `Bạn đã thanh toán thành công ${formatVnd(booking.fee)} bằng Ví TAXKEEP VN. Ca tư vấn đã được chuyển tới chuyên gia ${booking.expertFullName} phê duyệt.`,
+        primaryLabel: 'Xem chi tiết lịch hẹn',
+        onPrimary: () => {
+          setDialog(null);
+          fetchDetail(true);
+        },
+      });
+    } catch (err: any) {
+      const rawCode =
+        err?.response?.data?.errors?.errorCode ||
+        err?.response?.data?.errorCode ||
+        err?.code ||
+        '';
+      const friendly = toFriendlyConsultationError(
+        err,
+        'Thanh toán ví không thành công',
+        'Không thể thực hiện trừ tiền ví cho lịch hẹn này.'
+      );
+
+      if (String(rawCode).toUpperCase() === 'INSUFFICIENT_WALLET_BALANCE') {
+        const shortage = Math.max(0, booking.fee - Number(userWallet?.availableBalance ?? 0));
+        setDialog({
+          title: friendly.title,
+          message: friendly.message,
+          primaryLabel: 'Nạp thêm tiền vào ví',
+          onPrimary: () => {
+            setDialog(null);
+            handleOpenQuickTopUp(shortage > 0 ? shortage : booking.fee);
+          },
+          secondaryLabel: 'Đóng',
+          onSecondary: () => setDialog(null),
+        });
+      } else {
+        setDialog({
+          title: friendly.title,
+          message: friendly.message,
+          primaryLabel: 'Đã hiểu',
+          onPrimary: () => setDialog(null),
+        });
+      }
+    } finally {
+      setSubmittingWalletPay(false);
+    }
+  };
+
+  // Gateway payment execution
+  const handleOpenGatewayPayment = async () => {
+    setPaymentOptionsModalVisible(false);
     setPaymentLoading(true);
     try {
       const returnUrl = `${config.webFrontendUrl}/payments/vnpay-return`;
-      const res = await consultationApi.createPaymentLink(bookingId, returnUrl);
+      const res = await consultationApi.createPaymentLink(bookingId, returnUrl, 'GATEWAY');
       setPaymentData(res);
       setPaymentModalVisible(true);
     } catch (err: any) {
@@ -460,6 +649,72 @@ export const BookingDetailScreen: React.FC = () => {
       setPaymentLoading(false);
     }
   };
+
+  // Quick Top-up handlers inside BookingDetail
+  const handleOpenQuickTopUp = (neededAmount?: number) => {
+    const minTopUp = 10000;
+    const defaultAmount = neededAmount && neededAmount >= minTopUp ? Math.ceil(neededAmount / 10000) * 10000 : 100000;
+    setQuickTopUpAmount(String(defaultAmount));
+    setQuickTopUpStep('AMOUNT');
+    setQuickTopUpData(null);
+    setQuickTopUpModalVisible(true);
+  };
+
+  const handleCreateQuickTopUp = async () => {
+    const parsed = parseInt(quickTopUpAmount.replace(/\D/g, ''), 10);
+    if (isNaN(parsed) || parsed < 10000) {
+      setDialog({
+        title: 'Số tiền không hợp lệ',
+        message: 'Số tiền nạp tối thiểu vào ví TAXKEEP VN là 10.000 ₫.',
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
+      return;
+    }
+
+    setSubmittingQuickTopUp(true);
+    try {
+      const returnUrl = `${config.webFrontendUrl}/payments/vnpay-return`;
+      const res = await walletApi.topUpWallet({ amount: parsed, returnUrl });
+      setQuickTopUpData(res);
+      setQuickTopUpStep('QR');
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || err?.message || 'Không thể tạo yêu cầu nạp tiền lúc này.';
+      setDialog({
+        title: 'Chưa thể tạo mã nạp',
+        message: msg,
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
+    } finally {
+      setSubmittingQuickTopUp(false);
+    }
+  };
+
+  const handleCheckQuickTopUp = async () => {
+    setCheckingQuickTopUp(true);
+    try {
+      await fetchWalletsForPayment();
+      setQuickTopUpModalVisible(false);
+      setDialog({
+        title: 'Làm mới số dư thành công',
+        message: 'Đã cập nhật số dư ví mới nhất. Bạn có thể bấm "Xác nhận thanh toán bằng ví" ngay bây giờ.',
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
+    } catch (err) {
+      console.warn('Lỗi kiểm tra nạp tiền nhanh:', err);
+    } finally {
+      setCheckingQuickTopUp(false);
+    }
+  };
+
+  // Auto-open payment options if navigated from booking creation
+  useEffect(() => {
+    if (autoPay && booking && booking.status === 'PENDING_PAYMENT' && !isExpertView) {
+      handleOpenPaymentOptions();
+    }
+  }, [autoPay, booking?.id, booking?.status, isExpertView]);
 
   // Check payment result & escrow status
   const handleCheckPaymentResult = async (silent: boolean = false) => {
@@ -511,10 +766,13 @@ export const BookingDetailScreen: React.FC = () => {
     }
   };
 
-  // Tự động kiểm tra trạng thái thanh toán khi người dùng quay lại app từ trình duyệt
+  // Tự động kiểm tra trạng thái thanh toán & số dư ví khi người dùng quay lại app từ trình duyệt
   useEffect(() => {
     const sub = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active') {
+        if (paymentOptionsModalVisible || quickTopUpModalVisible || booking?.status === 'PENDING_PAYMENT') {
+          fetchWalletsForPayment();
+        }
         if (paymentModalVisible && !checkingPayment) {
           handleCheckPaymentResult(true);
         } else {
@@ -525,7 +783,15 @@ export const BookingDetailScreen: React.FC = () => {
     return () => {
       sub.remove();
     };
-  }, [paymentModalVisible, checkingPayment, fetchDetail]);
+  }, [
+    paymentModalVisible,
+    paymentOptionsModalVisible,
+    quickTopUpModalVisible,
+    booking?.status,
+    checkingPayment,
+    fetchDetail,
+    fetchWalletsForPayment,
+  ]);
 
   // Listen to incoming deep links (vnpay-return)
   useEffect(() => {
@@ -676,6 +942,19 @@ export const BookingDetailScreen: React.FC = () => {
 
   // Handle Confirm Complete (Expert)
   const handleConfirmComplete = async () => {
+    if (
+      booking?.status === 'CONFIRMED' &&
+      !canExpertComplete(booking.status, isExpertView, booking.slotDate, booking.startTime, new Date(currentTimeMs))
+    ) {
+      setDialog({
+        title: 'Chưa đến giờ hẹn',
+        message: 'Chưa đến thời gian lịch hẹn tư vấn. Bạn chỉ có thể lập biên bản và hoàn tất khi ca tư vấn đã đến giờ hoặc đang diễn ra.',
+        primaryLabel: 'Đã hiểu',
+        onPrimary: () => setDialog(null),
+      });
+      return;
+    }
+
     if (!sharedNotes.trim() || sharedNotes.trim().length < 10) {
       setDialog({
         title: 'Cần biên bản tóm tắt',
@@ -693,7 +972,7 @@ export const BookingDetailScreen: React.FC = () => {
       setDialog({
         title: 'Hoàn tất ca tư vấn',
         message:
-          'Ca tư vấn đã được hoàn tất thành công. Số tiền ký quỹ được chuyển sang giai đoạn chờ kết toán 24 giờ để đối soát bảo vệ quyền lợi hai bên trước khi giải ngân vào ví.',
+          'Ca tư vấn đã được hoàn tất thành công. Thù lao đang trong thời gian chờ đối soát theo quy định hệ thống trước khi giải ngân vào ví.',
         primaryLabel: 'Đóng',
         onPrimary: () => setDialog(null),
       });
@@ -715,37 +994,7 @@ export const BookingDetailScreen: React.FC = () => {
     }
   };
 
-  // Handle Confirm No-Show
-  const handleConfirmNoShow = async () => {
-    setReportingNoShow(true);
-    try {
-      await consultationApi.reportNoShow(bookingId, noShowReason.trim() || undefined);
-      setNoShowModalVisible(false);
-      setNoShowReason('');
-      setDialog({
-        title: 'Đã báo vắng mặt',
-        message:
-          'Hệ thống đã ghi nhận tình trạng vắng mặt và áp dụng quy tắc xử lý bảo vệ quyền lợi hai bên.',
-        primaryLabel: 'Đóng',
-        onPrimary: () => setDialog(null),
-      });
-      fetchDetail();
-    } catch (err: any) {
-      const friendly = toFriendlyConsultationError(
-        err,
-        'Không thể báo vắng mặt',
-        'Không thể báo vắng mặt lúc này.'
-      );
-      setDialog({
-        title: friendly.title,
-        message: friendly.message,
-        primaryLabel: 'Đã hiểu',
-        onPrimary: () => setDialog(null),
-      });
-    } finally {
-      setReportingNoShow(false);
-    }
-  };
+
 
   // Handle Open Escrow Details
   const handleOpenEscrow = async () => {
@@ -783,7 +1032,7 @@ export const BookingDetailScreen: React.FC = () => {
             onSecondary: () => setDialog(null),
             onPrimary: () => {
               setDialog(null);
-              handleOpenPayment();
+              handleOpenPaymentOptions();
             },
           });
         } else {
@@ -921,9 +1170,19 @@ export const BookingDetailScreen: React.FC = () => {
       setBookingDispute(createdDispute);
       setDisputeModalVisible(false);
       setDisputeDescription('');
+      const replyHours = createdDispute?.expertResponseDeadline
+        ? Math.max(
+            1,
+            Math.round(
+              (new Date(createdDispute.expertResponseDeadline).getTime() - Date.now()) / 3600000
+            )
+          )
+        : null;
       setDialog({
         title: 'Đã gửi khiếu nại',
-        message: 'Khoản tiền đã được tạm giữ an toàn. Chuyên gia có 24 giờ để gửi phản hồi trước khi TaxKeepVN giải quyết.',
+        message: replyHours
+          ? `Khoản tiền đã được tạm giữ an toàn. Chuyên gia có ${replyHours} giờ để gửi phản hồi trước khi hệ thống xử lý.`
+          : 'Khoản tiền đã được tạm giữ an toàn. Chuyên gia sẽ gửi phản hồi theo thời hạn quy định trước khi hệ thống xử lý.',
         primaryLabel: 'Đã hiểu',
         onPrimary: () => setDialog(null),
       });
@@ -995,6 +1254,7 @@ export const BookingDetailScreen: React.FC = () => {
   if (loading) {
     return (
       <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
+        <DrumPatternBackdrop variant="soft" />
         <View style={styles.header}>
           <TouchableOpacity onPress={handleBack} style={styles.backBtn} accessibilityRole="button" accessibilityLabel="Quay lại">
             <Ionicons name="arrow-back" size={24} color={theme.colors.textPrimary} />
@@ -1014,6 +1274,7 @@ export const BookingDetailScreen: React.FC = () => {
   if (error || !booking) {
     return (
       <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
+        <DrumPatternBackdrop variant="soft" />
         <View style={styles.header}>
           <TouchableOpacity onPress={handleBack} style={styles.backBtn} accessibilityRole="button" accessibilityLabel="Quay lại">
             <Ionicons name="arrow-back" size={24} color={theme.colors.textPrimary} />
@@ -1034,7 +1295,20 @@ export const BookingDetailScreen: React.FC = () => {
     );
   }
 
-  const statusInfo = formatBookingStatus(booking.status);
+  const effectiveNoShowType = (
+    (booking.noShowType && booking.noShowType !== 'NONE' ? booking.noShowType : sessionData?.noShowType) ||
+    'NONE'
+  )
+    .trim()
+    .toUpperCase();
+  const effectiveSharedNotes = booking.sessionSharedNotes || sessionData?.sharedNotes || null;
+  const isMeetingScheduleArrived = isBookingScheduleArrived(
+    booking.slotDate,
+    booking.startTime,
+    new Date(currentTimeMs)
+  );
+
+  const statusInfo = formatBookingStatus(booking.status, effectiveNoShowType, isExpertView);
   const sessionInfo = formatSessionType(booking.sessionType);
 
   // Can user cancel this booking? (Chỉ người nộp thuế mới có thao tác hủy lịch tại đây)
@@ -1059,6 +1333,8 @@ export const BookingDetailScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
+      <DrumPatternBackdrop variant="soft" />
+
       {/* ── HEADER ── */}
       <View style={styles.header}>
         <TouchableOpacity
@@ -1150,6 +1426,74 @@ export const BookingDetailScreen: React.FC = () => {
             </View>
           )}
 
+          {/* Customer No-Show Alert Banner */}
+          {effectiveNoShowType === 'USER_NO_SHOW' && (
+            <View
+              style={[
+                styles.disputeHeroAlert,
+                {
+                  backgroundColor: isExpertView ? '#ECFDF5' : '#FFF7ED',
+                  borderColor: isExpertView ? '#A7F3D0' : '#FED7AA',
+                },
+              ]}
+            >
+              <Ionicons
+                name={isExpertView ? 'shield-checkmark' : 'alert-circle'}
+                size={22}
+                color={isExpertView ? '#059669' : '#C2410C'}
+              />
+              <View style={{ flex: 1, marginLeft: 8 }}>
+                <Text
+                  style={[
+                    styles.disputeHeroTitle,
+                    { color: isExpertView ? '#065F46' : '#9A3412' },
+                  ]}
+                >
+                  {isExpertView
+                    ? 'Khách hàng vắng mặt — Bảo vệ thù lao chuyên gia'
+                    : 'Bạn đã không tham gia phòng tư vấn đúng giờ'}
+                </Text>
+                <Text
+                  style={[
+                    styles.disputeHeroDesc,
+                    { color: isExpertView ? '#047857' : '#C2410C' },
+                  ]}
+                >
+                  {isExpertView
+                    ? 'Khách hàng không vào phòng họp sau 15 phút kể từ giờ bắt đầu. Hệ thống đã tự động đóng ca tư vấn và chuyển sang thời gian chờ giải ngân 24h để bảo vệ thù lao của bạn.'
+                    : 'Hệ thống ghi nhận bạn không vào phòng họp sau 15 phút kể từ giờ bắt đầu nên ca tư vấn đã tự động đóng để bảo vệ quyền lợi thời gian của chuyên gia. Nếu bạn gặp sự cố kỹ thuật khách quan, bạn vẫn có thể gửi khiếu nại trong vòng 24 giờ kể từ lúc đóng ca.'}
+                </Text>
+              </View>
+            </View>
+          )}
+
+          {/* Expert No-Show Alert Banner */}
+          {effectiveNoShowType === 'EXPERT_NO_SHOW' && (
+            <View
+              style={[
+                styles.disputeHeroAlert,
+                {
+                  backgroundColor: '#FEF2F2',
+                  borderColor: '#FECACA',
+                },
+              ]}
+            >
+              <Ionicons name="warning" size={22} color="#DC2626" />
+              <View style={{ flex: 1, marginLeft: 8 }}>
+                <Text style={[styles.disputeHeroTitle, { color: '#991B1B' }]}>
+                  {isExpertView
+                    ? 'Bạn đã vắng mặt quá 15 phút quy định'
+                    : 'Chuyên gia vắng mặt — Đã hoàn tiền 100%'}
+                </Text>
+                <Text style={[styles.disputeHeroDesc, { color: '#B91C1C' }]}>
+                  {isExpertView
+                    ? 'Hệ thống ghi nhận bạn không tham gia phòng tư vấn sau 15 phút kể từ giờ bắt đầu. Ca tư vấn đã tự động hủy và hoàn 100% phí cho khách hàng.'
+                    : 'Chuyên gia không tham gia phòng tư vấn sau 15 phút kể từ giờ bắt đầu. Hệ thống đã tự động hủy lịch và hoàn 100% phí bảo chứng về ví của bạn.'}
+                </Text>
+              </View>
+            </View>
+          )}
+
           {/* Under Dispute Escrow Freeze Alert */}
           {booking.status === 'UNDER_DISPUTE' && (
             <View style={styles.disputeHeroAlert}>
@@ -1162,6 +1506,27 @@ export const BookingDetailScreen: React.FC = () => {
               </View>
             </View>
           )}
+
+          {/* Admin Dispute Resolved Alert Banner */}
+          {bookingDispute &&
+            (bookingDispute.status?.startsWith('RESOLVED') ||
+              bookingDispute.status === 'RESOLVED' ||
+              Boolean(bookingDispute.adminResolution) ||
+              Boolean(bookingDispute.resolvedAt)) && (
+              <View style={[styles.disputeHeroAlert, { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' }]}>
+                <Ionicons name="shield-checkmark" size={22} color="#059669" />
+                <View style={{ flex: 1, marginLeft: 8 }}>
+                  <Text style={[styles.disputeHeroTitle, { color: '#065F46' }]}>
+                    Khiếu nại đã có phán quyết từ Ban Quản Trị
+                  </Text>
+                  <Text style={[styles.disputeHeroDesc, { color: '#047857' }]}>
+                    {bookingDispute.adminResolution
+                      ? `Phán quyết: ${bookingDispute.adminResolution}`
+                      : 'Ban quản trị đã hoàn tất xem xét và đưa ra phán quyết giải quyết vụ việc.'}
+                  </Text>
+                </View>
+              </View>
+            )}
         </View>
 
         {/* ── 2. THÔNG TIN ĐỐI TÁC PHIÊN TƯ VẤN (CHUYÊN GIA HOẶC KHÁCH HÀNG) ── */}
@@ -1245,9 +1610,9 @@ export const BookingDetailScreen: React.FC = () => {
 
           <View style={styles.infoRow}>
             <Text style={styles.infoLabel}>Hình thức tư vấn:</Text>
-            <View style={[styles.sessionBadge, { backgroundColor: `${sessionInfo.color}18` }]}>
-              <Ionicons name={sessionInfo.icon as any} size={13} color={sessionInfo.color} />
-              <Text style={[styles.sessionBadgeText, { color: sessionInfo.color }]}>
+            <View style={styles.sessionValueBox}>
+              <Ionicons name={sessionInfo.icon as any} size={15} color={theme.colors.primary} />
+              <Text style={styles.sessionValueText}>
                 {sessionInfo.fullLabel || sessionInfo.label}
               </Text>
             </View>
@@ -1270,7 +1635,10 @@ export const BookingDetailScreen: React.FC = () => {
             <Text
               style={[
                 styles.infoValue,
-                { color: booking.paidAt ? '#059669' : '#D97706', fontWeight: '600' },
+                {
+                  color: booking.paidAt ? '#059669' : '#D97706',
+                  fontFamily: fonts.bodySemi,
+                },
               ]}
             >
               {booking.paidAt
@@ -1294,6 +1662,47 @@ export const BookingDetailScreen: React.FC = () => {
             <Text style={styles.problemDescText}>{booking.problemDescription}</Text>
           </View>
         </View>
+
+        {/* ── 4B. BIÊN BẢN KẾT QUẢ / GHI CHÚ HỆ THỐNG CỦA PHIÊN TƯ VẤN ── */}
+        {effectiveSharedNotes ? (
+          <View style={styles.cardSection}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+              <Ionicons
+                name={effectiveNoShowType === 'USER_NO_SHOW' ? 'information-circle' : 'document-text'}
+                size={18}
+                color={effectiveNoShowType === 'USER_NO_SHOW' ? '#C2410C' : theme.colors.primary}
+              />
+              <Text style={[styles.sectionHeaderTitle, { marginBottom: 0 }]}>
+                {effectiveNoShowType === 'USER_NO_SHOW'
+                  ? 'Ghi nhận đóng ca tự động từ hệ thống'
+                  : 'Biên bản & Ghi chú kết quả tư vấn'}
+              </Text>
+            </View>
+            <View
+              style={[
+                styles.problemWrap,
+                {
+                  backgroundColor: effectiveNoShowType === 'USER_NO_SHOW' ? '#FFF7ED' : '#F8FAFC',
+                  borderColor: effectiveNoShowType === 'USER_NO_SHOW' ? '#FED7AA' : '#E2E8F0',
+                  borderWidth: 1,
+                  borderRadius: 10,
+                  padding: 12,
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.problemDescText,
+                  {
+                    color: effectiveNoShowType === 'USER_NO_SHOW' ? '#9A3412' : '#1E293B',
+                  },
+                ]}
+              >
+                {effectiveSharedNotes}
+              </Text>
+            </View>
+          </View>
+        ) : null}
 
         {/* ── 5. DANH SÁCH TÀI LIỆU ĐÍNH KÈM ── */}
         {booking.attachments && booking.attachments.length > 0 && (
@@ -1341,15 +1750,16 @@ export const BookingDetailScreen: React.FC = () => {
           <View style={styles.cardSection}>
             <View style={styles.cardSectionHeaderRow}>
               <Text style={styles.sectionHeaderTitle}>Khiếu nại & Tranh chấp</Text>
-              <View
-                style={[
-                  styles.disputeStatusBadge,
-                  { backgroundColor: formatDisputeStatus(bookingDispute.status).bg },
-                ]}
-              >
+              <View style={styles.statusIndicatorRow}>
+                <View
+                  style={[
+                    styles.statusDot,
+                    { backgroundColor: formatDisputeStatus(bookingDispute.status).color },
+                  ]}
+                />
                 <Text
                   style={[
-                    styles.disputeStatusText,
+                    styles.statusIndicatorText,
                     { color: formatDisputeStatus(bookingDispute.status).color },
                   ]}
                 >
@@ -1407,8 +1817,25 @@ export const BookingDetailScreen: React.FC = () => {
               </View>
             ) : null}
 
+            {/* Trạng thái BQT đang thụ lý */}
+            {(bookingDispute.status === 'AWAITING_ADMIN_RESOLUTION' ||
+              bookingDispute.status === 'PENDING_ADMIN_REVIEW') && (
+              <View style={styles.adminPendingBox}>
+                <Ionicons name="time-outline" size={18} color="#2563EB" />
+                <View style={{ flex: 1, marginLeft: 8 }}>
+                  <Text style={styles.adminPendingTitle}>Ban Quản Trị đang thụ lý vụ việc</Text>
+                  <Text style={styles.adminPendingDesc}>
+                    Ban Quản Trị TaxKeepVN đang xem xét giải trình và đối chiếu hồ sơ để đưa ra phán quyết công tâm nhất.
+                  </Text>
+                </View>
+              </View>
+            )}
+
             {/* Phán quyết giải quyết của Ban quản trị */}
-            {bookingDispute.status === 'RESOLVED' && (
+            {(bookingDispute.status?.startsWith('RESOLVED') ||
+              bookingDispute.status === 'RESOLVED' ||
+              Boolean(bookingDispute.adminResolution) ||
+              Boolean(bookingDispute.resolvedAt)) && (
               <View style={styles.adminResolutionBox}>
                 <View style={styles.adminResolutionHeader}>
                   <Ionicons name="ribbon" size={18} color="#059669" />
@@ -1438,11 +1865,34 @@ export const BookingDetailScreen: React.FC = () => {
                     </Text>
                   </View>
                 </View>
-                {bookingDispute.adminResolution && (
-                  <View style={{ marginTop: 8 }}>
-                    <Text style={styles.topicLabel}>Căn cứ phán quyết:</Text>
-                    <Text style={styles.problemDescText}>{bookingDispute.adminResolution}</Text>
+
+                {/* Thông điệp / Lời nhắn / Căn cứ phán quyết từ Admin */}
+                {bookingDispute.adminResolution ? (
+                  <View style={styles.adminMessageCard}>
+                    <View style={styles.adminMessageHeader}>
+                      <Ionicons name="chatbubble-ellipses" size={16} color="#059669" />
+                      <Text style={styles.adminMessageTitle}>
+                        Lời nhắn giải quyết từ Ban Quản Trị:
+                      </Text>
+                    </View>
+                    <Text style={styles.adminMessageContent}>
+                      {bookingDispute.adminResolution}
+                    </Text>
                   </View>
+                ) : null}
+
+                {/* Ghi chú thêm từ Admin (nếu có) */}
+                {bookingDispute.adminNotes ? (
+                  <View style={{ marginTop: 8 }}>
+                    <Text style={styles.topicLabel}>Ghi chú giải quyết:</Text>
+                    <Text style={styles.problemDescText}>{bookingDispute.adminNotes}</Text>
+                  </View>
+                ) : null}
+
+                {bookingDispute.resolvedAt && (
+                  <Text style={[styles.disputeDateText, { marginTop: 8 }]}>
+                    Thời gian phán quyết: {formatVietnameseDate(bookingDispute.resolvedAt.split('T')[0])}
+                  </Text>
                 )}
               </View>
             )}
@@ -1593,17 +2043,19 @@ export const BookingDetailScreen: React.FC = () => {
           {!isExpertView && booking.status === 'PENDING_PAYMENT' && (
             <TouchableOpacity
               style={styles.payNowBtn}
-              onPress={handleOpenPayment}
-              disabled={paymentLoading}
+              onPress={handleOpenPaymentOptions}
+              disabled={paymentLoading || loadingWallets}
               accessibilityRole="button"
               accessibilityLabel="Thanh toán bảo chứng ngay"
             >
-              {paymentLoading ? (
+              {paymentLoading || loadingWallets ? (
                 <ActivityIndicator size="small" color="#FFFFFF" />
               ) : (
                 <>
-                  <Ionicons name="card" size={18} color="#FFFFFF" />
-                  <Text style={styles.payNowBtnText}>Thanh toán bảo chứng (VNPay / VietQR)</Text>
+                  <Ionicons name="shield-checkmark" size={18} color="#FFFFFF" />
+                  <Text style={styles.payNowBtnText}>
+                    Thanh toán bảo chứng ({formatVnd(booking.fee)})
+                  </Text>
                 </>
               )}
             </TouchableOpacity>
@@ -1619,6 +2071,30 @@ export const BookingDetailScreen: React.FC = () => {
               <Text style={styles.liveConsultationDesc}>
                 Phòng tư vấn mở trước giờ hẹn 10 phút. Hệ thống tự động chuyển sang "Đang tư vấn" khi cả hai bên tham gia.
               </Text>
+
+              {/* Cảnh báo điểm danh tự động khi đã tới giờ hẹn mà khách hàng chưa vào phòng */}
+              {booking.status === 'CONFIRMED' && isMeetingScheduleArrived && !sessionData?.isUserPresent && (
+                <View
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'flex-start',
+                    backgroundColor: '#FFF7ED',
+                    borderWidth: 1,
+                    borderColor: '#FED7AA',
+                    borderRadius: 10,
+                    padding: 10,
+                    marginBottom: 10,
+                    gap: 8,
+                  }}
+                >
+                  <Ionicons name="time" size={18} color="#C2410C" style={{ marginTop: 1 }} />
+                  <Text style={{ flex: 1, fontFamily: fonts.bodyMedium, fontSize: 12.5, lineHeight: 18, color: '#9A3412' }}>
+                    {isExpertView
+                      ? 'Đã đến giờ hẹn tư vấn nhưng khách hàng chưa điểm danh vào phòng. Vui lòng bấm "Vào phòng tư vấn trực tuyến" để hệ thống ghi nhận sự có mặt của bạn. Nếu khách hàng không vào sau 15 phút, hệ thống sẽ tự động đóng ca và bảo vệ thù lao của bạn.'
+                      : 'Đã đến giờ hẹn tư vấn! Vui lòng bấm "Vào phòng tư vấn trực tuyến" ngay. Nếu bạn không tham gia trong vòng 15 phút kể từ giờ bắt đầu, hệ thống sẽ tự động đóng ca tư vấn (Vắng mặt).'}
+                  </Text>
+                </View>
+              )}
 
               <TouchableOpacity
                 style={styles.joinMeetingBtn}
@@ -1648,7 +2124,7 @@ export const BookingDetailScreen: React.FC = () => {
                   <Text style={styles.dossierBtnText}>Hồ sơ thuế chia sẻ</Text>
                 </TouchableOpacity>
 
-                {canExpertComplete(booking.status, isExpertView) && (
+                {canExpertComplete(booking.status, isExpertView, booking.slotDate, booking.startTime, new Date(currentTimeMs)) && (
                   <TouchableOpacity
                     style={styles.completeBtn}
                     onPress={() => setCompleteModalVisible(true)}
@@ -1661,15 +2137,14 @@ export const BookingDetailScreen: React.FC = () => {
                 )}
               </View>
 
-              <TouchableOpacity
-                style={styles.noShowBtn}
-                onPress={() => setNoShowModalVisible(true)}
-                accessibilityRole="button"
-                accessibilityLabel="Báo vắng mặt"
-              >
-                <Ionicons name="person-remove-outline" size={14} color={theme.colors.error} />
-                <Text style={styles.noShowBtnText}>Báo vắng mặt (sau 15 phút)</Text>
-              </TouchableOpacity>
+              {isExpertView && booking.status === 'CONFIRMED' && !canExpertComplete(booking.status, isExpertView, booking.slotDate, booking.startTime, new Date(currentTimeMs)) && (
+                <View style={styles.scheduleNotArrivedHint}>
+                  <Ionicons name="time-outline" size={14} color="#6B7280" />
+                  <Text style={styles.scheduleNotArrivedHintText}>
+                    Biên bản báo cáo và kết thúc ca sẽ khả dụng khi đến giờ hẹn tư vấn ({formatTimeRange(booking.startTime, booking.endTime)}).
+                  </Text>
+                </View>
+              )}
             </View>
           )}
 
@@ -1677,9 +2152,22 @@ export const BookingDetailScreen: React.FC = () => {
           {(booking.status === 'COMPLETED' || booking.status === 'SETTLED') && (
             <View style={styles.completedNoticeCard}>
               <View style={styles.liveConsultationHeader}>
-                <Ionicons name="checkmark-circle" size={20} color="#059669" />
-                <Text style={[styles.liveConsultationTitle, { color: '#065F46' }]}>
-                  Ca tư vấn đã hoàn tất
+                <Ionicons
+                  name={effectiveNoShowType === 'USER_NO_SHOW' ? 'alert-circle' : 'checkmark-circle'}
+                  size={20}
+                  color={effectiveNoShowType === 'USER_NO_SHOW' && !isExpertView ? '#C2410C' : '#059669'}
+                />
+                <Text
+                  style={[
+                    styles.liveConsultationTitle,
+                    { color: effectiveNoShowType === 'USER_NO_SHOW' && !isExpertView ? '#9A3412' : '#065F46' },
+                  ]}
+                >
+                  {effectiveNoShowType === 'USER_NO_SHOW'
+                    ? isExpertView
+                      ? 'Ca tư vấn đã đóng (Khách hàng vắng mặt)'
+                      : 'Ca tư vấn đã đóng do bạn không tham gia'
+                    : 'Ca tư vấn đã hoàn tất'}
                 </Text>
               </View>
               <TouchableOpacity style={styles.dossierBtn} onPress={handleOpenDossier}>
@@ -1688,7 +2176,13 @@ export const BookingDetailScreen: React.FC = () => {
               </TouchableOpacity>
 
               {/* Nút gửi đánh giá nếu chưa đánh giá & là khách hàng */}
-              {canUserReview(booking.status, isExpertView, reviewEligibility, Boolean(bookingReview)) && (
+              {canUserReview(
+                booking.status,
+                isExpertView,
+                reviewEligibility,
+                Boolean(bookingReview),
+                effectiveNoShowType
+              ) && (
                 <TouchableOpacity
                   style={styles.reviewActionBtn}
                   onPress={() => setReviewModalVisible(true)}
@@ -1708,34 +2202,43 @@ export const BookingDetailScreen: React.FC = () => {
                     <Text style={styles.escrowCooldownTitle}>Bảo chứng thanh toán 24h</Text>
                   </View>
                   <Text style={styles.escrowCooldownDesc}>
-                    Khoản tiền được giữ an toàn 24h. Bạn có thể xác nhận hài lòng để gửi thù lao sớm cho chuyên gia.
+                    {effectiveNoShowType === 'USER_NO_SHOW'
+                      ? 'Ca tư vấn đã đóng tự động do hệ thống ghi nhận bạn không vào phòng sau 15 phút. Khoản phí bảo chứng sẽ tự động giải ngân cho chuyên gia sau 24h trừ khi bạn gửi khiếu nại kèm bằng chứng sự cố.'
+                      : 'Khoản tiền được giữ an toàn 24h. Bạn có thể xác nhận hài lòng để gửi thù lao sớm cho chuyên gia.'}
                   </Text>
                   <View style={styles.escrowCooldownBtnRow}>
-                    <TouchableOpacity
-                      style={styles.confirmSatisfactionBtn}
-                      onPress={handleConfirmSatisfaction}
-                      disabled={confirmingSatisfaction}
-                      accessibilityRole="button"
-                      accessibilityLabel="Xác nhận hài lòng"
-                    >
-                      {confirmingSatisfaction ? (
-                        <ActivityIndicator size="small" color="#FFFFFF" />
-                      ) : (
-                        <>
-                          <Ionicons name="checkmark-done" size={16} color="#FFFFFF" />
-                          <Text style={styles.confirmSatisfactionBtnText}>Xác nhận hài lòng</Text>
-                        </>
-                      )}
-                    </TouchableOpacity>
+                    {effectiveNoShowType !== 'USER_NO_SHOW' && (
+                      <TouchableOpacity
+                        style={styles.confirmSatisfactionBtn}
+                        onPress={handleConfirmSatisfaction}
+                        disabled={confirmingSatisfaction}
+                        accessibilityRole="button"
+                        accessibilityLabel="Xác nhận hài lòng"
+                      >
+                        {confirmingSatisfaction ? (
+                          <ActivityIndicator size="small" color="#FFFFFF" />
+                        ) : (
+                          <>
+                            <Ionicons name="checkmark-done" size={16} color="#FFFFFF" />
+                            <Text style={styles.confirmSatisfactionBtnText}>Xác nhận hài lòng</Text>
+                          </>
+                        )}
+                      </TouchableOpacity>
+                    )}
 
                     <TouchableOpacity
-                      style={styles.disputeActionBtn}
+                      style={[
+                        styles.disputeActionBtn,
+                        effectiveNoShowType === 'USER_NO_SHOW' && { flex: 1 },
+                      ]}
                       onPress={() => setDisputeModalVisible(true)}
                       accessibilityRole="button"
                       accessibilityLabel="Gửi khiếu nại"
                     >
                       <Ionicons name="alert-circle-outline" size={16} color={theme.colors.error} />
-                      <Text style={styles.disputeActionBtnText}>Khiếu nại</Text>
+                      <Text style={styles.disputeActionBtnText}>
+                        {effectiveNoShowType === 'USER_NO_SHOW' ? 'Khiếu nại sự cố vắng mặt' : 'Khiếu nại'}
+                      </Text>
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -1868,6 +2371,363 @@ export const BookingDetailScreen: React.FC = () => {
         </View>
       </Modal>
 
+      {/* ── MODAL CHỌN PHƯƠNG THỨC THANH TOÁN & NGUỒN TIỀN VÍ ── */}
+      <Modal
+        visible={paymentOptionsModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setPaymentOptionsModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.paymentMethodModalBox}>
+            {/* Header */}
+            <View style={styles.paymentModalHeader}>
+              <View style={styles.paymentHeaderIcon}>
+                <Ionicons name="card" size={24} color={theme.colors.primary} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.paymentModalTitle}>Phương thức thanh toán</Text>
+                <Text style={styles.paymentModalSubtitle}>
+                  Chọn nguồn tiền để hoàn tất giữ chỗ lịch hẹn
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setPaymentOptionsModalVisible(false)}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Ionicons name="close" size={24} color="#777777" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ maxHeight: 500 }} showsVerticalScrollIndicator={false}>
+              {/* Chi tiết khoản phí */}
+              <View style={styles.paymentAmountCard}>
+                <Text style={styles.paymentAmountLabel}>Tổng phí ca tư vấn:</Text>
+                <Text style={styles.paymentAmountValue}>{formatVnd(booking.fee)}</Text>
+                <Text style={styles.paymentFeeSub}>
+                  {booking.durationMinutes} phút • {formatSessionType(booking.sessionType).label} • {booking.expertFullName}
+                </Text>
+              </View>
+
+              <Text style={styles.paymentMethodSectionTitle}>1. CHỌN HÌNH THỨC THANH TOÁN</Text>
+
+              {/* Option 1: Ví TAXKEEP VN */}
+              <TouchableOpacity
+                style={[
+                  styles.methodOptionCard,
+                  selectedPaymentMethod === 'WALLET' && styles.methodOptionCardActive,
+                ]}
+                onPress={() => setSelectedPaymentMethod('WALLET')}
+                activeOpacity={0.85}
+              >
+                <View style={styles.methodOptionHeaderRow}>
+                  <View style={styles.methodRadioCircle}>
+                    {selectedPaymentMethod === 'WALLET' && <View style={styles.methodRadioDot} />}
+                  </View>
+                  <View style={[styles.methodIconBox, { backgroundColor: '#ECFDF5' }]}>
+                    <Ionicons name="wallet" size={20} color="#059669" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.methodTitle}>Ví điện tử TAXKEEP VN</Text>
+                    <Text style={styles.methodSubtitle}>Khấu trừ tức thì từ số dư khả dụng, không cần mở app ngân hàng</Text>
+                  </View>
+                </View>
+
+                {/* Khi chọn ví TAXKEEP VN: Chỉ hiển thị Ví cá nhân thiết kế ngắn gọn, không thuật ngữ IT */}
+                {selectedPaymentMethod === 'WALLET' && (
+                  <View style={styles.walletCompactContainer}>
+                    <View style={styles.walletCompactCard}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.walletCompactTitle}>Ví cá nhân</Text>
+                        <Text style={styles.walletCompactBalance}>
+                          Số dư:{' '}
+                          <Text style={styles.walletCompactBalanceValue}>
+                            {loadingWallets ? 'Đang tải...' : formatVnd(userWallet?.availableBalance ?? 0)}
+                          </Text>
+                        </Text>
+                      </View>
+                      <View style={styles.walletBalanceStatusRow}>
+                        <Ionicons
+                          name={
+                            Number(userWallet?.availableBalance ?? 0) >= booking.fee
+                              ? 'checkmark-circle'
+                              : 'alert-circle'
+                          }
+                          size={15}
+                          color={
+                            Number(userWallet?.availableBalance ?? 0) >= booking.fee
+                              ? '#059669'
+                              : '#D97706'
+                          }
+                        />
+                        <Text
+                          style={[
+                            styles.walletBalanceStatusText,
+                            {
+                              color:
+                                Number(userWallet?.availableBalance ?? 0) >= booking.fee
+                                  ? '#059669'
+                                  : '#D97706',
+                            },
+                          ]}
+                        >
+                          {Number(userWallet?.availableBalance ?? 0) >= booking.fee ? 'Khả dụng' : 'Cần nạp thêm'}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {/* Trạng thái thiếu số dư & Nút nạp thêm */}
+                    {Number(userWallet?.availableBalance ?? 0) < booking.fee && !loadingWallets && (
+                      <View style={styles.walletCompactShortageRow}>
+                        <Text style={styles.walletCompactShortageText}>
+                          Còn thiếu:{' '}
+                          <Text style={styles.walletCompactShortageHighlight}>
+                            {formatVnd(booking.fee - Number(userWallet?.availableBalance ?? 0))}
+                          </Text>
+                        </Text>
+                        <TouchableOpacity
+                          style={styles.walletCompactTopUpBtn}
+                          onPress={() => handleOpenQuickTopUp(booking.fee - Number(userWallet?.availableBalance ?? 0))}
+                          activeOpacity={0.8}
+                        >
+                          <Ionicons name="add-circle" size={15} color="#059669" />
+                          <Text style={styles.walletCompactTopUpBtnText}>Nạp thêm</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </View>
+                )}
+              </TouchableOpacity>
+
+              {/* Option 2: Cổng thanh toán trực tuyến (VNPay / VietQR) */}
+              <TouchableOpacity
+                style={[
+                  styles.methodOptionCard,
+                  selectedPaymentMethod === 'GATEWAY' && styles.methodOptionCardActive,
+                ]}
+                onPress={() => setSelectedPaymentMethod('GATEWAY')}
+                activeOpacity={0.85}
+              >
+                <View style={styles.methodOptionHeaderRow}>
+                  <View style={styles.methodRadioCircle}>
+                    {selectedPaymentMethod === 'GATEWAY' && <View style={styles.methodRadioDot} />}
+                  </View>
+                  <View style={[styles.methodIconBox, { backgroundColor: '#EFF6FF' }]}>
+                    <Ionicons name="qr-code-outline" size={20} color="#2563EB" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.methodTitle}>Cổng trực tuyến (VNPay / VietQR)</Text>
+                    <Text style={styles.methodSubtitle}>
+                      Quét mã QR qua mọi ứng dụng ngân hàng hoặc thẻ ATM / Visa
+                    </Text>
+                  </View>
+                </View>
+              </TouchableOpacity>
+
+              {/* Bảo chứng ghi chú */}
+              <View style={styles.escrowNoticeBox}>
+                <Ionicons name="shield-checkmark" size={18} color="#065F46" />
+                <Text style={styles.escrowNoticeText}>
+                  TaxKeepVN áp dụng cơ chế Ký quỹ bảo chứng 100%. Tiền được giữ an toàn và chỉ giải ngân sau khi phiên tư vấn kết thúc thành công.
+                </Text>
+              </View>
+            </ScrollView>
+
+            {/* Footer Action Button */}
+            <View style={styles.paymentFooter}>
+              {selectedPaymentMethod === 'WALLET' ? (
+                <TouchableOpacity
+                  style={[
+                    styles.walletPayActionBtn,
+                    (Number(userWallet?.availableBalance ?? 0) < booking.fee || submittingWalletPay || loadingWallets) &&
+                      styles.walletPayActionBtnDisabled,
+                  ]}
+                  onPress={handleConfirmWalletPayment}
+                  disabled={Number(userWallet?.availableBalance ?? 0) < booking.fee || submittingWalletPay || loadingWallets}
+                  activeOpacity={0.85}
+                >
+                  {submittingWalletPay ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <>
+                      <Ionicons name="checkmark-circle" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
+                      <Text style={styles.walletPayActionBtnText}>
+                        {Number(userWallet?.availableBalance ?? 0) >= booking.fee
+                          ? `Xác nhận thanh toán bằng ví (${formatVnd(booking.fee)})`
+                          : 'Số dư ví chưa đủ'}
+                      </Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  style={styles.gatewayPayActionBtn}
+                  onPress={handleOpenGatewayPayment}
+                  disabled={paymentLoading}
+                  activeOpacity={0.85}
+                >
+                  {paymentLoading ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <>
+                      <Ionicons name="arrow-forward-circle" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
+                      <Text style={styles.gatewayPayActionBtnText}>
+                        Tiếp tục thanh toán VNPay / VietQR
+                      </Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── MODAL NẠP TIỀN NHANH VÀO VÍ NGAY TRONG BOOKING DETAIL ── */}
+      <Modal
+        visible={quickTopUpModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setQuickTopUpModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.paymentMethodModalBox}>
+            <View style={styles.paymentModalHeader}>
+              <View style={[styles.paymentHeaderIcon, { backgroundColor: '#ECFDF5' }]}>
+                <Ionicons name="add-circle" size={24} color="#059669" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.paymentModalTitle}>Nạp tiền vào ví TAXKEEP VN</Text>
+                <Text style={styles.paymentModalSubtitle}>Nạp tiền tức thì để hoàn tất thanh toán lịch hẹn</Text>
+              </View>
+              <TouchableOpacity onPress={() => setQuickTopUpModalVisible(false)}>
+                <Ionicons name="close" size={24} color="#777777" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ maxHeight: 460 }} showsVerticalScrollIndicator={false}>
+              {quickTopUpStep === 'AMOUNT' ? (
+                <>
+                  <View style={styles.quickTopUpHintBox}>
+                    <Text style={styles.quickTopUpHintLabel}>Số tiền gợi ý cần nạp thêm:</Text>
+                    <Text style={styles.quickTopUpHintAmount}>
+                      {formatVnd(Number(quickTopUpAmount))}
+                    </Text>
+                  </View>
+
+                  <Text style={[styles.paymentMethodSectionTitle, { marginTop: 12 }]}>CHỌN NHANH MỆNH GIÁ</Text>
+                  <View style={styles.quickTopUpChipRow}>
+                    {['50000', '100000', '200000', '500000', '1000000'].map((amt) => {
+                      const isSel = quickTopUpAmount === amt;
+                      return (
+                        <TouchableOpacity
+                          key={amt}
+                          style={[styles.quickChipBtn, isSel && styles.quickChipBtnActive]}
+                          onPress={() => setQuickTopUpAmount(amt)}
+                        >
+                          <Text style={[styles.quickChipText, isSel && styles.quickChipTextActive]}>
+                            {formatVnd(Number(amt))}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+
+                  <Text style={[styles.paymentMethodSectionTitle, { marginTop: 14 }]}>
+                    HOẶC NHẬP SỐ TIỀN TÙY CHỌN (VNĐ)
+                  </Text>
+                  <View style={styles.quickInputWrap}>
+                    <TextInput
+                      style={styles.quickTextInput}
+                      keyboardType="numeric"
+                      value={quickTopUpAmount ? Number(quickTopUpAmount.replace(/\D/g, '')).toLocaleString('vi-VN') : ''}
+                      onChangeText={(t) => setQuickTopUpAmount(t.replace(/\D/g, ''))}
+                      placeholder="100.000"
+                      placeholderTextColor="#999999"
+                    />
+                    <Text style={styles.quickCurrencyBadge}>₫</Text>
+                  </View>
+                  <Text style={styles.quickMinText}>Tối thiểu: 10.000 ₫</Text>
+
+                  <TouchableOpacity
+                    style={styles.createQuickTopUpBtn}
+                    onPress={handleCreateQuickTopUp}
+                    disabled={submittingQuickTopUp}
+                  >
+                    {submittingQuickTopUp ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <>
+                        <Ionicons name="qr-code" size={18} color="#FFFFFF" />
+                        <Text style={styles.createQuickTopUpBtnText}>Tạo mã QR nạp tiền</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <>
+                  <View style={styles.quickTopUpSuccessCard}>
+                    <Text style={styles.quickTopUpSuccessLabel}>Số tiền nạp:</Text>
+                    <Text style={styles.quickTopUpSuccessAmount}>
+                      {formatVnd(quickTopUpData?.amount ?? Number(quickTopUpAmount))}
+                    </Text>
+                    {quickTopUpData?.orderCode ? (
+                      <Text style={styles.quickTopUpOrderCode}>
+                        Nội dung: <Text style={{ fontFamily: fonts.bodyBold, color: '#B45309' }}>NAPVI{quickTopUpData.orderCode}</Text>
+                      </Text>
+                    ) : null}
+                  </View>
+
+                  {quickTopUpData?.qrCode ? (
+                    <View style={styles.quickQrWrap}>
+                      <Text style={styles.quickQrInstruction}>
+                        Quét mã VietQR bằng ứng dụng Ngân hàng để nạp tiền vào ví:
+                      </Text>
+                      <Image
+                        source={{ uri: quickTopUpData.qrCode }}
+                        style={styles.quickQrImage}
+                        resizeMode="contain"
+                      />
+                    </View>
+                  ) : null}
+
+                  {quickTopUpData?.checkoutUrl ? (
+                    <TouchableOpacity
+                      style={styles.quickVnPayBtn}
+                      onPress={() => quickTopUpData.checkoutUrl && Linking.openURL(quickTopUpData.checkoutUrl)}
+                    >
+                      <Ionicons name="open-outline" size={18} color="#FFFFFF" />
+                      <Text style={styles.quickVnPayBtnText}>Mở cổng thanh toán VNPay</Text>
+                    </TouchableOpacity>
+                  ) : null}
+
+                  <View style={styles.quickModalBtnRow}>
+                    <TouchableOpacity
+                      style={styles.quickBackBtn}
+                      onPress={() => setQuickTopUpStep('AMOUNT')}
+                    >
+                      <Text style={styles.quickBackBtnText}>Đổi số tiền</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.quickCheckBalanceBtn}
+                      onPress={handleCheckQuickTopUp}
+                      disabled={checkingQuickTopUp}
+                    >
+                      {checkingQuickTopUp ? (
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                      ) : (
+                        <Text style={styles.quickCheckBalanceBtnText}>Kiểm tra số dư ví</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
       {/* ── MODAL THANH TOÁN BẢO CHỨNG (VNPAY / VIETQR) ── */}
       <Modal
         visible={paymentModalVisible}
@@ -1987,13 +2847,13 @@ export const BookingDetailScreen: React.FC = () => {
             {dossierLoading ? (
               <View style={{ padding: 40, alignItems: 'center' }}>
                 <ActivityIndicator size="large" color={theme.colors.primary} />
-                <Text style={{ marginTop: 10, fontSize: 12, color: '#777777' }}>
+                <Text style={{ marginTop: 10, fontFamily: fonts.body, fontSize: 12, color: '#777777' }}>
                   Đang tải dữ liệu hồ sơ thuế...
                 </Text>
               </View>
             ) : !dossierData ? (
               <View style={{ padding: 30, alignItems: 'center' }}>
-                <Text style={{ fontSize: 13, color: '#666666' }}>Không có dữ liệu hồ sơ thuế chia sẻ.</Text>
+                <Text style={{ fontFamily: fonts.body, fontSize: 13, color: '#666666' }}>Không có dữ liệu hồ sơ thuế chia sẻ.</Text>
               </View>
             ) : (
               <ScrollView style={{ maxHeight: 450 }} showsVerticalScrollIndicator={false}>
@@ -2111,7 +2971,7 @@ export const BookingDetailScreen: React.FC = () => {
       </Modal>
 
       {/* ── MODAL BIÊN BẢN & KẾT THÚC CA (EXPERT) ── */}
-      {canExpertComplete(booking.status, isExpertView) && (
+      {canExpertComplete(booking.status, isExpertView, booking.slotDate, booking.startTime, new Date(currentTimeMs)) && (
         <Modal
           visible={completeModalVisible}
           transparent
@@ -2178,97 +3038,7 @@ export const BookingDetailScreen: React.FC = () => {
         </Modal>
       )}
 
-      {/* ── MODAL BÁO VẮNG MẶT (NO-SHOW) ── */}
-      <Modal
-        visible={noShowModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setNoShowModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.cancelModalBox}>
-            <View style={styles.cancelModalHeader}>
-              <Ionicons name="person-remove" size={28} color={theme.colors.error} />
-              <Text style={styles.cancelModalTitle}>Báo vắng mặt ca tư vấn</Text>
-            </View>
 
-            <Text style={styles.cancelModalDesc}>
-              Áp dụng sau khi quá 15 phút so với giờ hẹn bắt đầu. Hệ thống sẽ xử lý bảo vệ quyền lợi của bên có mặt.
-            </Text>
-
-            <Text style={styles.reasonInputLabel}>Bên vắng mặt:</Text>
-            <View style={styles.noShowPartyRow}>
-              <TouchableOpacity
-                style={[
-                  styles.noShowPartyBtn,
-                  noShowParty === 'CUSTOMER' && styles.noShowPartyBtnActive,
-                ]}
-                onPress={() => setNoShowParty('CUSTOMER')}
-              >
-                <Text
-                  style={[
-                    styles.noShowPartyText,
-                    noShowParty === 'CUSTOMER' && styles.noShowPartyTextActive,
-                  ]}
-                >
-                  Khách hàng vắng
-                </Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[
-                  styles.noShowPartyBtn,
-                  noShowParty === 'EXPERT' && styles.noShowPartyBtnActive,
-                ]}
-                onPress={() => setNoShowParty('EXPERT')}
-              >
-                <Text
-                  style={[
-                    styles.noShowPartyText,
-                    noShowParty === 'EXPERT' && styles.noShowPartyTextActive,
-                  ]}
-                >
-                  Chuyên gia vắng
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            <Text style={styles.reasonInputLabel}>Ghi chú thêm (không bắt buộc):</Text>
-            <TextInput
-              style={styles.reasonInput}
-              placeholder="VD: Đã chờ trong phòng họp trực tuyến quá 15 phút không thấy khách..."
-              placeholderTextColor="#999999"
-              value={noShowReason}
-              onChangeText={setNoShowReason}
-              multiline
-              numberOfLines={3}
-              textAlignVertical="top"
-            />
-
-            <View style={styles.cancelModalBtnRow}>
-              <TouchableOpacity
-                style={styles.cancelModalCloseBtn}
-                onPress={() => setNoShowModalVisible(false)}
-                disabled={reportingNoShow}
-              >
-                <Text style={styles.cancelModalCloseBtnText}>Đóng</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.cancelModalSubmitBtn}
-                onPress={handleConfirmNoShow}
-                disabled={reportingNoShow}
-              >
-                {reportingNoShow ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.cancelModalSubmitBtnText}>Xác nhận báo</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
 
       {/* ── MODAL CHI TIẾT KÝ QUỸ ESCROW ── */}
       <Modal
@@ -2297,27 +3067,28 @@ export const BookingDetailScreen: React.FC = () => {
             {escrowLoading ? (
               <View style={{ padding: 40, alignItems: 'center' }}>
                 <ActivityIndicator size="large" color={theme.colors.primary} />
-                <Text style={{ marginTop: 10, fontSize: 12, color: '#777777' }}>
+                <Text style={{ marginTop: 10, fontFamily: fonts.body, fontSize: 12, color: '#777777' }}>
                   Đang tải thông tin ký quỹ...
                 </Text>
               </View>
             ) : !escrowTx ? (
               <View style={{ padding: 30, alignItems: 'center' }}>
-                <Text style={{ fontSize: 13, color: '#666666' }}>Không có thông tin ký quỹ bảo đảm.</Text>
+                <Text style={{ fontFamily: fonts.body, fontSize: 13, color: '#666666' }}>Không có thông tin ký quỹ bảo đảm.</Text>
               </View>
             ) : (
               <View style={{ paddingVertical: 10, gap: 10 }}>
                 <View style={styles.escrowStatusRow}>
                   <Text style={styles.dossierLabel}>Trạng thái ký quỹ:</Text>
-                  <View
-                    style={[
-                      styles.escrowStatusBadge,
-                      { backgroundColor: formatEscrowStatus(escrowTx.escrowStatus).bg },
-                    ]}
-                  >
+                  <View style={styles.statusIndicatorRow}>
+                    <View
+                      style={[
+                        styles.statusDot,
+                        { backgroundColor: formatEscrowStatus(escrowTx.escrowStatus).color },
+                      ]}
+                    />
                     <Text
                       style={[
-                        styles.escrowStatusText,
+                        styles.statusIndicatorText,
                         { color: formatEscrowStatus(escrowTx.escrowStatus).color },
                       ]}
                     >
@@ -2340,12 +3111,20 @@ export const BookingDetailScreen: React.FC = () => {
                   <View style={styles.escrowGridItem}>
                     <Text style={styles.dossierLabel}>Hoa hồng sàn:</Text>
                     <Text style={styles.dossierValue}>
-                      {formatVnd(escrowTx.commissionAmount)} ({escrowTx.commissionRate * 100}%)
+                      {formatVnd(escrowTx.commissionAmount)} (
+                      {escrowTx.commissionRate > 1
+                        ? escrowTx.commissionRate
+                        : Math.round(escrowTx.commissionRate * 100)}
+                      %)
                     </Text>
                   </View>
                   <View style={styles.escrowGridItem}>
-                    <Text style={styles.dossierLabel}>Cổng thanh toán:</Text>
-                    <Text style={styles.dossierValue}>{escrowTx.paymentGateway || 'PAYOS'}</Text>
+                    <Text style={styles.dossierLabel}>Phương thức TT:</Text>
+                    <Text style={styles.dossierValue}>
+                      {escrowTx.paymentGateway === 'WALLET'
+                        ? 'Ví điện tử TAXKEEP VN'
+                        : escrowTx.paymentGateway || 'PayOS (QR)'}
+                    </Text>
                   </View>
                 </View>
 
@@ -2822,7 +3601,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'transparent',
+    zIndex: 1,
   },
   backBtn: {
     width: 38,
@@ -2830,12 +3610,13 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#F3EFE6',
+    backgroundColor: 'rgba(243, 239, 230, 0.85)',
   },
   headerTitle: {
     fontFamily: fonts.serifBold,
-    fontSize: 16,
-    color: theme.colors.primary,
+    fontSize: 18,
+    lineHeight: 24,
+    color: theme.colors.primaryDark,
   },
   refreshBtn: {
     width: 38,
@@ -2843,7 +3624,7 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#FAF5EE',
+    backgroundColor: 'rgba(243, 239, 230, 0.85)',
   },
 
   scrollContent: {
@@ -3122,18 +3903,16 @@ const styles = StyleSheet.create({
     textAlign: 'right',
     flexWrap: 'wrap',
   },
-  sessionBadge: {
+  sessionValueBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-    gap: 5,
+    gap: 6,
     flexShrink: 1,
   },
-  sessionBadgeText: {
-    fontFamily: fonts.bodyBold,
-    fontSize: 11.5,
+  sessionValueText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 13,
+    color: theme.colors.textPrimary,
     flexShrink: 1,
   },
   divider: {
@@ -3541,18 +4320,26 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#059669',
   },
-  noShowBtn: {
+  scheduleNotArrivedHint: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
     gap: 6,
-    paddingVertical: 6,
+    backgroundColor: '#F9FAFB',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    marginTop: 8,
   },
-  noShowBtnText: {
+  scheduleNotArrivedHintText: {
     fontFamily: fonts.body,
-    fontSize: 11,
-    color: theme.colors.error,
+    fontSize: 12,
+    color: '#6B7280',
+    flex: 1,
+    lineHeight: 18,
   },
+
   completedNoticeCard: {
     borderRadius: 12,
     padding: 14,
@@ -3790,34 +4577,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
 
-  // No-Show Party Selection
-  noShowPartyRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 10,
-  },
-  noShowPartyBtn: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#DDDDDD',
-    backgroundColor: '#F9F9F9',
-    alignItems: 'center',
-  },
-  noShowPartyBtnActive: {
-    borderColor: theme.colors.error,
-    backgroundColor: '#FEF2F2',
-  },
-  noShowPartyText: {
-    fontFamily: fonts.bodySemi,
-    fontSize: 12,
-    color: '#666666',
-  },
-  noShowPartyTextActive: {
-    color: theme.colors.error,
-    fontFamily: fonts.bodyBold,
-  },
+
 
   // Escrow Details Modal
   escrowStatusRow: {
@@ -3830,14 +4590,19 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E8DEC8',
   },
-  escrowStatusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
+  statusIndicatorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
-  escrowStatusText: {
-    fontFamily: fonts.bodyBold,
-    fontSize: 11,
+  statusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+  },
+  statusIndicatorText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 12,
   },
   escrowGrid: {
     flexDirection: 'row',
@@ -3884,15 +4649,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 12,
   },
-  disputeStatusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  disputeStatusText: {
-    fontFamily: fonts.bodyBold,
-    fontSize: 11,
-  },
+
 
   // ── DISPUTE CARD CONTENT ──
   disputeInfoBox: {
@@ -4005,6 +4762,53 @@ const styles = StyleSheet.create({
     borderColor: '#D1FAE5',
     borderRadius: 6,
     padding: 8,
+  },
+  adminMessageCard: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    borderRadius: 8,
+    padding: 10,
+    marginTop: 10,
+  },
+  adminMessageHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  adminMessageTitle: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12,
+    color: '#065F46',
+    marginLeft: 6,
+  },
+  adminMessageContent: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: '#1F2937',
+    lineHeight: 18,
+  },
+  adminPendingBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 10,
+  },
+  adminPendingTitle: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12,
+    color: '#1E40AF',
+  },
+  adminPendingDesc: {
+    fontFamily: fonts.body,
+    fontSize: 11,
+    color: '#3B82F6',
+    marginTop: 2,
+    lineHeight: 16,
   },
 
   // ── REVIEW SUMMARY CARD CONTENT ──
@@ -4287,5 +5091,371 @@ const styles = StyleSheet.create({
     color: '#6B7280',
     marginTop: 2,
     lineHeight: 15,
+  },
+
+  // ── PAYMENT METHOD & WALLET MODAL STYLES ──
+  paymentMethodModalBox: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    width: '92%',
+    maxWidth: 480,
+    padding: 18,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 5,
+  },
+  paymentFeeSub: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: '#065F46',
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  paymentMethodSectionTitle: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12,
+    color: '#64748B',
+    marginBottom: 8,
+    letterSpacing: 0.5,
+  },
+  methodOptionCard: {
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 10,
+    backgroundColor: '#FFFFFF',
+  },
+  methodOptionCardActive: {
+    borderColor: '#059669',
+    backgroundColor: '#F0FDF4',
+  },
+  methodOptionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  methodRadioCircle: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: '#CBD5E1',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  methodRadioDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#059669',
+  },
+  methodIconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  methodTitle: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 14,
+    color: theme.colors.textPrimary,
+  },
+  methodSubtitle: {
+    fontFamily: fonts.body,
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 2,
+  },
+
+  walletCompactContainer: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#DCFCE7',
+    gap: 8,
+  },
+  walletCompactCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+  },
+  walletCompactTitle: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 13,
+    color: theme.colors.textPrimary,
+  },
+  walletCompactBalance: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  walletCompactBalanceValue: {
+    fontFamily: fonts.bodyBold,
+    color: theme.colors.textPrimary,
+  },
+  walletBalanceStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  walletBalanceStatusText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 12,
+  },
+  walletCompactShortageRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FEF3C7',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  walletCompactShortageText: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: '#92400E',
+  },
+  walletCompactShortageHighlight: {
+    fontFamily: fonts.bodyBold,
+    color: '#B45309',
+  },
+  walletCompactTopUpBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#059669',
+    borderRadius: 6,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    gap: 4,
+  },
+  walletCompactTopUpBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12,
+    color: '#059669',
+  },
+  walletPayActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#059669',
+    borderRadius: 10,
+    paddingVertical: 13,
+  },
+  walletPayActionBtnDisabled: {
+    backgroundColor: '#94A3B8',
+  },
+  walletPayActionBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 14,
+    color: '#FFFFFF',
+  },
+  gatewayPayActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: theme.colors.primary,
+    borderRadius: 10,
+    paddingVertical: 13,
+  },
+  gatewayPayActionBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 14,
+    color: '#FFFFFF',
+  },
+
+  // ── QUICK TOP-UP MODAL STYLES ──
+  quickTopUpHintBox: {
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1,
+    borderColor: '#A7F3D0',
+    borderRadius: 10,
+    padding: 12,
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  quickTopUpHintLabel: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: '#065F46',
+  },
+  quickTopUpHintAmount: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 20,
+    color: '#047857',
+    marginTop: 2,
+  },
+  quickTopUpChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginVertical: 6,
+  },
+  quickChipBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+  },
+  quickChipBtnActive: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#059669',
+  },
+  quickChipText: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: '#475569',
+  },
+  quickChipTextActive: {
+    fontFamily: fonts.bodyBold,
+    color: '#059669',
+  },
+  quickInputWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    marginTop: 6,
+  },
+  quickTextInput: {
+    flex: 1,
+    height: 42,
+    fontFamily: fonts.bodyBold,
+    fontSize: 16,
+    color: theme.colors.textPrimary,
+  },
+  quickCurrencyBadge: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 16,
+    color: '#64748B',
+  },
+  quickMinText: {
+    fontFamily: fonts.body,
+    fontSize: 11,
+    color: '#94A3B8',
+    marginTop: 4,
+    marginBottom: 12,
+  },
+  createQuickTopUpBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#059669',
+    borderRadius: 10,
+    paddingVertical: 12,
+    gap: 6,
+  },
+  createQuickTopUpBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 14,
+    color: '#FFFFFF',
+  },
+  quickTopUpSuccessCard: {
+    backgroundColor: '#FEF3C7',
+    borderRadius: 10,
+    padding: 14,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+  },
+  quickTopUpSuccessLabel: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: '#92400E',
+  },
+  quickTopUpSuccessAmount: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 22,
+    color: '#B45309',
+    marginTop: 2,
+  },
+  quickTopUpOrderCode: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: '#78350F',
+    marginTop: 4,
+  },
+  quickQrWrap: {
+    alignItems: 'center',
+    marginTop: 14,
+  },
+  quickQrInstruction: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: '#475569',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  quickQrImage: {
+    width: 180,
+    height: 180,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+  },
+  quickVnPayBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#005BAA',
+    borderRadius: 10,
+    paddingVertical: 12,
+    marginTop: 12,
+    gap: 6,
+  },
+  quickVnPayBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 13,
+    color: '#FFFFFF',
+  },
+  quickModalBtnRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 16,
+  },
+  quickBackBtn: {
+    flex: 1,
+    paddingVertical: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+  },
+  quickBackBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 13,
+    color: '#475569',
+  },
+  quickCheckBalanceBtn: {
+    flex: 1.5,
+    paddingVertical: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+    backgroundColor: '#059669',
+  },
+  quickCheckBalanceBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 13,
+    color: '#FFFFFF',
   },
 });

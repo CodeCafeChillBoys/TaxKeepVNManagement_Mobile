@@ -295,6 +295,7 @@ describe('consultationApi', () => {
       const res = await consultationApi.createPaymentLink('b-1', 'taxkeep://return');
       expect(mockPost).toHaveBeenCalledWith('/api/v1/bookings/b-1/payment-link', {
         returnUrl: 'taxkeep://return',
+        paymentMethod: 'GATEWAY',
       });
       expect(res).toEqual(mockPayment);
     });
@@ -525,6 +526,30 @@ describe('consultationApi', () => {
 
       await consultationApi.deleteSlot('slot-1');
       expect(apiClient.delete).toHaveBeenCalledWith('/api/v1/expert/slots/slot-1');
+    });
+
+    it('emergencyCancelSlot calls POST /api/v1/expert/slots/{id}/emergency-cancel', async () => {
+      const mockResult = {
+        slotId: 'slot-1',
+        slotDate: '2026-10-28',
+        startTime: '09:00',
+        endTime: '10:00',
+        hadBooking: true,
+        bookingCode: 'BK-123',
+        isLateCancel: false,
+        penaltyAmount: 0,
+        message: 'Hủy thành công',
+      };
+      (apiClient.post as jest.Mock).mockResolvedValueOnce({
+        data: { success: true, data: mockResult },
+      });
+
+      const res = await consultationApi.emergencyCancelSlot('slot-1', 'Lý do hủy khẩn cấp do sự cố sức khỏe');
+      expect(apiClient.post).toHaveBeenCalledWith(
+        '/api/v1/expert/slots/slot-1/emergency-cancel',
+        { reason: 'Lý do hủy khẩn cấp do sự cố sức khỏe' }
+      );
+      expect(res).toEqual(mockResult);
     });
   });
 

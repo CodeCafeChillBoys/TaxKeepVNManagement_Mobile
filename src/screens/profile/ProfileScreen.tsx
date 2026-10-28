@@ -200,7 +200,7 @@ export const ProfileScreen: React.FC = () => {
               testID="quickLinkExpertBookings"
             />
             <LinkRow
-              label="Ví thu nhập & Rút tiền"
+              label="TAXKEEP VN WALLET"
               onPress={() => navigation.navigate('Wallet', { walletType: 'EXPERT' })}
               testID="quickLinkExpertWallet"
             />
@@ -212,7 +212,7 @@ export const ProfileScreen: React.FC = () => {
           </>
         ) : (
           <LinkRow
-            label="Ví hoàn tiền & Rút tiền"
+            label="TAXKEEP VN WALLET"
             onPress={() => navigation.navigate('Wallet', { walletType: 'USER' })}
             testID="quickLinkUserWallet"
           />

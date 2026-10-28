@@ -101,18 +101,21 @@ export type RootStackParamList = {
   ExpertDetail: { expertProfileId: string };
   BookingCreate: { expertProfileId: string; initialSlotId?: string; specializationId?: number };
   MyBookings: { initialStatus?: string } | undefined;
-  BookingDetail: { bookingId: string; isExpertView?: boolean };
+  BookingDetail: { bookingId: string; isExpertView?: boolean; autoPay?: boolean };
   ExpertBookings: { initialTab?: 'pending' | 'all' } | undefined;
   ExpertSlots: undefined;
   ExpertApplication: undefined;
-  PaymentResult: {
-    bookingId?: string;
-    isSuccess?: boolean;
-    vnp_ResponseCode?: string;
-    vnp_TxnRef?: string;
-    message?: string;
-    vnpParams?: Record<string, string>;
-  };
+  PaymentResult:
+    | {
+        bookingId?: string;
+        isSuccess?: boolean;
+        vnp_ResponseCode?: string;
+        vnp_TxnRef?: string;
+        message?: string;
+        vnpParams?: Record<string, string>;
+        [key: string]: any;
+      }
+    | undefined;
   Wallet: { walletType?: 'EXPERT' | 'USER' } | undefined;
 };
 

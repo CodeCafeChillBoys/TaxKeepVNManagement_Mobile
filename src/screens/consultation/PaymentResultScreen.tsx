@@ -7,6 +7,7 @@ import {
   ScrollView,
   ActivityIndicator,
   BackHandler,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRoute, useNavigation, RouteProp } from '@react-navigation/native';
@@ -23,35 +24,103 @@ import {
 } from '../../types/consultation';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
+import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
+
+function formatVnPayDate(str?: string | null): string {
+  if (!str || str.length < 14) return '—';
+  // yyyyMMddHHmmss -> HH:mm:ss dd/MM/yyyy
+  const y = str.substring(0, 4);
+  const m = str.substring(4, 6);
+  const d = str.substring(6, 8);
+  const h = str.substring(8, 10);
+  const min = str.substring(10, 12);
+  const s = str.substring(12, 14);
+  return `${h}:${min}:${s} ${d}/${m}/${y}`;
+}
 
 export const PaymentResultScreen: React.FC = () => {
   const route = useRoute<RouteProp<RootStackParamList, 'PaymentResult'>>();
   const navigation = useNavigation<RootNavigationProp>();
 
-  const { bookingId, vnp_ResponseCode, vnpParams, message: initialMessage } = route.params || {};
-
+  const routeParams = (route.params || {}) as Record<string, any>;
+  const initialMessage = routeParams.message;
   const initialSuccess =
-    route.params?.isSuccess === true || (route.params?.isSuccess as any) === 'true';
+    routeParams.isSuccess === true || routeParams.isSuccess === 'true';
 
   const [loading, setLoading] = useState(true);
   const [booking, setBooking] = useState<BookingDetailResponse | null>(null);
   const [escrow, setEscrow] = useState<EscrowTransactionResponse | null>(null);
   const [statusMessage, setStatusMessage] = useState<string>(initialMessage || '');
   const [isSuccess, setIsSuccess] = useState<boolean>(initialSuccess);
+  const [extractedParams, setExtractedParams] = useState<Record<string, string>>({});
+
+  // 1. Trích xuất đầy đủ query parameters từ Web window.location.search và React Navigation route.params
+  const extractAllParams = useCallback((): Record<string, string> => {
+    const result: Record<string, string> = {};
+
+    // A. Đọc trực tiếp từ window.location.search trên nền tảng Web
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.search) {
+      const search = window.location.search.replace(/^\?/, '');
+      if (search) {
+        const parts = search.split('&');
+        for (const part of parts) {
+          const [rawK, rawV] = part.split('=');
+          if (rawK) {
+            try {
+              result[decodeURIComponent(rawK)] = decodeURIComponent((rawV || '').replace(/\+/g, ' '));
+            } catch {
+              result[rawK] = rawV || '';
+            }
+          }
+        }
+      }
+    }
+
+    // B. Đọc từ route.params (bao gồm cả nested vnpParams nếu có)
+    if (route.params && typeof route.params === 'object') {
+      Object.entries(route.params).forEach(([k, v]) => {
+        if (k === 'vnpParams' && typeof v === 'object' && v !== null) {
+          Object.assign(result, v);
+        } else if (v !== undefined && v !== null && typeof v !== 'object') {
+          result[k] = String(v);
+        }
+      });
+    }
+
+    return result;
+  }, [route.params]);
+
+  const allParams = useMemo(() => extractAllParams(), [extractAllParams]);
+
+  // Phân loại: Giao dịch Nạp tiền vào ví hay Thanh toán ca tư vấn
+  const isTopUpTx = useMemo(() => {
+    const orderInfo = (allParams.vnp_OrderInfo || routeParams.vnp_OrderInfo || '').toUpperCase();
+    if (orderInfo.includes('NAPVI') || orderInfo.includes('NẠP TIỀN') || orderInfo.includes('NAP TIEN')) {
+      return true;
+    }
+    const targetBookingId = routeParams.bookingId || allParams.bookingId || escrow?.bookingId;
+    if (!targetBookingId && (allParams.vnp_TxnRef || allParams.vnp_Amount)) {
+      return true;
+    }
+    return false;
+  }, [allParams, routeParams, escrow?.bookingId]);
 
   const processPaymentResult = useCallback(async () => {
     setLoading(true);
     try {
+      setExtractedParams(allParams);
+
       const passedSuccess =
-        route.params?.isSuccess === true || (route.params?.isSuccess as any) === 'true';
-      const responseCode = vnp_ResponseCode || vnpParams?.vnp_ResponseCode;
+        routeParams.isSuccess === true || routeParams.isSuccess === 'true';
+      const responseCode =
+        allParams.vnp_ResponseCode || routeParams.vnp_ResponseCode;
       const codeSuccess = responseCode === '00';
 
       const effectiveBookingId =
-        bookingId || escrow?.bookingId || (route.params as any)?.bookingId;
+        routeParams.bookingId || allParams.bookingId || escrow?.bookingId;
 
-      // 1. Tải thông tin booking và escrow từ DB trước
+      // 1. Tải thông tin booking và escrow từ DB trước nếu có bookingId
       let isPaidBooking = false;
       if (effectiveBookingId) {
         const [bookingRes, escrowRes] = await Promise.allSettled([
@@ -80,52 +149,55 @@ export const PaymentResultScreen: React.FC = () => {
         }
       }
 
-      // 2. Nếu DB CHƯA ghi nhận thanh toán, nhưng có vnpParams và vnp_SecureHash:
-      // Kích hoạt gọi Backend đối soát (đóng vai trò fail-safe nếu Web chưa gọi hoặc bị lỗi mạng)
-      if (!isPaidBooking && vnpParams && Object.keys(vnpParams).length > 0 && vnpParams.vnp_SecureHash) {
+      // 2. Nếu có vnp_SecureHash, gọi Backend đối soát (xác thực chữ ký và cập nhật DB tự động)
+      let backendSuccess = false;
+      if (allParams.vnp_SecureHash) {
         try {
-          const escrowRes = await consultationApi.handleVnPayReturn(vnpParams);
+          const escrowRes = await consultationApi.handleVnPayReturn(allParams);
           if (escrowRes) {
             setEscrow(escrowRes);
-            if (escrowRes.escrowStatus === 'HeldInEscrow') {
-              isPaidBooking = true;
+            if (escrowRes.escrowStatus === 'HeldInEscrow' || escrowRes.escrowStatus === 'Settled') {
+              backendSuccess = true;
             }
-          }
-          if (effectiveBookingId) {
-            const bRes = await consultationApi.getBookingDetail(effectiveBookingId);
-            setBooking(bRes);
-            if (Boolean(bRes.paidAt) || bRes.status === 'AWAITING_EXPERT_APPROVAL') {
-              isPaidBooking = true;
+            if (escrowRes.bookingId) {
+              try {
+                const bRes = await consultationApi.getBookingDetail(escrowRes.bookingId);
+                setBooking(bRes);
+                if (Boolean(bRes.paidAt) || bRes.status === 'AWAITING_EXPERT_APPROVAL' || bRes.status === 'CONFIRMED') {
+                  isPaidBooking = true;
+                }
+              } catch {
+                // Ignore secondary fetch error
+              }
             }
           }
         } catch (err: any) {
           if (__DEV__) {
-            console.log('Mobile fallback handleVnPayReturn note:', err?.message);
+            console.log('Mobile handleVnPayReturn error note:', err?.message);
           }
         }
       }
 
       // 3. Quyết định trạng thái hiển thị
-      if (isPaidBooking) {
+      if (isPaidBooking || backendSuccess || (codeSuccess && isTopUpTx)) {
         setIsSuccess(true);
       } else if (codeSuccess || passedSuccess) {
-        // VNPay báo thành công nhưng Backend DB chưa kịp ghi nhận
-        setIsSuccess(false);
-        setStatusMessage(
-          'VNPay đã trừ tiền thành công nhưng hệ thống đang đồng bộ dữ liệu. Bạn vui lòng bấm "Thử lại" hoặc kiểm tra lại sau ít giây.'
-        );
+        // VNPay báo thành công 00
+        setIsSuccess(true);
       } else {
         setIsSuccess(false);
         if (responseCode && responseCode !== '00') {
           let errText = 'Giao dịch chưa hoàn tất.';
           if (responseCode === '24') {
-            errText = 'Bạn đã hủy giao dịch.';
+            errText = 'Bạn đã hủy giao dịch trên cổng VNPay.';
           } else if (responseCode === '09') {
-            errText = 'Thẻ chưa kích hoạt thanh toán trực tuyến.';
+            errText = 'Thẻ/Tài khoản chưa kích hoạt dịch vụ thanh toán trực tuyến.';
           } else if (responseCode === '51') {
-            errText = 'Số dư tài khoản không đủ.';
+            errText = 'Tài khoản của bạn không đủ số dư để thực hiện giao dịch.';
           } else if (responseCode === '79') {
-            errText = 'Nhập sai mật khẩu quá số lần quy định.';
+            errText = 'Nhập sai mật khẩu xác thực quá số lần quy định.';
+          } else if (responseCode === '11') {
+            errText = 'Đã hết thời gian chờ thanh toán. Vui lòng thử lại.';
           }
           setStatusMessage(errText);
         }
@@ -135,37 +207,70 @@ export const PaymentResultScreen: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [bookingId, vnp_ResponseCode, vnpParams, escrow?.bookingId, route.params]);
+  }, [allParams, isTopUpTx, routeParams, escrow?.bookingId]);
 
   useEffect(() => {
     processPaymentResult();
   }, [processPaymentResult]);
 
+  // Hardware Back & Navigation handling
   useEffect(() => {
     const onBackPress = () => {
-      const targetId = bookingId || booking?.id;
+      if (isTopUpTx) {
+        navigation.replace('Wallet');
+        return true;
+      }
+      const targetId = routeParams.bookingId || allParams.bookingId || booking?.id;
       if (targetId) {
         navigation.replace('BookingDetail', { bookingId: targetId });
         return true;
       }
-      return false;
+      navigation.replace('MyBookings');
+      return true;
     };
 
     const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
     return () => sub.remove();
-  }, [bookingId, booking?.id, navigation]);
+  }, [isTopUpTx, routeParams.bookingId, allParams.bookingId, booking?.id, navigation]);
+
+  const handleClose = () => {
+    if (isTopUpTx) {
+      navigation.replace('Wallet');
+    } else {
+      const targetId = routeParams.bookingId || allParams.bookingId || booking?.id;
+      if (targetId) {
+        navigation.replace('BookingDetail', { bookingId: targetId });
+      } else {
+        navigation.replace('MyBookings');
+      }
+    }
+  };
 
   const sessionInfo = useMemo(() => {
     if (!booking) return null;
     return formatSessionType(booking.sessionType);
   }, [booking]);
 
+  const topUpAmountDisplay = useMemo(() => {
+    if (escrow?.amount) return escrow.amount;
+    const rawAmt = allParams.vnp_Amount || routeParams.vnp_Amount;
+    if (rawAmt) {
+      const parsed = parseFloat(rawAmt);
+      if (!isNaN(parsed) && parsed > 0) {
+        // VNPay amount is multiplied by 100
+        return parsed >= 1000000 ? parsed / 100 : parsed;
+      }
+    }
+    return 0;
+  }, [escrow?.amount, allParams.vnp_Amount, routeParams.vnp_Amount]);
+
   if (loading) {
     return (
       <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
+        <DrumPatternBackdrop variant="soft" />
         <View style={styles.centerContainer}>
           <ActivityIndicator size="large" color={theme.colors.primary} />
-          <Text style={styles.loadingTitle}>Đang kiểm tra thanh toán...</Text>
+          <Text style={styles.loadingTitle}>Đang đối soát kết quả thanh toán...</Text>
           <Text style={styles.loadingSubtitle}>Vui lòng đợi trong giây lát</Text>
         </View>
       </SafeAreaView>
@@ -174,24 +279,21 @@ export const PaymentResultScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right', 'bottom']}>
+      <DrumPatternBackdrop variant="soft" />
+
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity
-          onPress={() => {
-            const targetId = bookingId || booking?.id;
-            if (targetId) {
-              navigation.replace('BookingDetail', { bookingId: targetId });
-            } else {
-              navigation.navigate('MyBookings');
-            }
-          }}
+          onPress={handleClose}
           style={styles.backBtn}
           accessibilityRole="button"
           accessibilityLabel="Đóng"
         >
           <Ionicons name="close" size={24} color={theme.colors.textPrimary} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Kết quả thanh toán</Text>
+        <Text style={styles.headerTitle}>
+          {isTopUpTx ? 'Kết quả nạp tiền ví' : 'Kết quả thanh toán'}
+        </Text>
         <View style={{ width: 38 }} />
       </View>
       <GoldDoubleRule />
@@ -208,62 +310,78 @@ export const PaymentResultScreen: React.FC = () => {
           </View>
 
           <Text style={[styles.statusTitle, isSuccess ? styles.statusTitleSuccess : styles.statusTitleFailed]}>
-            {isSuccess ? 'Thanh toán thành công' : 'Thanh toán chưa hoàn tất'}
+            {isTopUpTx
+              ? isSuccess
+                ? 'Nạp tiền vào ví thành công!'
+                : 'Nạp tiền chưa hoàn tất'
+              : isSuccess
+              ? 'Thanh toán lịch hẹn thành công'
+              : 'Thanh toán chưa hoàn tất'}
           </Text>
 
           <Text style={styles.statusSubtitle}>
-            {isSuccess
-              ? 'Lịch hẹn của bạn đã được ghi nhận.'
+            {isTopUpTx
+              ? isSuccess
+                ? 'Số tiền đã được cộng trực tiếp vào ví TAXKEEP VN của bạn.'
+                : statusMessage || 'Giao dịch nạp tiền qua cổng VNPay chưa được hoàn tất.'
+              : isSuccess
+              ? 'Lịch hẹn của bạn đã được ghi nhận và gửi đến chuyên gia.'
               : statusMessage || 'Giao dịch chưa hoàn tất.'}
           </Text>
         </View>
 
-        {/* Chi tiết giao dịch */}
-        {booking && (
+        {/* CHI TIẾT NẠP TIỀN VÀO VÍ */}
+        {isTopUpTx ? (
           <View style={styles.receiptCard}>
             <View style={styles.receiptHeader}>
-              <Ionicons name="receipt-outline" size={18} color={theme.colors.primary} />
-              <Text style={styles.receiptHeaderTitle}>Chi tiết giao dịch</Text>
+              <Ionicons name="wallet-outline" size={18} color={theme.colors.primary} />
+              <Text style={styles.receiptHeaderTitle}>Thông tin nạp tiền</Text>
             </View>
 
             <View style={styles.receiptRow}>
-              <Text style={styles.receiptLabel}>Mã lịch hẹn:</Text>
-              <Text style={styles.receiptValueBold}>{booking.bookingCode}</Text>
+              <Text style={styles.receiptLabel}>Loại giao dịch:</Text>
+              <Text style={styles.receiptValueBold}>Nạp tiền vào ví TAXKEEP VN</Text>
             </View>
 
             <View style={styles.receiptRow}>
-              <Text style={styles.receiptLabel}>Chuyên gia:</Text>
-              <Text style={styles.receiptValue}>{booking.expertFullName}</Text>
+              <Text style={styles.receiptLabel}>Mã đơn giao dịch:</Text>
+              <Text style={styles.receiptValue}>
+                {allParams.vnp_TxnRef || escrow?.orderCode || '—'}
+              </Text>
             </View>
+
+            {allParams.vnp_TransactionNo ? (
+              <View style={styles.receiptRow}>
+                <Text style={styles.receiptLabel}>Mã GD VNPay:</Text>
+                <Text style={styles.receiptValue}>{allParams.vnp_TransactionNo}</Text>
+              </View>
+            ) : null}
+
+            {allParams.vnp_BankCode ? (
+              <View style={styles.receiptRow}>
+                <Text style={styles.receiptLabel}>Ngân hàng / Cổng:</Text>
+                <Text style={styles.receiptValue}>{allParams.vnp_BankCode}</Text>
+              </View>
+            ) : null}
 
             <View style={styles.receiptRow}>
               <Text style={styles.receiptLabel}>Thời gian:</Text>
               <Text style={styles.receiptValue}>
-                {formatVietnameseDate(booking.slotDate)} ({formatTimeRange(booking.startTime, booking.endTime)})
+                {allParams.vnp_PayDate
+                  ? formatVnPayDate(allParams.vnp_PayDate)
+                  : new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) +
+                    ' ' +
+                    new Date().toLocaleDateString('vi-VN')}
               </Text>
             </View>
-
-            {sessionInfo && (
-              <View style={styles.receiptRow}>
-                <Text style={styles.receiptLabel}>Hình thức:</Text>
-                <Text style={styles.receiptValue}>
-                  {sessionInfo.label} ({booking.durationMinutes} phút)
-                </Text>
-              </View>
-            )}
 
             <View style={styles.receiptDivider} />
 
             <View style={styles.receiptRow}>
-              <Text style={styles.receiptLabelTotal}>Số tiền:</Text>
+              <Text style={styles.receiptLabelTotal}>Số tiền nạp:</Text>
               <Text style={styles.receiptValueTotal}>
-                {formatVnd(escrow?.amount ?? booking.fee)}
+                {formatVnd(topUpAmountDisplay)}
               </Text>
-            </View>
-
-            <View style={styles.receiptRow}>
-              <Text style={styles.receiptLabel}>Phương thức:</Text>
-              <Text style={styles.receiptValue}>VNPay / VietQR</Text>
             </View>
 
             <View style={styles.receiptRow}>
@@ -280,41 +398,134 @@ export const PaymentResultScreen: React.FC = () => {
                     isSuccess ? styles.statusPillTextSuccess : styles.statusPillTextPending,
                   ]}
                 >
-                  {isSuccess ? 'Chờ chuyên gia xác nhận' : 'Chờ thanh toán'}
+                  {isSuccess ? 'Nạp ví thành công' : 'Chưa hoàn tất'}
                 </Text>
               </View>
             </View>
           </View>
+        ) : (
+          /* CHI TIẾT LỊCH HẸN TƯ VẤN */
+          booking && (
+            <View style={styles.receiptCard}>
+              <View style={styles.receiptHeader}>
+                <Ionicons name="receipt-outline" size={18} color={theme.colors.primary} />
+                <Text style={styles.receiptHeaderTitle}>Chi tiết giao dịch</Text>
+              </View>
+
+              <View style={styles.receiptRow}>
+                <Text style={styles.receiptLabel}>Mã lịch hẹn:</Text>
+                <Text style={styles.receiptValueBold}>{booking.bookingCode}</Text>
+              </View>
+
+              <View style={styles.receiptRow}>
+                <Text style={styles.receiptLabel}>Chuyên gia:</Text>
+                <Text style={styles.receiptValue}>{booking.expertFullName}</Text>
+              </View>
+
+              <View style={styles.receiptRow}>
+                <Text style={styles.receiptLabel}>Thời gian:</Text>
+                <Text style={styles.receiptValue}>
+                  {formatVietnameseDate(booking.slotDate)} ({formatTimeRange(booking.startTime, booking.endTime)})
+                </Text>
+              </View>
+
+              {sessionInfo && (
+                <View style={styles.receiptRow}>
+                  <Text style={styles.receiptLabel}>Hình thức:</Text>
+                  <Text style={styles.receiptValue}>
+                    {sessionInfo.label} ({booking.durationMinutes} phút)
+                  </Text>
+                </View>
+              )}
+
+              <View style={styles.receiptDivider} />
+
+              <View style={styles.receiptRow}>
+                <Text style={styles.receiptLabelTotal}>Số tiền:</Text>
+                <Text style={styles.receiptValueTotal}>
+                  {formatVnd(escrow?.amount ?? booking.fee)}
+                </Text>
+              </View>
+
+              <View style={styles.receiptRow}>
+                <Text style={styles.receiptLabel}>Phương thức:</Text>
+                <Text style={styles.receiptValue}>VNPay / VietQR</Text>
+              </View>
+
+              <View style={styles.receiptRow}>
+                <Text style={styles.receiptLabel}>Trạng thái:</Text>
+                <View
+                  style={[
+                    styles.statusPill,
+                    isSuccess ? styles.statusPillSuccess : styles.statusPillPending,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.statusPillText,
+                      isSuccess ? styles.statusPillTextSuccess : styles.statusPillTextPending,
+                    ]}
+                  >
+                    {isSuccess ? 'Chờ chuyên gia xác nhận' : 'Chờ thanh toán'}
+                  </Text>
+                </View>
+              </View>
+            </View>
+          )
         )}
 
-        {/* Ghi chú đảm bảo ngắn gọn */}
+        {/* Ghi chú đảm bảo an toàn */}
         {isSuccess ? (
           <View style={styles.compactNoteBox}>
             <Ionicons name="shield-checkmark" size={16} color="#059669" />
             <Text style={styles.compactNoteText}>
-              Khoản tiền được bảo đảm an toàn cho đến khi hoàn tất buổi tư vấn.
+              {isTopUpTx
+                ? 'Số dư ví đã sẵn sàng để bạn sử dụng đặt lịch tư vấn và thanh toán dịch vụ.'
+                : 'Khoản tiền được bảo chứng an toàn và chỉ giải ngân cho chuyên gia khi buổi tư vấn hoàn tất.'}
             </Text>
           </View>
         ) : (
           <View style={styles.compactWarningBox}>
             <Ionicons name="time-outline" size={16} color="#D97706" />
             <Text style={styles.compactWarningText}>
-              Bạn có thể thử thanh toán lại trong 10 phút để giữ giờ hẹn.
+              {isTopUpTx
+                ? 'Bạn có thể thử nạp lại tiền hoặc kiểm tra lại lịch sử giao dịch trong ví.'
+                : 'Bạn có thể thử thanh toán lại trong 10 phút để giữ khung giờ hẹn với chuyên gia.'}
             </Text>
           </View>
         )}
 
         {/* Action Buttons */}
         <View style={styles.actionsContainer}>
-          {isSuccess ? (
+          {isTopUpTx ? (
+            <>
+              <TouchableOpacity
+                style={styles.primaryBtn}
+                onPress={() => navigation.replace('Wallet')}
+                activeOpacity={0.85}
+              >
+                <Ionicons name="wallet-outline" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
+                <Text style={styles.primaryBtnText}>Về màn hình TAXKEEP VN WALLET</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.secondaryBtn}
+                onPress={() => navigation.navigate('Home' as any)}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.secondaryBtnText}>Trang chủ</Text>
+              </TouchableOpacity>
+            </>
+          ) : isSuccess ? (
             <>
               <TouchableOpacity
                 style={styles.primaryBtn}
                 onPress={() => {
-                  if (bookingId || booking?.id) {
-                    navigation.replace('BookingDetail', { bookingId: (bookingId || booking?.id)! });
+                  const targetId = routeParams.bookingId || allParams.bookingId || booking?.id;
+                  if (targetId) {
+                    navigation.replace('BookingDetail', { bookingId: targetId });
                   } else {
-                    navigation.navigate('MyBookings');
+                    navigation.replace('MyBookings');
                   }
                 }}
                 activeOpacity={0.85}
@@ -325,7 +536,7 @@ export const PaymentResultScreen: React.FC = () => {
 
               <TouchableOpacity
                 style={styles.secondaryBtn}
-                onPress={() => navigation.navigate('MyBookings')}
+                onPress={() => navigation.replace('MyBookings')}
                 activeOpacity={0.8}
               >
                 <Text style={styles.secondaryBtnText}>Danh sách lịch hẹn</Text>
@@ -342,25 +553,38 @@ export const PaymentResultScreen: React.FC = () => {
                 <Text style={styles.primaryBtnText}>Kiểm tra lại kết quả</Text>
               </TouchableOpacity>
 
-              {bookingId || booking?.id ? (
+              {isTopUpTx ? (
                 <TouchableOpacity
                   style={styles.secondaryBtn}
-                  onPress={() => {
-                    navigation.replace('BookingDetail', { bookingId: (bookingId || booking?.id)! });
-                  }}
+                  onPress={() => navigation.replace('Wallet')}
                   activeOpacity={0.8}
                 >
-                  <Text style={styles.secondaryBtnText}>Chi tiết lịch hẹn</Text>
+                  <Text style={styles.secondaryBtnText}>Quay lại ví TAXKEEP VN</Text>
                 </TouchableOpacity>
-              ) : null}
+              ) : (
+                <>
+                  {(routeParams.bookingId || allParams.bookingId || booking?.id) ? (
+                    <TouchableOpacity
+                      style={styles.secondaryBtn}
+                      onPress={() => {
+                        const targetId = routeParams.bookingId || allParams.bookingId || booking?.id;
+                        navigation.replace('BookingDetail', { bookingId: targetId });
+                      }}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.secondaryBtnText}>Chi tiết lịch hẹn</Text>
+                    </TouchableOpacity>
+                  ) : null}
 
-              <TouchableOpacity
-                style={styles.secondaryBtn}
-                onPress={() => navigation.navigate('MyBookings')}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.secondaryBtnText}>Danh sách lịch hẹn</Text>
-              </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.secondaryBtn}
+                    onPress={() => navigation.replace('MyBookings')}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.secondaryBtnText}>Danh sách lịch hẹn</Text>
+                  </TouchableOpacity>
+                </>
+              )}
             </>
           )}
         </View>
@@ -380,7 +604,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'transparent',
+    zIndex: 1,
   },
   backBtn: {
     width: 38,
@@ -388,12 +613,13 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#F3EFE6',
+    backgroundColor: 'rgba(243, 239, 230, 0.85)',
   },
   headerTitle: {
     fontFamily: fonts.serifBold,
-    fontSize: 16,
-    color: theme.colors.primary,
+    fontSize: 18,
+    lineHeight: 24,
+    color: theme.colors.primaryDark,
   },
   centerContainer: {
     flex: 1,

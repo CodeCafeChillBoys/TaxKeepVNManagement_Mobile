@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -9,12 +9,14 @@ import {
   RefreshControl,
   Modal,
   TextInput,
+  BackHandler,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, useFocusEffect, RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
+import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
 import { Dialog } from '../../components/common/Dialog';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
@@ -29,6 +31,33 @@ import {
   formatVietnameseDate,
   formatTimeRange,
 } from '../../types/consultation';
+
+const EXPERT_STATUS_FILTER_OPTIONS = [
+  { key: 'ALL', label: 'Tất cả trạng thái', shortLabel: 'Trạng thái' },
+  { key: 'CONFIRMED', label: 'Đã xác nhận', shortLabel: 'Đã xác nhận' },
+  { key: 'IN_PROGRESS', label: 'Đang tư vấn', shortLabel: 'Đang tư vấn' },
+  { key: 'COMPLETED', label: 'Đã hoàn thành', shortLabel: 'Hoàn thành' },
+  { key: 'SETTLED', label: 'Đã tất toán thù lao', shortLabel: 'Đã tất toán' },
+  { key: 'UNDER_DISPUTE', label: 'Đang khiếu nại', shortLabel: 'Khiếu nại' },
+  { key: 'USER_NO_SHOW', label: 'Khách vắng mặt (Đóng ca)', shortLabel: 'Khách vắng' },
+  { key: 'REJECTED_BY_EXPERT', label: 'Chuyên gia từ chối', shortLabel: 'Từ chối' },
+  { key: 'CANCELLED_BY_USER', label: 'Khách hàng đã hủy', shortLabel: 'Khách hủy' },
+];
+
+const SESSION_FILTER_OPTIONS = [
+  { key: 'ALL', label: 'Tất cả dịch vụ', shortLabel: 'Dịch vụ', icon: 'layers-outline' },
+  { key: 'ONLINE_MEETING', label: 'Họp trực tuyến (Video 1-1)', shortLabel: 'Video 1-1', icon: 'videocam-outline' },
+  { key: 'CHAT', label: 'Nhắn tin tư vấn (Chat)', shortLabel: 'Nhắn tin', icon: 'chatbubbles-outline' },
+  { key: 'VOICE_CALL', label: 'Gọi thoại tư vấn (Audio)', shortLabel: 'Gọi thoại', icon: 'call-outline' },
+];
+
+const DATE_FILTER_OPTIONS = [
+  { key: 'ALL', label: 'Tất cả thời gian', shortLabel: 'Thời gian' },
+  { key: 'TODAY', label: 'Hôm nay', shortLabel: 'Hôm nay' },
+  { key: 'UPCOMING', label: 'Lịch sắp tới', shortLabel: 'Sắp tới' },
+  { key: '7DAYS', label: 'Trong 7 ngày qua', shortLabel: '7 ngày qua' },
+  { key: 'THIS_MONTH', label: 'Trong tháng này', shortLabel: 'Tháng này' },
+];
 
 type TabKey = 'PENDING' | 'ALL';
 
@@ -45,8 +74,14 @@ export const ExpertBookingsScreen: React.FC = () => {
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Filter for ALL tab
+  // Filters (Dropdowns)
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
+  const [sessionFilter, setSessionFilter] = useState<string>('ALL');
+  const [dateFilter, setDateFilter] = useState<string>('ALL');
+  const [configuredSessionTypes, setConfiguredSessionTypes] = useState<string[]>(['ONLINE_MEETING']);
+  const [statusModalVisible, setStatusModalVisible] = useState<boolean>(false);
+  const [sessionModalVisible, setSessionModalVisible] = useState<boolean>(false);
+  const [dateModalVisible, setDateModalVisible] = useState<boolean>(false);
 
   // Reject modal state
   const [rejectModalVisible, setRejectModalVisible] = useState(false);
@@ -68,6 +103,37 @@ export const ExpertBookingsScreen: React.FC = () => {
   // Live timer for 2h approval countdown
   const [currentTimeMs, setCurrentTimeMs] = useState(Date.now());
 
+  // Xử lý nút quay lại chuẩn xác, tránh vòng lặp điều hướng
+  const handleBack = useCallback(() => {
+    const state = navigation.getState();
+    const routes = state?.routes || [];
+    const prevRoute = routes.length >= 2 ? routes[routes.length - 2] : null;
+
+    if (
+      prevRoute &&
+      ['BookingDetail', 'Wallet', 'PaymentResult', 'ExpertSlots', 'ExpertApplication'].includes(
+        prevRoute.name
+      )
+    ) {
+      navigation.navigate('Profile');
+      return;
+    }
+
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+    } else {
+      navigation.navigate('Profile');
+    }
+  }, [navigation]);
+
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      handleBack();
+      return true;
+    });
+    return () => sub.remove();
+  }, [handleBack]);
+
   useEffect(() => {
     const timer = setInterval(() => {
       setCurrentTimeMs(Date.now());
@@ -81,19 +147,36 @@ export const ExpertBookingsScreen: React.FC = () => {
     setError(null);
 
     try {
-      const [walletRes, bookingsRes] = await Promise.allSettled([
+      const apiStatusParam =
+        statusFilter === 'ALL' || statusFilter === 'USER_NO_SHOW' ? undefined : statusFilter;
+
+      const [walletRes, bookingsRes, feeConfigsRes] = await Promise.allSettled([
         walletApi.getMyWallet('EXPERT'),
         activeTab === 'PENDING'
-          ? consultationApi.getExpertPendingBookings({ page: 1, size: 20 })
+          ? consultationApi.getExpertPendingBookings({ page: 1, size: 30 })
           : consultationApi.getExpertBookings({
-              status: statusFilter === 'ALL' ? undefined : statusFilter,
+              status: apiStatusParam,
               page: 1,
-              size: 30,
+              size: 50,
             }),
+        consultationApi.getConsultationFeeConfigs({ isActive: true }),
       ]);
 
       if (walletRes.status === 'fulfilled') {
         setExpertWallet(walletRes.value);
+      }
+
+      if (feeConfigsRes.status === 'fulfilled' && Array.isArray(feeConfigsRes.value)) {
+        const activeTypes = Array.from(
+          new Set(
+            feeConfigsRes.value
+              .filter((c) => c.isActive !== false)
+              .map((c) => c.sessionType)
+          )
+        );
+        if (activeTypes.length > 0) {
+          setConfiguredSessionTypes(activeTypes);
+        }
       }
 
       if (bookingsRes.status === 'fulfilled') {
@@ -218,20 +301,20 @@ export const ExpertBookingsScreen: React.FC = () => {
 
     return (
       <View style={styles.bookingCard}>
-        {/* Header row: Session badge, Countdown tag, Fee */}
+        {/* Header row: Session meta, Countdown tag, Fee */}
         <View style={styles.cardHeader}>
           <View style={styles.codeWrap}>
-            <View style={[styles.sessionBadge, { backgroundColor: `${session.color}15` }]}>
-              <Ionicons name={session.icon as any} size={12} color={session.color} />
-              <Text style={[styles.sessionBadgeText, { color: session.color }]}>{session.label}</Text>
+            <View style={styles.sessionMeta}>
+              <Ionicons name={session.icon as any} size={14} color="#666666" />
+              <Text style={styles.sessionMetaText}>{session.label}</Text>
             </View>
-            <View style={[styles.slaBadge, isUrgent && styles.slaBadgeUrgent]}>
+            <View style={styles.timerMetaRow}>
               <Ionicons
                 name={isUrgent ? 'alarm' : 'hourglass-outline'}
-                size={12}
+                size={13}
                 color={isUrgent ? '#B91C1C' : '#92400E'}
               />
-              <Text style={[styles.slaText, isUrgent && styles.slaTextUrgent]}>
+              <Text style={[styles.timerMetaText, isUrgent && styles.timerMetaTextUrgent]}>
                 {secondsLeft > 0
                   ? `Chờ duyệt: ${hours > 0 ? `${hours}h ` : ''}${mins}m`
                   : 'Hết hạn'}
@@ -299,7 +382,7 @@ export const ExpertBookingsScreen: React.FC = () => {
   };
 
   const renderAllItem = ({ item }: { item: BookingListItemResponse }) => {
-    const status = formatBookingStatus(item.status);
+    const status = formatBookingStatus(item.status, item.noShowType, true);
     const session = formatSessionType(item.sessionType);
 
     return (
@@ -309,14 +392,58 @@ export const ExpertBookingsScreen: React.FC = () => {
         onPress={() => navigation.navigate('BookingDetail', { bookingId: item.id, isExpertView: true })}
       >
         <View style={styles.cardHeader}>
-          <View style={[styles.sessionBadge, { backgroundColor: `${session.color}15` }]}>
-            <Ionicons name={session.icon as any} size={12} color={session.color} />
-            <Text style={[styles.sessionBadgeText, { color: session.color }]}>{session.label}</Text>
+          <View style={styles.sessionMeta}>
+            <Ionicons name={session.icon as any} size={14} color="#666666" />
+            <Text style={styles.sessionMetaText}>{session.label}</Text>
           </View>
-          <View style={[styles.statusBadge, { backgroundColor: status.bg }]}>
-            <Text style={[styles.statusBadgeText, { color: status.color }]}>{status.label}</Text>
+          <View style={styles.statusIndicatorRow}>
+            <View style={[styles.statusDot, { backgroundColor: status.color }]} />
+            <Text style={[styles.statusIndicatorText, { color: status.color }]}>{status.label}</Text>
           </View>
         </View>
+
+        {item.noShowType === 'USER_NO_SHOW' && (
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: '#ECFDF5',
+              borderWidth: 1,
+              borderColor: '#A7F3D0',
+              borderRadius: 8,
+              paddingHorizontal: 10,
+              paddingVertical: 6,
+              marginBottom: 8,
+              gap: 6,
+            }}
+          >
+            <Ionicons name="shield-checkmark" size={14} color="#059669" />
+            <Text style={{ flex: 1, fontFamily: fonts.bodySemi, fontSize: 11.5, color: '#065F46' }}>
+              Khách hàng vắng mặt sau 15 phút • Hệ thống đóng ca bảo vệ thù lao
+            </Text>
+          </View>
+        )}
+        {item.noShowType === 'EXPERT_NO_SHOW' && (
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: '#FEF2F2',
+              borderWidth: 1,
+              borderColor: '#FECACA',
+              borderRadius: 8,
+              paddingHorizontal: 10,
+              paddingVertical: 6,
+              marginBottom: 8,
+              gap: 6,
+            }}
+          >
+            <Ionicons name="warning" size={14} color="#DC2626" />
+            <Text style={{ flex: 1, fontFamily: fonts.bodySemi, fontSize: 11.5, color: '#991B1B' }}>
+              Bạn vắng mặt quá 15 phút • Đã tự động hủy & hoàn tiền cho khách
+            </Text>
+          </View>
+        )}
 
         <Text style={styles.clientName}>Khách hàng: {item.userFullName}</Text>
         <Text style={styles.topicTitle} numberOfLines={2}>
@@ -349,14 +476,60 @@ export const ExpertBookingsScreen: React.FC = () => {
     );
   };
 
-  const currentList = activeTab === 'PENDING' ? pendingBookings : allBookings;
+  const currentList = useMemo(() => {
+    const rawList = activeTab === 'PENDING' ? pendingBookings : allBookings;
+    const now = new Date();
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const currentMonthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const sevenDaysAgoStr = `${sevenDaysAgo.getFullYear()}-${String(sevenDaysAgo.getMonth() + 1).padStart(2, '0')}-${String(sevenDaysAgo.getDate()).padStart(2, '0')}`;
+
+    return rawList.filter((item) => {
+      if (activeTab === 'ALL') {
+        if (statusFilter === 'USER_NO_SHOW' && item.noShowType !== 'USER_NO_SHOW') {
+          return false;
+        }
+        if (
+          statusFilter !== 'ALL' &&
+          statusFilter !== 'USER_NO_SHOW' &&
+          item.status !== statusFilter
+        ) {
+          return false;
+        }
+      }
+      if (sessionFilter !== 'ALL' && item.sessionType !== sessionFilter) {
+        return false;
+      }
+      if (dateFilter !== 'ALL') {
+        const slotDate = (item.slotDate || '').split('T')[0];
+        if (dateFilter === 'TODAY' && slotDate !== todayStr) return false;
+        if (dateFilter === 'UPCOMING' && slotDate < todayStr) return false;
+        if (dateFilter === '7DAYS' && (slotDate < sevenDaysAgoStr || slotDate > todayStr)) return false;
+        if (dateFilter === 'THIS_MONTH' && !slotDate.startsWith(currentMonthPrefix)) return false;
+      }
+      return true;
+    });
+  }, [activeTab, pendingBookings, allBookings, statusFilter, sessionFilter, dateFilter]);
+
+  const hasActiveFilters =
+    (activeTab === 'ALL' && statusFilter !== 'ALL') ||
+    sessionFilter !== 'ALL' ||
+    dateFilter !== 'ALL';
+
+  const resetFilters = () => {
+    setStatusFilter('ALL');
+    setSessionFilter('ALL');
+    setDateFilter('ALL');
+  };
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
+      <DrumPatternBackdrop variant="soft" />
+
       {/* ── HEADER ── */}
       <View style={styles.header}>
         <TouchableOpacity
-          onPress={() => (navigation.canGoBack() ? navigation.goBack() : navigation.navigate('Home'))}
+          onPress={handleBack}
           style={styles.backBtn}
           accessibilityRole="button"
           accessibilityLabel="Quay lại"
@@ -383,6 +556,14 @@ export const ExpertBookingsScreen: React.FC = () => {
           <Text style={styles.kpiAvailableSub}>
             Số dư ví khả dụng: <Text style={{ fontFamily: fonts.bodyBold, color: '#059669' }}>{formatVnd(expertWallet?.availableBalance ?? 0)}</Text>
           </Text>
+          {(expertWallet?.pendingEscrowReceivable ?? 0) > 0 && (
+            <Text style={[styles.kpiAvailableSub, { marginTop: 2 }]}>
+              Đang giữ bảo chứng chờ giải ngân:{' '}
+              <Text style={{ fontFamily: fonts.bodyBold, color: '#D97706' }}>
+                {formatVnd(expertWallet?.pendingEscrowReceivable ?? 0)}
+              </Text>
+            </Text>
+          )}
         </View>
 
         <TouchableOpacity
@@ -390,10 +571,10 @@ export const ExpertBookingsScreen: React.FC = () => {
           activeOpacity={0.85}
           onPress={() => navigation.navigate('Wallet', { walletType: 'EXPERT' })}
           accessibilityRole="button"
-          accessibilityLabel="Ví & Rút tiền"
+          accessibilityLabel="TAXKEEP VN WALLET"
         >
           <Ionicons name="wallet-outline" size={16} color="#FFFFFF" />
-          <Text style={styles.kpiWalletBtnText}>Ví & Rút tiền</Text>
+          <Text style={styles.kpiWalletBtnText}>TAXKEEP VN WALLET</Text>
         </TouchableOpacity>
       </View>
 
@@ -423,36 +604,117 @@ export const ExpertBookingsScreen: React.FC = () => {
         </TouchableOpacity>
       </View>
 
-      {/* ── STATUS FILTER (Only for ALL tab) ── */}
-      {activeTab === 'ALL' && (
-        <View style={styles.filterChipScroll}>
-          {[
-            { key: 'ALL', label: 'Tất cả' },
-            { key: 'CONFIRMED', label: 'Đã xác nhận' },
-            { key: 'COMPLETED', label: 'Hoàn thành' },
-            { key: 'REJECTED_BY_EXPERT', label: 'Từ chối' },
-            { key: 'CANCELLED_BY_USER', label: 'Khách hủy' },
-          ].map((chip) => (
-            <TouchableOpacity
-              key={chip.key}
+      {/* ── SINGLE-ROW COMPACT DROPDOWN FILTER BAR ── */}
+      <View style={styles.filterDropdownRow}>
+        {/* Dropdown 1: Trạng thái (hiển thị ở tab Tất cả lịch hẹn) */}
+        {activeTab === 'ALL' && (
+          <TouchableOpacity
+            style={[
+              styles.filterDropdownBtn,
+              statusFilter !== 'ALL' && styles.filterDropdownBtnActive,
+            ]}
+            onPress={() => setStatusModalVisible(true)}
+            activeOpacity={0.75}
+            accessibilityRole="button"
+            accessibilityLabel="Lọc theo trạng thái"
+          >
+            <Ionicons
+              name="funnel-outline"
+              size={13}
+              color={statusFilter !== 'ALL' ? '#FFFFFF' : theme.colors.primary}
+            />
+            <Text
               style={[
-                styles.filterChip,
-                statusFilter === chip.key && styles.filterChipActive,
+                styles.filterDropdownText,
+                statusFilter !== 'ALL' && styles.filterDropdownTextActive,
               ]}
-              onPress={() => setStatusFilter(chip.key)}
+              numberOfLines={1}
             >
-              <Text
-                style={[
-                  styles.filterChipText,
-                  statusFilter === chip.key && styles.filterChipTextActive,
-                ]}
-              >
-                {chip.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      )}
+              {EXPERT_STATUS_FILTER_OPTIONS.find((o) => o.key === statusFilter)?.shortLabel || 'Trạng thái'}
+            </Text>
+            <Ionicons
+              name="chevron-down"
+              size={12}
+              color={statusFilter !== 'ALL' ? '#FFFFFF' : '#6B7280'}
+            />
+          </TouchableOpacity>
+        )}
+
+        {/* Dropdown 2: Hình thức dịch vụ */}
+        <TouchableOpacity
+          style={[
+            styles.filterDropdownBtn,
+            sessionFilter !== 'ALL' && styles.filterDropdownBtnActive,
+          ]}
+          onPress={() => setSessionModalVisible(true)}
+          activeOpacity={0.75}
+          accessibilityRole="button"
+          accessibilityLabel="Lọc theo hình thức dịch vụ"
+        >
+          <Ionicons
+            name="layers-outline"
+            size={13}
+            color={sessionFilter !== 'ALL' ? '#FFFFFF' : theme.colors.primary}
+          />
+          <Text
+            style={[
+              styles.filterDropdownText,
+              sessionFilter !== 'ALL' && styles.filterDropdownTextActive,
+            ]}
+            numberOfLines={1}
+          >
+            {SESSION_FILTER_OPTIONS.find((o) => o.key === sessionFilter)?.shortLabel || 'Dịch vụ'}
+          </Text>
+          <Ionicons
+            name="chevron-down"
+            size={12}
+            color={sessionFilter !== 'ALL' ? '#FFFFFF' : '#6B7280'}
+          />
+        </TouchableOpacity>
+
+        {/* Dropdown 3: Thời gian hẹn */}
+        <TouchableOpacity
+          style={[
+            styles.filterDropdownBtn,
+            dateFilter !== 'ALL' && styles.filterDropdownBtnActive,
+          ]}
+          onPress={() => setDateModalVisible(true)}
+          activeOpacity={0.75}
+          accessibilityRole="button"
+          accessibilityLabel="Lọc theo thời gian"
+        >
+          <Ionicons
+            name="calendar-outline"
+            size={13}
+            color={dateFilter !== 'ALL' ? '#FFFFFF' : theme.colors.primary}
+          />
+          <Text
+            style={[
+              styles.filterDropdownText,
+              dateFilter !== 'ALL' && styles.filterDropdownTextActive,
+            ]}
+            numberOfLines={1}
+          >
+            {DATE_FILTER_OPTIONS.find((o) => o.key === dateFilter)?.shortLabel || 'Thời gian'}
+          </Text>
+          <Ionicons
+            name="chevron-down"
+            size={12}
+            color={dateFilter !== 'ALL' ? '#FFFFFF' : '#6B7280'}
+          />
+        </TouchableOpacity>
+
+        {hasActiveFilters && (
+          <TouchableOpacity
+            style={styles.filterResetIconBtn}
+            onPress={resetFilters}
+            accessibilityRole="button"
+            accessibilityLabel="Xóa bộ lọc"
+          >
+            <Ionicons name="refresh" size={14} color={theme.colors.error} />
+          </TouchableOpacity>
+        )}
+      </View>
 
       {/* ── CONTENT LIST ── */}
       {loading && !refreshing ? (
@@ -502,6 +764,143 @@ export const ExpertBookingsScreen: React.FC = () => {
           }
         />
       )}
+
+      {/* ── DROPDOWN MODALS (TRẠNG THÁI / DỊCH VỤ / THỜI GIAN) ── */}
+      <Modal
+        visible={statusModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setStatusModalVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.dropdownModalOverlay}
+          activeOpacity={1}
+          onPress={() => setStatusModalVisible(false)}
+        >
+          <View style={styles.dropdownModalBox}>
+            <View style={styles.dropdownModalHeader}>
+              <Text style={styles.dropdownModalTitle}>Lọc theo trạng thái lịch hẹn</Text>
+              <TouchableOpacity onPress={() => setStatusModalVisible(false)}>
+                <Ionicons name="close" size={20} color="#666666" />
+              </TouchableOpacity>
+            </View>
+            <GoldDoubleRule style={{ marginVertical: 8 }} />
+            {EXPERT_STATUS_FILTER_OPTIONS.map((opt) => {
+              const selected = statusFilter === opt.key;
+              return (
+                <TouchableOpacity
+                  key={opt.key}
+                  style={[styles.dropdownOptionRow, selected && styles.dropdownOptionSelected]}
+                  onPress={() => {
+                    setStatusFilter(opt.key);
+                    setStatusModalVisible(false);
+                  }}
+                >
+                  <Text style={[styles.dropdownOptionText, selected && styles.dropdownOptionTextActive]}>
+                    {opt.label}
+                  </Text>
+                  {selected && <Ionicons name="checkmark-circle" size={18} color={theme.colors.primary} />}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      <Modal
+        visible={sessionModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSessionModalVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.dropdownModalOverlay}
+          activeOpacity={1}
+          onPress={() => setSessionModalVisible(false)}
+        >
+          <View style={styles.dropdownModalBox}>
+            <View style={styles.dropdownModalHeader}>
+              <Text style={styles.dropdownModalTitle}>Lọc theo hình thức tư vấn</Text>
+              <TouchableOpacity onPress={() => setSessionModalVisible(false)}>
+                <Ionicons name="close" size={20} color="#666666" />
+              </TouchableOpacity>
+            </View>
+            <GoldDoubleRule style={{ marginVertical: 8 }} />
+            {SESSION_FILTER_OPTIONS.filter(
+              (opt) =>
+                opt.key === 'ALL' ||
+                configuredSessionTypes.includes(opt.key) ||
+                pendingBookings.some((b) => b.sessionType === opt.key) ||
+                allBookings.some((b) => b.sessionType === opt.key)
+            ).map((opt) => {
+              const selected = sessionFilter === opt.key;
+              return (
+                <TouchableOpacity
+                  key={opt.key}
+                  style={[styles.dropdownOptionRow, selected && styles.dropdownOptionSelected]}
+                  onPress={() => {
+                    setSessionFilter(opt.key);
+                    setSessionModalVisible(false);
+                  }}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Ionicons
+                      name={opt.icon as any}
+                      size={16}
+                      color={selected ? theme.colors.primary : '#666666'}
+                    />
+                    <Text style={[styles.dropdownOptionText, selected && styles.dropdownOptionTextActive]}>
+                      {opt.label}
+                    </Text>
+                  </View>
+                  {selected && <Ionicons name="checkmark-circle" size={18} color={theme.colors.primary} />}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      <Modal
+        visible={dateModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setDateModalVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.dropdownModalOverlay}
+          activeOpacity={1}
+          onPress={() => setDateModalVisible(false)}
+        >
+          <View style={styles.dropdownModalBox}>
+            <View style={styles.dropdownModalHeader}>
+              <Text style={styles.dropdownModalTitle}>Lọc theo thời gian lịch hẹn</Text>
+              <TouchableOpacity onPress={() => setDateModalVisible(false)}>
+                <Ionicons name="close" size={20} color="#666666" />
+              </TouchableOpacity>
+            </View>
+            <GoldDoubleRule style={{ marginVertical: 8 }} />
+            {DATE_FILTER_OPTIONS.map((opt) => {
+              const selected = dateFilter === opt.key;
+              return (
+                <TouchableOpacity
+                  key={opt.key}
+                  style={[styles.dropdownOptionRow, selected && styles.dropdownOptionSelected]}
+                  onPress={() => {
+                    setDateFilter(opt.key);
+                    setDateModalVisible(false);
+                  }}
+                >
+                  <Text style={[styles.dropdownOptionText, selected && styles.dropdownOptionTextActive]}>
+                    {opt.label}
+                  </Text>
+                  {selected && <Ionicons name="checkmark-circle" size={18} color={theme.colors.primary} />}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
       {/* ── REJECT MODAL ── */}
       <Modal
@@ -586,7 +985,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'transparent',
+    zIndex: 1,
   },
   backBtn: {
     width: 38,
@@ -594,6 +994,7 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: 'rgba(243, 239, 230, 0.85)',
   },
   refreshBtn: {
     width: 38,
@@ -601,17 +1002,19 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: 'rgba(243, 239, 230, 0.85)',
   },
   headerTitle: {
     fontFamily: fonts.serifBold,
-    fontSize: 17,
-    color: theme.colors.textPrimary,
+    fontSize: 18,
+    lineHeight: 24,
+    color: theme.colors.primaryDark,
   },
 
   // Tabs
   tabContainer: {
     flexDirection: 'row',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'transparent',
     paddingHorizontal: 16,
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
@@ -649,30 +1052,94 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
 
-  // Filter Chips
-  filterChipScroll: {
+  // Single-row compact dropdown filters
+  filterDropdownRow: {
     flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 10,
+    paddingTop: 10,
+    paddingBottom: 4,
     gap: 8,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'transparent',
   },
-  filterChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    backgroundColor: '#F3EFE6',
+  filterDropdownBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(255, 253, 247, 0.94)',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E5D5B5',
+    gap: 4,
   },
-  filterChipActive: {
+  filterDropdownBtnActive: {
     backgroundColor: theme.colors.primary,
+    borderColor: theme.colors.primary,
   },
-  filterChipText: {
+  filterDropdownText: {
+    flex: 1,
     fontFamily: fonts.bodySemi,
-    fontSize: 12,
-    color: '#666666',
+    fontSize: 11.5,
+    color: '#3A2E25',
   },
-  filterChipTextActive: {
+  filterDropdownTextActive: {
+    fontFamily: fonts.bodyBold,
     color: '#FFFFFF',
+  },
+  filterResetIconBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  dropdownModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'flex-end',
+  },
+  dropdownModalBox: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    padding: 18,
+    paddingBottom: 30,
+  },
+  dropdownModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  dropdownModalTitle: {
+    fontFamily: fonts.serifBold,
+    fontSize: 16,
+    color: theme.colors.primaryDark,
+  },
+  dropdownOptionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 11,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+  },
+  dropdownOptionSelected: {
+    backgroundColor: '#FAF5EE',
+  },
+  dropdownOptionText: {
+    fontFamily: fonts.body,
+    fontSize: 13.5,
+    color: theme.colors.textPrimary,
+  },
+  dropdownOptionTextActive: {
+    fontFamily: fonts.bodyBold,
+    color: theme.colors.primary,
   },
 
   // List & Cards (Flat design, NO nested card)
@@ -698,41 +1165,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
-  sessionBadge: {
+  sessionMeta: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
+    gap: 5,
   },
-  sessionBadgeText: {
+  sessionMetaText: {
     fontFamily: fonts.bodySemi,
-    fontSize: 11,
+    fontSize: 12,
+    color: '#4B5563',
   },
-  bookingCode: {
-    fontFamily: fonts.bodyBold,
-    fontSize: 13,
-    color: theme.colors.primary,
-  },
-  slaBadge: {
+  timerMetaRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: '#FEF3C7',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 10,
   },
-  slaBadgeUrgent: {
-    backgroundColor: '#FEE2E2',
-  },
-  slaText: {
+  timerMetaText: {
     fontFamily: fonts.bodyBold,
-    fontSize: 11,
+    fontSize: 11.5,
     color: '#92400E',
   },
-  slaTextUrgent: {
+  timerMetaTextUrgent: {
     color: '#B91C1C',
   },
   cardFee: {
@@ -773,14 +1226,19 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#333333',
   },
-  statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
+  statusIndicatorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
-  statusBadgeText: {
-    fontFamily: fonts.bodyBold,
-    fontSize: 11,
+  statusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+  },
+  statusIndicatorText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 12,
   },
   cardFooter: {
     flexDirection: 'row',
@@ -976,37 +1434,37 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     marginTop: 12,
     marginBottom: 4,
-    backgroundColor: '#1E293B',
+    backgroundColor: 'rgba(255, 253, 247, 0.94)',
     borderRadius: 14,
-    padding: 14,
+    padding: 15,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
+    borderWidth: 1.5,
+    borderColor: '#E5D5B5',
+    ...theme.shadows.card,
   },
   kpiRevenueLeft: {
     flex: 1,
     marginRight: 10,
   },
   kpiRevenueLabel: {
-    fontFamily: fonts.body,
-    fontSize: 11,
-    color: '#94A3B8',
+    fontFamily: fonts.bodyMedium,
+    fontSize: 12,
+    color: '#5A4A22',
   },
   kpiRevenueValue: {
-    fontFamily: fonts.bodyBold,
-    fontSize: 20,
-    color: '#F8FAFC',
+    fontFamily: fonts.serifBold,
+    fontSize: 22,
+    lineHeight: 28,
+    color: theme.colors.primaryDark,
+    fontVariant: ['tabular-nums'],
     marginTop: 2,
   },
   kpiAvailableSub: {
     fontFamily: fonts.body,
-    fontSize: 11,
-    color: '#CBD5E1',
+    fontSize: 11.5,
+    color: theme.colors.textSecondary,
     marginTop: 3,
   },
   kpiWalletBtn: {
@@ -1017,6 +1475,7 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
     paddingHorizontal: 13,
     borderRadius: 8,
+    ...theme.shadows.button,
   },
   kpiWalletBtnText: {
     fontFamily: fonts.bodyBold,

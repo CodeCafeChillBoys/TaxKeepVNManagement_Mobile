@@ -3,7 +3,7 @@ import { NativeModules, Platform } from 'react-native';
 
 const API_PORT = 5023;
 const AI_PORT = 5000;
-const WEB_PORT = 5173;
+const WEB_PORT = 8081;
 
 /**
  * Tự động trích xuất IP LAN của máy tính đang chạy Metro Bundler.
@@ -141,6 +141,11 @@ export function getLocalWebFrontendUrl(): string {
   const fromEnv = process.env.EXPO_PUBLIC_WEB_URL?.trim();
   if (fromEnv) {
     return fromEnv.replace(/\/+$/, '');
+  }
+
+  // Trên trình duyệt Web, lấy trực tiếp window.location.origin (ví dụ: http://localhost:8081)
+  if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.origin) {
+    return window.location.origin;
   }
 
   const autoHost = getAutoDetectedHost();

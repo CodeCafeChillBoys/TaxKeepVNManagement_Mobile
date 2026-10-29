@@ -6,6 +6,7 @@ import type {
   TaxSettlementExportPdfRequest,
   TaxSettlementExportRequest,
   TaxSettlementExportZipRequest,
+  TaxDeadlineCountdown,
   TaxSettlementListItem,
   TaxSettlementPackageZipResponse,
   TaxSettlementPreview,
@@ -146,6 +147,17 @@ export const taxSettlementApi = {
       note: request.note ?? null,
     });
     return unwrap(res, 'Không chốt được hồ sơ quyết toán.');
+  },
+
+  /** GET /api/v1/tax-settlements/deadline-countdown — số ngày còn lại tới hạn nộp quyết toán */
+  async getDeadlineCountdown(): Promise<TaxDeadlineCountdown> {
+    const res = await apiClient.get<ApiResponse<TaxDeadlineCountdown>>(`${BASE}/deadline-countdown`);
+    return unwrap(res, 'Không tải được hạn nộp quyết toán.');
+  },
+
+  /** POST /api/v1/tax-settlements/acknowledge-prompt — ghi nhận đã hỏi "Bạn đã quyết toán thuế chưa?" (BE không hỏi lại năm đó) */
+  async acknowledgeSettlementPrompt(taxYear: number, response: 'YES' | 'NO' | 'DISMISSED'): Promise<void> {
+    await apiClient.post(`${BASE}/acknowledge-prompt`, { taxYear, response });
   },
 
   /** GET /api/v1/tax-settlements */

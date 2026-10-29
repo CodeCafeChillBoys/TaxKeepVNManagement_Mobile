@@ -104,7 +104,7 @@ tags:
 - waitForAnimationToEnd
 - takeScreenshot: screenshots/settlement-detail/03-income-company-expanded
 - assertVisible: ".*Mã số thuế tổ chức.*"
-- assertVisible: ".*Tỷ trọng.*"
+- assertNotVisible: ".*Tỷ trọng.*"
 - assertVisible: ".*Bảo hiểm bắt buộc đã trích.*"
 
 # 02 Người phụ thuộc
@@ -119,7 +119,7 @@ tags:
 - takeScreenshot: screenshots/settlement-detail/04-dependent-expanded
 - assertVisible: ".*Quan hệ.*"
 - assertVisible: ".*Thời gian được tính.*"
-- assertVisible: ".*Số tháng.*"
+- assertNotVisible: "Số tháng"
 - assertVisible: ".*Cách tính.*"
 
 # 03 Giảm trừ

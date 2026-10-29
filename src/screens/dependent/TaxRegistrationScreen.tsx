@@ -14,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
+import { HomeHeaderButton } from '../../components/navigation/HomeHeaderButton';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { dependentDocumentApi } from '../../api/dependentDocumentApi';
 import {
@@ -334,7 +335,7 @@ export const TaxRegistrationScreen: React.FC = () => {
           <Ionicons name="arrow-back" size={26} color="#1A1A1A" />
         </TouchableOpacity>
         <Text style={styles.headerTitle} numberOfLines={1}>Đơn đăng ký người phụ thuộc</Text>
-        <View style={{ width: 44 }} />
+        <View style={styles.homeSlot}><HomeHeaderButton /></View>
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
@@ -727,6 +728,8 @@ export const TaxRegistrationScreen: React.FC = () => {
 };
 
 const styles = StyleSheet.create({
+  // Ô phải header: nút về Trang chủ, giữ độ rộng cũ để tiêu đề vẫn ở giữa
+  homeSlot: { width: 44, alignItems: 'flex-end', justifyContent: 'center' },
   safeArea: {
     flex: 1,
     backgroundColor: '#FFFFFF',

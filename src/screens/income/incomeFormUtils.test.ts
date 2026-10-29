@@ -9,6 +9,7 @@ import {
   isLowConfidence,
   findDuplicateMonth,
   extractApiErrorMessage,
+  incomeFormUi,
 } from './incomeFormUtils';
 import { IncomeCompanyGroup, IncomeMonthItem } from '../../types/income';
 
@@ -162,5 +163,43 @@ describe('extractApiErrorMessage', () => {
     );
     expect(extractApiErrorMessage(new Error('Không đọc được dữ liệu'), 'x')).toBe('Không đọc được dữ liệu');
     expect(extractApiErrorMessage(null, 'Dự phòng')).toBe('Dự phòng');
+  });
+});
+
+describe('incomeFormUi', () => {
+  it('thêm mới: cho sửa, có quét phiếu lương', () => {
+    expect(incomeFormUi('edit', null)).toEqual({
+      title: 'Thêm thu nhập tháng',
+      editable: true,
+      showScan: true,
+      showSave: true,
+      showEditButton: false,
+      showCancelEdit: false,
+      showPayslipPreview: false,
+    });
+  });
+
+  it('bấm vào xem tháng có sẵn: chỉ xem, ẩn phần quét, có nút Sửa', () => {
+    expect(incomeFormUi('view', item)).toEqual({
+      title: 'Thu nhập tháng 3/2026',
+      editable: false,
+      showScan: false,
+      showSave: false,
+      showEditButton: true,
+      showCancelEdit: false,
+      showPayslipPreview: true,
+    });
+  });
+
+  it('bấm Sửa: cho sửa, có quét lại, có Lưu và Hủy', () => {
+    expect(incomeFormUi('edit', item)).toEqual({
+      title: 'Sửa thu nhập tháng 3/2026',
+      editable: true,
+      showScan: true,
+      showSave: true,
+      showEditButton: false,
+      showCancelEdit: true,
+      showPayslipPreview: false,
+    });
   });
 });

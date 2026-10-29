@@ -17,6 +17,7 @@ import { incomeApi } from '../../api/incomeApi';
 import { IncomeCompanyGroup, IncomeMonthItem } from '../../types/income';
 import { RootNavigationProp } from '../../navigation/types';
 import { extractApiErrorMessage } from './incomeFormUtils';
+import { QuarterIncomeTable } from '../../components/income/QuarterIncomeTable';
 
 const YEAR_OPTIONS = [2026, 2025, 2024];
 
@@ -169,28 +170,15 @@ export function MonthlyIncomePanel() {
                 <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={18} color="#999" />
               </TouchableOpacity>
 
-              {open
-                ? g.details.map((d) => (
-                    <TouchableOpacity
-                      key={d.id}
-                      style={styles.monthRow}
-                      onPress={() => openForm(d)}
-                      testID={`monthlyRow_${d.id}`}
-                    >
-                      <View style={styles.monthBadge}>
-                        <Text style={styles.monthBadgeText}>T{d.month}</Text>
-                      </View>
-                      <View style={styles.monthInfo}>
-                        <Text style={styles.monthIncome}>{vnd(d.totalTaxableIncome)}</Text>
-                        <Text style={styles.monthMeta}>
-                          BH {vnd(d.insuranceDeducted)} · Thuế {vnd(d.taxAlreadyDeducted)}
-                        </Text>
-                        {d.payslipFileUrl ? <Text style={styles.monthTag}>Có phiếu lương</Text> : null}
-                      </View>
-                      <Ionicons name="create-outline" size={18} color={theme.colors.primary} />
-                    </TouchableOpacity>
-                  ))
-                : null}
+              {/* Bảng theo quý (gộp 3 tháng/dòng) — bấm quý để xem tháng, bấm tháng để xem/sửa */}
+              {open ? (
+                <QuarterIncomeTable
+                  months={g.details}
+                  year={year}
+                  onPressMonth={openForm}
+                  testIDPrefix={`monthly_${g.taxIdNumber || g.organizationName}_`}
+                />
+              ) : null}
             </View>
           );
         })
@@ -260,26 +248,4 @@ const styles = StyleSheet.create({
   cardTitle: { fontFamily: fonts.bodySemi, fontSize: 14, color: theme.colors.textPrimary },
   cardSub: { marginTop: 2, fontFamily: fonts.body, fontSize: 11, color: theme.colors.textSecondary },
   cardAmount: { marginTop: 4, fontFamily: fonts.bodyBold, fontSize: 15, color: theme.colors.primaryDark },
-  monthRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderTopWidth: 1,
-    borderTopColor: theme.colors.border,
-  },
-  monthBadge: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: theme.colors.surfaceSecondary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  monthBadgeText: { fontFamily: fonts.bodyBold, fontSize: 12, color: theme.colors.primaryDark },
-  monthInfo: { flex: 1 },
-  monthIncome: { fontFamily: fonts.bodySemi, fontSize: 13, color: theme.colors.textPrimary },
-  monthMeta: { marginTop: 2, fontFamily: fonts.body, fontSize: 11, color: theme.colors.textSecondary },
-  monthTag: { marginTop: 2, fontFamily: fonts.bodyMedium, fontSize: 10, color: '#7A5A14' },
 });

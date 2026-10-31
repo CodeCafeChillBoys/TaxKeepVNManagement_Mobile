@@ -47,6 +47,11 @@ yarn-error.*
 .idea/
 .claude/
 
+# Local AI agent skill packs (không đưa vào repo app)
+.agents/
+.minimax/
+.cursor/
+
 # Test & Automation artifacts (Playwright & Python)
 scripts/
 __pycache__/
@@ -55,12 +60,24 @@ __pycache__/
 .pytest_cache/
 test-results/
 playwright-report/
+.playwright/**/screenshots/
 
 # Logs
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Maestro — junk tạm khi chạy test (giữ ảnh evidence chính + REPORT)
+.maestro/screenshots/**/_*
+.maestro/screenshots/**/debug/
+.maestro/screenshots/**/debug-*
+.maestro/screenshots/**/round2/
+.maestro/screenshots/**/round3/
+.maestro/screenshots/withholding-voucher-r2/
+.maestro/screenshots/withholding-voucher-tc2r/
+.maestro/flows/_*.yaml
+*.log.err
 
 # OS temporary files
 Thumbs.db

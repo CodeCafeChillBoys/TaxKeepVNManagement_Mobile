@@ -61,6 +61,27 @@ export interface QueryParameters {
   isActive?: boolean;
 }
 
+/** Body POST /api/v1/income-sources/cross-check — số liệu trên chứng từ khấu trừ */
+export interface IncomeSourceCrossCheckRequest {
+  companyName: string;
+  taxYear: number;
+  certificateTotalIncome: number;
+  certificateTaxWithheld: number;
+  certificateInsuranceDeducted: number;
+}
+
+/** Kết quả đối chiếu chứng từ với tổng thu nhập theo tháng (bảng incomes) */
+export interface IncomeSourceCrossCheckResult {
+  isMatch: boolean;
+  summedTotalIncome: number;
+  summedTaxWithheld: number;
+  summedInsuranceDeducted: number;
+  diffTotalIncome: number;
+  diffTaxWithheld: number;
+  diffInsuranceDeducted: number;
+  mismatchMessages: string[];
+}
+
 export const incomeSourceApi = {
   // Lấy danh sách nơi chi trả thu nhập
   async getAll(params?: QueryParameters): Promise<IncomeSourceListResponse> {
@@ -115,5 +136,11 @@ export const incomeSourceApi = {
   // Xóa nơi chi trả thu nhập
   async delete(id: string): Promise<void> {
     await apiClient.delete(`/api/v1/income-sources/${id}`);
+  },
+
+  // Đối chiếu số trên chứng từ khấu trừ với tổng thu nhập các tháng đã nhập (chỉ đọc, không lưu)
+  async crossCheck(dto: IncomeSourceCrossCheckRequest): Promise<IncomeSourceCrossCheckResult> {
+    const response = await apiClient.post('/api/v1/income-sources/cross-check', dto);
+    return response.data?.data || response.data;
   },
 };

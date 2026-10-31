@@ -1,0 +1,165 @@
+# Test viewer in-app + scanError dưới nút quét — không lưu
+appId: host.exp.exponent
+name: income_monthly_viewer_scanerror
+---
+- launchApp:
+    appId: host.exp.exponent
+    clearState: false
+    permissions:
+      all: allow
+- runFlow:
+    when:
+      visible: "Recent|This app can only|Photos"
+    commands:
+      - back
+- openLink: exp://172.31.144.1:8081
+- extendedWaitUntil:
+    visible: "FE|Development servers|Xin chào|Thu nhập|Đăng nhập|Trang chủ"
+    timeout: 90000
+- runFlow:
+    when:
+      visible: "Development servers|Enter URL|Recent history"
+    commands:
+      - tapOn: "FE"
+- extendedWaitUntil:
+    visible: ".*Đăng nhập.*|.*Xin chào.*|.*Trang chủ.*|.*Thu nhập.*|.*CCCD.*"
+    timeout: 120000
+
+- runFlow:
+    when:
+      visible: ".*Đăng nhập.*|.*CCCD.*|.*mật khẩu.*"
+    commands:
+      - tapOn:
+          text: ".*CCCD.*|.*căn cước.*|.*Email.*"
+          optional: true
+      - eraseText
+      - inputText: ${TEST_USER_ID}
+      - tapOn:
+          text: ".*mật khẩu.*|.*Mật khẩu.*"
+          optional: true
+      - eraseText
+      - inputText: ${TEST_USER_PASSWORD}
+      - tapOn: "Đăng nhập"
+      - extendedWaitUntil:
+          visible: "OK|Xin chào|Trang chủ|Thu nhập|Never"
+          timeout: 30000
+      - runFlow:
+          when:
+            visible: "Never|Không bao giờ"
+          commands:
+            - tapOn: "Never|Không bao giờ"
+      - runFlow:
+          when:
+            visible: "OK"
+          commands:
+            - tapOn: "OK"
+
+- tapOn:
+    id: mainTab_IncomeSourceList
+- extendedWaitUntil:
+    visible:
+      id: incomeView_monthly
+    timeout: 20000
+- tapOn:
+    id: incomeView_monthly
+- extendedWaitUntil:
+    visible:
+      id: addMonthlyIncomeBtn
+    timeout: 15000
+- tapOn:
+    id: monthlyYear_2026
+- waitForAnimationToEnd
+
+- addMedia:
+    - "../assets/income-monthly/payslip.jpg"
+
+# OCR payslip — full-screen Photos: hàng 1 cột trái
+- tapOn:
+    id: addMonthlyIncomeBtn
+- extendedWaitUntil:
+    visible:
+      id: scanPayslipLibrary
+    timeout: 15000
+- tapOn:
+    id: scanPayslipLibrary
+- waitForAnimationToEnd:
+    timeout: 3000
+- extendedWaitUntil:
+    visible: "Recent|Photos|This app can only"
+    timeout: 20000
+# Full-screen Photos: hàng 1 cột trái (~17%,25%) — 33% là hàng 2 (thường not-payslip)
+- tapOn:
+    point: "17%,25%"
+- extendedWaitUntil:
+    visible:
+      id: payslipOcrResult
+    timeout: 150000
+- assertVisible:
+    id: payslipAttachment
+- scrollUntilVisible:
+    element:
+      id: payslipAttachment
+    direction: DOWN
+    timeout: 10000
+    visibilityPercentage: 40
+- tapOn:
+    id: payslipAttachment
+- extendedWaitUntil:
+    visible:
+      id: closeDocumentViewerBtn
+    timeout: 12000
+- takeScreenshot: screenshots/income-monthly/18-viewer
+- tapOn:
+    id: closeDocumentViewerBtn
+- waitForAnimationToEnd:
+    timeout: 3000
+- extendedWaitUntil:
+    notVisible:
+      id: closeDocumentViewerBtn
+    timeout: 8000
+- assertVisible: ".*DEMO PAYSLIP.*|.*CÔNG TY TNHH DEMO.*"
+- assertVisible: ".*0312345678.*"
+- assertVisible: ".*25\\.000\\.000.*"
+- assertVisible: ".*2\\.625\\.000.*"
+- assertVisible: ".*1\\.200\\.000.*"
+- takeScreenshot: screenshots/income-monthly/19-form-kept
+- tapOn:
+    id: incomeFormBack
+- extendedWaitUntil:
+    visible:
+      id: monthlyIncomeScroll
+    timeout: 15000
+
+# OCR not-payslip — lỗi dưới nút quét
+- addMedia:
+    - "../assets/income-monthly/not-payslip.jpg"
+- tapOn:
+    id: addMonthlyIncomeBtn
+- extendedWaitUntil:
+    visible:
+      id: scanPayslipLibrary
+    timeout: 15000
+- tapOn:
+    id: scanPayslipLibrary
+- waitForAnimationToEnd:
+    timeout: 3000
+- extendedWaitUntil:
+    visible: "Recent|Photos|This app can only"
+    timeout: 20000
+# Hàng 1 cột giữa = not-payslip (xanh)
+- tapOn:
+    point: "50%,25%"
+- extendedWaitUntil:
+    visible:
+      id: payslipScanError
+    timeout: 150000
+- assertVisible: ".*không được nhận diện là Phiếu lương.*"
+- assertVisible:
+    id: payslipScanError
+- takeScreenshot: screenshots/income-monthly/20-scan-error
+- tapOn:
+    id: incomeFormBack
+- extendedWaitUntil:
+    visible:
+      id: monthlyIncomeScroll
+    timeout: 15000

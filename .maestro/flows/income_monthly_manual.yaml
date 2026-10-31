@@ -1,0 +1,266 @@
+# Phần nhập tay (không OCR) — tránh hideKeyboard (Android Back đóng form)
+appId: host.exp.exponent
+name: income_monthly_manual
+tags:
+  - income
+  - monthly
+---
+- launchApp:
+    appId: host.exp.exponent
+    clearState: false
+    stopApp: false
+    permissions:
+      all: allow
+- openLink: exp://10.0.2.2:8081
+- extendedWaitUntil:
+    visible: ".*Đăng nhập.*|.*Xin chào.*|.*Trang chủ.*|.*Thu nhập.*|.*CCCD.*"
+    timeout: 90000
+
+- runFlow:
+    when:
+      visible: ".*Đăng nhập.*|.*CCCD.*|.*mật khẩu.*"
+    commands:
+      - tapOn:
+          text: ".*CCCD.*|.*căn cước.*|.*Email.*"
+          optional: true
+      - eraseText
+      - inputText: ${TEST_USER_ID}
+      - tapOn:
+          text: ".*mật khẩu.*|.*Mật khẩu.*"
+          optional: true
+      - eraseText
+      - inputText: ${TEST_USER_PASSWORD}
+      - tapOn: "Đăng nhập"
+      - extendedWaitUntil:
+          visible: "OK|Xin chào|Trang chủ|Thu nhập"
+          timeout: 30000
+      - runFlow:
+          when:
+            visible: "OK"
+          commands:
+            - tapOn: "OK"
+
+- tapOn:
+    id: mainTab_IncomeSourceList
+- extendedWaitUntil:
+    visible:
+      id: incomeView_yearly
+    timeout: 20000
+- assertVisible:
+    id: incomeView_monthly
+- takeScreenshot:
+    path: screenshots/income-monthly/01-toggle
+
+- tapOn:
+    id: incomeView_monthly
+- extendedWaitUntil:
+    visible:
+      id: monthlyIncomeScroll
+    timeout: 15000
+- tapOn:
+    id: monthlyYear_2024
+- extendedWaitUntil:
+    visible: ".*Chưa có thu nhập tháng nào.*"
+    timeout: 15000
+- takeScreenshot:
+    path: screenshots/income-monthly/02-empty-2024
+- tapOn:
+    id: monthlyYear_2026
+- waitForAnimationToEnd
+
+- tapOn:
+    id: addMonthlyIncomeBtn
+- extendedWaitUntil:
+    visible:
+      id: incomeFormScroll
+    timeout: 15000
+- tapOn:
+    id: saveMonthlyIncomeBtn
+- extendedWaitUntil:
+    visible: ".*Vui lòng nhập.*"
+    timeout: 8000
+- takeScreenshot:
+    path: screenshots/income-monthly/03-validation
+
+- tapOn:
+    id: incomeInput_organizationName
+- eraseText: 50
+- inputText: Cong ty Test Thu Nhap
+- tapOn:
+    id: incomeInput_taxIdNumber
+- eraseText: 20
+- inputText: "0101248141"
+- tapOn:
+    id: incomeInput_month
+- eraseText: 5
+- inputText: "1"
+- tapOn:
+    id: incomeInput_year
+- eraseText: 6
+- inputText: "2026"
+- tapOn:
+    id: incomeInput_totalTaxableIncome
+- eraseText: 20
+- inputText: "30000000"
+- tapOn:
+    id: incomeInput_insuranceDeducted
+- eraseText: 20
+- inputText: "3150000"
+- tapOn:
+    id: incomeInput_taxAlreadyDeducted
+- eraseText: 20
+- inputText: "1000000"
+# Đóng bàn phím bằng cách tap tiêu đề (không dùng hideKeyboard → Back)
+- tapOn: "Quét phiếu lương"
+- scrollUntilVisible:
+    element:
+      id: saveMonthlyIncomeBtn
+    direction: DOWN
+    timeout: 15000
+    visibilityPercentage: 50
+    centerElement: true
+- assertVisible: ".*30.000.000.*"
+- takeScreenshot:
+    path: screenshots/income-monthly/04-form-filled
+- tapOn:
+    id: saveMonthlyIncomeBtn
+- extendedWaitUntil:
+    visible:
+      id: monthlyIncomeScroll
+    timeout: 30000
+- assertVisible: ".*Cong ty Test Thu Nhap.*"
+- assertVisible: ".*30.000.000.*"
+- takeScreenshot:
+    path: screenshots/income-monthly/05-list-after-create
+- tapOn: ".*Cong ty Test Thu Nhap.*"
+- extendedWaitUntil:
+    visible: ".*T1.*"
+    timeout: 8000
+- takeScreenshot:
+    path: screenshots/income-monthly/06-expanded
+
+- tapOn:
+    id: addMonthlyIncomeBtn
+- extendedWaitUntil:
+    visible:
+      id: incomeFormScroll
+    timeout: 15000
+- tapOn:
+    id: incomeInput_organizationName
+- eraseText: 50
+- inputText: Cong ty Test Thu Nhap
+- tapOn:
+    id: incomeInput_taxIdNumber
+- eraseText: 20
+- inputText: "0101248141"
+- tapOn:
+    id: incomeInput_month
+- eraseText: 5
+- inputText: "1"
+- tapOn:
+    id: incomeInput_year
+- eraseText: 6
+- inputText: "2026"
+- tapOn:
+    id: incomeInput_totalTaxableIncome
+- eraseText: 20
+- inputText: "30000000"
+- tapOn:
+    id: incomeInput_insuranceDeducted
+- eraseText: 20
+- inputText: "3150000"
+- tapOn: "Quét phiếu lương"
+- scrollUntilVisible:
+    element:
+      id: duplicateMonthWarning
+    direction: DOWN
+    timeout: 12000
+    visibilityPercentage: 40
+- takeScreenshot:
+    path: screenshots/income-monthly/07-duplicate-warning
+- scrollUntilVisible:
+    element:
+      id: saveMonthlyIncomeBtn
+    direction: DOWN
+    timeout: 10000
+    visibilityPercentage: 50
+- tapOn:
+    id: saveMonthlyIncomeBtn
+- extendedWaitUntil:
+    visible: ".*Có thể bị trùng.*"
+    timeout: 8000
+- takeScreenshot:
+    path: screenshots/income-monthly/08-duplicate-alert
+- tapOn: "Xem lại"
+- waitForAnimationToEnd
+- tapOn:
+    id: incomeFormBack
+- extendedWaitUntil:
+    visible:
+      id: monthlyIncomeScroll
+    timeout: 15000
+
+- tapOn: ".*Cong ty Test Thu Nhap.*"
+- extendedWaitUntil:
+    visible: ".*T1.*"
+    timeout: 8000
+- tapOn: ".*T1.*"
+- extendedWaitUntil:
+    visible:
+      id: incomeFormScroll
+    timeout: 15000
+- tapOn:
+    id: incomeInput_totalTaxableIncome
+- eraseText: 20
+- inputText: "32000000"
+- tapOn: "Quét phiếu lương"
+- scrollUntilVisible:
+    element:
+      id: saveMonthlyIncomeBtn
+    direction: DOWN
+    timeout: 10000
+    visibilityPercentage: 50
+- tapOn:
+    id: saveMonthlyIncomeBtn
+- extendedWaitUntil:
+    visible:
+      id: monthlyIncomeScroll
+    timeout: 30000
+- assertVisible: ".*32.000.000.*"
+- takeScreenshot:
+    path: screenshots/income-monthly/09-after-edit
+
+- tapOn: ".*Cong ty Test Thu Nhap.*"
+- extendedWaitUntil:
+    visible: ".*T1.*"
+    timeout: 8000
+- tapOn: ".*T1.*"
+- extendedWaitUntil:
+    visible:
+      id: deleteMonthlyIncomeBtn
+    timeout: 10000
+- scrollUntilVisible:
+    element:
+      id: deleteMonthlyIncomeBtn
+    direction: DOWN
+    timeout: 8000
+    visibilityPercentage: 50
+- tapOn:
+    id: deleteMonthlyIncomeBtn
+- tapOn: "Xóa"
+- extendedWaitUntil:
+    visible:
+      id: monthlyIncomeScroll
+    timeout: 20000
+- assertVisible: ".*Chưa có thu nhập tháng nào.*"
+- takeScreenshot:
+    path: screenshots/income-monthly/14-after-delete
+
+- tapOn:
+    id: incomeView_yearly
+- extendedWaitUntil:
+    visible:
+      id: incomeSummaryCard
+    timeout: 15000
+- takeScreenshot:
+    path: screenshots/income-monthly/15-yearly-still-works

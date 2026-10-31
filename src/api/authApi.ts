@@ -49,7 +49,7 @@ export const authApi = {
       address: data.address || null,
     };
 
-    const res = await apiClient.post<ApiResponse<any>>('/api/auth/register', payload);
+    const res = await apiClient.post<ApiResponse<any>>('/api/v1/auth/register', payload);
     return res.data;
   },
 
@@ -60,13 +60,13 @@ export const authApi = {
       password: data.password,
     };
 
-    const res = await apiClient.post<ApiResponse<LoginResponseData>>('/api/auth/login', payload);
+    const res = await apiClient.post<ApiResponse<LoginResponseData>>('/api/v1/auth/login', payload);
     return res.data;
   },
 
   // Đăng xuất (POST /api/auth/logout)
   async logout(): Promise<ApiResponse<any>> {
-    const res = await apiClient.post<ApiResponse<any>>('/api/auth/logout');
+    const res = await apiClient.post<ApiResponse<any>>('/api/v1/auth/logout');
     return res.data;
   },
 
@@ -77,7 +77,7 @@ export const authApi = {
       newPassword: data.newPassword,
       confirmNewPassword: data.confirmNewPassword,
     };
-    const res = await apiClient.put<ApiResponse<any>>('/api/auth/change-password', payload);
+    const res = await apiClient.put<ApiResponse<any>>('/api/v1/auth/change-password', payload);
     return res.data;
   },
 };

@@ -1,8 +1,9 @@
 import { z } from 'zod';
 import { theme } from '../constants/theme';
 
-// Regex kiểm tra tên tiếng Việt có dấu và khoảng trắng, không số, không ký tự đặc biệt
-const VIETNAMESE_NAME_REGEX = /^[a-zA-ZÀÁÂÃÈÉÊÌÍÒÓÔÕÙÚĂĐĨŨƠàáâãèéêìíòóôõùúăđĩũơƯĂẠẢẤẦẨẪẬẮẰẲẴẶẸẺẼỀỀỂưăạảấầẩẫậắằẳẵặẹẻẽềềểỄỆỈỊỌỎỐỒỔỖỘỚỜỞỠỢỤỦỨỪễệỉịọỏốồổỗộớờởỡợụủứừỬỮỰỲỴÝỶỸửữựỳỵỷỹ\s]+$/;
+// Chữ cái Unicode (gồm đủ dấu tiếng Việt) + khoảng trắng; không số / ký tự đặc biệt.
+// Dùng \p{L} để tránh thiếu tổ hợp dấu (trước đây thiếu ế/Ế → tên như "Yến" bị reject).
+const VIETNAMESE_NAME_REGEX = /^[\p{L}\s]+$/u;
 
 // Hàm tính tuổi dựa trên chuỗi ngày sinh (yyyy-MM-dd)
 const calculateAge = (dobString: string): number => {

@@ -1,7 +1,7 @@
 import axios from 'axios';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
-import { config } from '../constants/config';
+import { config, getLocalApiBaseUrl } from '../constants/config';
 
 // Hỗ trợ lưu token an toàn: trên thiết bị dùng SecureStore, trên Web dùng localStorage
 export const storageHelper = {
@@ -38,19 +38,43 @@ export const storageHelper = {
 };
 
 export const apiClient = axios.create({
-  baseURL: config.apiBaseUrl,
   headers: {
     'Content-Type': 'application/json',
   },
   timeout: 15000,
 });
 
-// Request Interceptor: Đính kèm Bearer Token nếu có
+// Request Interceptor: baseURL động (LAN máy thật) + Bearer Token + FormData boundary fix
 apiClient.interceptors.request.use(
   async (reqConfig) => {
+    reqConfig.baseURL = getLocalApiBaseUrl();
     const token = await storageHelper.getItem(config.storageKeys.accessToken);
     if (token && reqConfig.headers) {
       reqConfig.headers.Authorization = `Bearer ${token}`;
+    }
+    // Khi gửi FormData trong React Native hoặc Web, cần xóa Content-Type để runtime tự tạo multipart boundary
+    const isFormData =
+      reqConfig.data &&
+      ((typeof FormData !== 'undefined' && reqConfig.data instanceof FormData) ||
+        Boolean((reqConfig.data as any)?._parts) ||
+        (reqConfig.data as any)?.constructor?.name === 'FormData' ||
+        typeof (reqConfig.data as any)?.append === 'function');
+
+    if (isFormData) {
+      // Ngăn chặn Axios tự động stringify FormData trong React Native
+      reqConfig.transformRequest = (data) => data;
+      reqConfig.timeout = Math.max(reqConfig.timeout || 0, 120000);
+
+      if (reqConfig.headers) {
+        if (typeof (reqConfig.headers as any).delete === 'function') {
+          (reqConfig.headers as any).delete('Content-Type');
+          (reqConfig.headers as any).delete('content-type');
+        }
+        delete reqConfig.headers['Content-Type'];
+        delete reqConfig.headers['content-type'];
+        (reqConfig.headers as any)['Content-Type'] = undefined;
+        (reqConfig.headers as any)['content-type'] = undefined;
+      }
     }
     return reqConfig;
   },
@@ -61,12 +85,31 @@ apiClient.interceptors.request.use(
 apiClient.interceptors.response.use(
   (response) => response,
   async (error) => {
+    // Trích xuất thông điệp tiếng Việt cụ thể từ backend nếu có
+    const beMessage =
+      error.response?.data?.message ||
+      error.response?.data?.title ||
+      (typeof error.response?.data === 'string' ? error.response.data : null);
+    if (beMessage && typeof beMessage === 'string' && beMessage.trim()) {
+      error.message = beMessage.trim();
+    }
+
     if (error.response?.status === 401) {
-      // Hết phiên đăng nhập -> Xoá token
       await storageHelper.removeItem(config.storageKeys.accessToken);
       await storageHelper.removeItem(config.storageKeys.refreshToken);
       await storageHelper.removeItem(config.storageKeys.userData);
+      try {
+        const { useAuthStore } = await import('../stores/useAuthStore');
+        useAuthStore.setState({ token: null, user: null, isAuthenticated: false });
+      } catch {}
+    }
+    if (error.response?.status === 400) {
+      console.warn(
+        `[API 400] ${error.config?.method?.toUpperCase()} ${error.config?.baseURL || ''}${error.config?.url || ''}`,
+        error.response?.data
+      );
     }
     return Promise.reject(error);
   }
 );
+

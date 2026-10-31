@@ -17,13 +17,21 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { theme } from '../../constants/theme';
+import { HomeHeaderButton } from '../../components/navigation/HomeHeaderButton';
+import { formatPersonName } from '../../utils/formatPersonName';
 import {
   dependentDocumentApi,
   DependentItem,
   DependentDocumentRuleItem,
   getDocTypeLabel,
+  getFullFileUrl,
 } from '../../api/dependentDocumentApi';
+import {
+  DocumentViewerModal,
+  DocumentViewerItem,
+} from '../../components/common/DocumentViewerModal';
 import { RootStackParamList, RootNavigationProp } from '../../navigation/types';
+import { resolveProofDocumentsChecklist } from './proofDocumentsParams';
 
 type ProofDocumentsRouteProp = RouteProp<RootStackParamList, 'ProofDocuments'>;
 
@@ -228,12 +236,18 @@ export const ProofDocumentsScreen: React.FC = () => {
         type: string;
         blob?: Blob | File;
         uri?: string;
+        docId?: string;
+        docType?: string;
+        uploadedAt?: string;
+        isReadable?: boolean;
       }
     >
   >({});
 
   const [uploading, setUploading] = useState<boolean>(false);
   const [uploadedKeys, setUploadedKeys] = useState<Record<string, boolean>>({});
+  const [serverDocs, setServerDocs] = useState<any[]>([]);
+  const [previewDoc, setPreviewDoc] = useState<DocumentViewerItem | null>(null);
 
   // State cho Modal chọn nguồn ảnh/tệp thực tế
   const [pickerModalVisible, setPickerModalVisible] = useState<boolean>(false);
@@ -278,7 +292,27 @@ export const ProofDocumentsScreen: React.FC = () => {
   };
 
   // Cập nhật danh sách tài liệu động theo quy tắc từ Backend API
+  // NPT-07: ưu tiên requiredDocuments từ PATCH /group qua nav params
   useEffect(() => {
+    const fromPatch = resolveProofDocumentsChecklist({
+      requiredDocuments: route.params?.requiredDocuments,
+      fallbackDocTypes: [],
+    });
+    if (fromPatch.length > 0) {
+      const docs: LawDocItem[] = fromPatch.map((docType, idx) => {
+        const letter = String.fromCharCode(97 + idx);
+        const label = getDocTypeLabel(docType);
+        return {
+          key: `patch_${docType.toLowerCase()}_${idx}`,
+          code: letter,
+          docType,
+          title: `${letter}. ${label} (Bắt buộc)`,
+        };
+      });
+      setDynamicDocs(docs);
+      return;
+    }
+
     if (allRules.length === 0) return;
 
     const rel = (route.params?.dependentData as any)?.relationship;
@@ -329,7 +363,41 @@ export const ProofDocumentsScreen: React.FC = () => {
       });
       setDynamicDocs(docs);
     }
-  }, [allRules, selectedGroupIdx, route.params?.dependentData]);
+  }, [allRules, selectedGroupIdx, route.params?.dependentData, route.params?.requiredDocuments]);
+
+  // Tự động đồng bộ hóa tài liệu từ máy chủ (serverDocs) vào các ô giấy tờ (activeDocs)
+  useEffect(() => {
+    if (!serverDocs || serverDocs.length === 0) return;
+    const newUploadedKeys: Record<string, boolean> = {};
+    const newSelectedFiles: Record<string, any> = {};
+
+    activeDocs.forEach((docSpec) => {
+      const matchingDoc = serverDocs.find(
+        (doc: any) =>
+          (doc.docType || '').toUpperCase() === (docSpec.docType || '').toUpperCase() ||
+          (docSpec.docType === 'CITIZEN_ID' && doc.docType === 'CITIZEN_CARD') ||
+          (docSpec.docType === 'CITIZEN_CARD' && doc.docType === 'CITIZEN_ID') ||
+          (docSpec.docType === 'STUDENT_CARD' && doc.docType === 'STUDENT_DOCUMENT') ||
+          (docSpec.docType === 'STUDENT_DOCUMENT' && doc.docType === 'STUDENT_CARD')
+      );
+      if (matchingDoc) {
+        newUploadedKeys[docSpec.key] = true;
+        newSelectedFiles[docSpec.key] = {
+          name: (matchingDoc.fileUrl || '').split('/').pop() || docSpec.title,
+          sizeText: 'Đã lưu trên máy chủ',
+          type: matchingDoc.fileMimeType || 'image/jpeg',
+          uri: getFullFileUrl(matchingDoc.fileUrl),
+          docId: matchingDoc.docId,
+          docType: matchingDoc.docType,
+          uploadedAt: matchingDoc.uploadedAt,
+          isReadable: matchingDoc.isReadable,
+        };
+      }
+    });
+
+    setUploadedKeys((prev) => ({ ...prev, ...newUploadedKeys }));
+    setSelectedFiles((prev) => ({ ...prev, ...newSelectedFiles }));
+  }, [serverDocs, activeDocs]);
 
   const loadInitialData = async () => {
     try {
@@ -341,6 +409,18 @@ export const ProofDocumentsScreen: React.FC = () => {
       }
     } catch {
       // Fallback
+    }
+
+    const targetDepId = route.params?.dependentId || (route.params?.dependentData as any)?.id;
+    if (targetDepId) {
+      try {
+        const detail = await dependentDocumentApi.getDependentById(targetDepId);
+        if (detail && Array.isArray(detail.documents) && detail.documents.length > 0) {
+          setServerDocs(detail.documents);
+        }
+      } catch (err) {
+        console.warn('getDependentById in ProofDocumentsScreen error:', err);
+      }
     }
   };
 
@@ -487,112 +567,90 @@ export const ProofDocumentsScreen: React.FC = () => {
     }
   };
 
-  // 4. Chọn ảnh mẫu nhanh (tiện cho emulator khi chưa có ảnh thật trong máy)
-  const handlePickSampleFast = () => {
-    setPickerModalVisible(false);
-    if (!activePickingDoc) return;
-
-    const docKey = activePickingDoc.key;
-    const defaultName = activePickingDoc.docType;
-
-    setSelectedFiles((prev) => ({
-      ...prev,
-      [docKey]: {
-        name: `${defaultName.toLowerCase()}_${Date.now().toString().slice(-4)}.pdf`,
-        sizeText: '420 KB',
-        type: 'application/pdf',
-        uri: 'file:///sample/' + defaultName + '.pdf',
-        blob: Platform.OS === 'web' ? new Blob(['%PDF-1.4 sample content'], { type: 'application/pdf' }) : undefined,
-      },
-    }));
-  };
-
-  // Nút Quét thông minh (Smart scan theo Figma)
-  const handleSmartScan = async () => {
-    const newFiles = { ...selectedFiles };
-    let capturedPhotoUri: string | undefined = undefined;
-
-    if (Platform.OS !== 'web') {
-      // Trên thiết bị thật: mở camera chụp trực tiếp giấy tờ để nhận diện
-      try {
-        const permission = await ImagePicker.requestCameraPermissionsAsync();
-        if (permission.granted) {
-          const result = await ImagePicker.launchCameraAsync({
-            mediaTypes: ['images'],
-            quality: 0.9,
-          });
-
-          if (!result.canceled && result.assets && result.assets[0]) {
-            const asset = result.assets[0];
-            capturedPhotoUri = asset.uri;
-            const firstDoc = activeDocs[0];
-            newFiles[firstDoc.key] = {
-              name: `scan_smart_${firstDoc.docType.toLowerCase()}.jpg`,
-              sizeText: asset.fileSize ? `${Math.round(asset.fileSize / 1024)} KB` : '1.8 MB',
-              type: asset.mimeType || 'image/jpeg',
-              uri: asset.uri,
-            };
-          }
-        }
-      } catch (err) {
-        console.warn('Camera launch error:', err);
-      }
-    }
-
-    // Tự động chuẩn bị tài liệu quét thông minh vào các ô trống nếu chưa có
-    activeDocs.forEach((doc, idx) => {
-      if (!newFiles[doc.key]) {
-        newFiles[doc.key] = {
-          name: `scan_${doc.docType.toLowerCase()}_${Date.now().toString().slice(-4)}.jpg`,
-          sizeText: `${(1.2 + idx * 0.4).toFixed(1)} MB`,
-          type: 'image/jpeg',
-          blob: Platform.OS === 'web' ? new Blob(['smart_scan_image_data_pit_compliance'], { type: 'image/jpeg' }) : undefined,
-          uri: capturedPhotoUri || (Platform.OS === 'web' ? undefined : 'file:///scans/' + doc.docType + '.jpg'),
-        };
-      }
-    });
-    setSelectedFiles(newFiles);
-
-    // GỌI TRỰC TIẾP API BACKEND: POST /api/v1/dependents/{dependentId}/documents
+  // Lưu thông tin hồ sơ người phụ thuộc & giấy tờ minh chứng (thay thế Quét thông minh)
+  const handleSaveAndContinue = async () => {
     const activeDocKeys = activeDocs.map((d) => d.key);
-    const entriesToUpload = Object.entries(newFiles).filter(([k]) => activeDocKeys.includes(k));
+    const entriesToUpload = Object.entries(selectedFiles).filter(([k]) => activeDocKeys.includes(k));
 
     const dependentId =
       route.params?.dependentId ||
       (route.params?.dependentData as any)?.id ||
-      selectedDependent?.id ||
-      'c8d4e2a1-7b9f-4e3a-b8c1-123456789abc';
+      selectedDependent?.id;
+
+    if (!dependentId) {
+      Alert.alert('Chưa có hồ sơ', 'Không tìm thấy thông tin hồ sơ người phụ thuộc để lưu.');
+      return;
+    }
 
     try {
       setUploading(true);
-      let lastRes: any = null;
       let uploadCount = 0;
 
       for (const [key, fileObj] of entriesToUpload) {
         const docSpec = activeDocs.find((d) => d.key === key);
         const docType = docSpec?.docType || 'BIRTH_CERTIFICATE';
 
-        // Gọi API DependentDocument
+        // Gọi API DependentDocument uploadDocument
         const res = await dependentDocumentApi.uploadDocument(dependentId, docType, fileObj);
-        lastRes = res;
         uploadCount++;
         setUploadedKeys((prev) => ({ ...prev, [key]: true }));
+
+        if (res) {
+          setServerDocs((prev) => {
+            const filtered = prev.filter((d) => d.docType !== docType);
+            return [
+              ...filtered,
+              {
+                docId: res.docId,
+                docType: res.docType || docType,
+                fileUrl: res.fileUrl,
+                fileMimeType: res.fileMimeType || fileObj.type,
+                uploadedAt: res.uploadedAt || new Date().toISOString(),
+                isReadable: res.isReadable,
+              },
+            ];
+          });
+        }
       }
 
       setUploading(false);
 
-      const msg = lastRes?.isProfileComplete
-        ? `Quét thông minh và lưu trữ thành công ${uploadCount} chứng từ! Hồ sơ người phụ thuộc đã đầy đủ điều kiện giảm trừ gia cảnh.`
-        : `Quét thông minh hoàn tất! Đã lưu trữ ${uploadCount} chứng từ lên hệ thống quản lý thuế.`;
-
-      if (Platform.OS === 'web') {
-        window.alert(msg);
-      } else {
-        Alert.alert('Quét thông minh', msg);
+      const saved = route.params?.dependentData;
+      if (saved?.fullName && saved.relationship && saved.effectiveFromMonth) {
+        navigation.reset({
+          index: 1,
+          routes: [
+            { name: 'Home' },
+            {
+              name: 'DependentSaved',
+              params: {
+                fullName: saved.fullName,
+                relationship: saved.relationship,
+                groupCode: saved.groupCode,
+                groupId: saved.groupId,
+                effectiveFromMonth: saved.effectiveFromMonth,
+              },
+            },
+          ],
+        });
+        return;
       }
+
+      const msg = uploadCount > 0
+        ? `Đã lưu hồ sơ và tải lên thành công ${uploadCount} giấy tờ minh chứng!`
+        : 'Đã lưu thông tin hồ sơ người phụ thuộc thành công!';
+
+      Alert.alert('Thành công', msg, [
+        {
+          text: 'Về trang chủ',
+          onPress: () => {
+            navigation.reset({ index: 0, routes: [{ name: 'Home' }] });
+          },
+        },
+      ]);
     } catch (err: any) {
       setUploading(false);
-      Alert.alert('Lỗi tải lên chứng từ', err?.message || 'Không thể kết nối đến máy chủ.');
+      Alert.alert('Lỗi lưu giấy tờ minh chứng', err?.message || 'Không thể tải lên giấy tờ minh chứng. Vui lòng thử lại.');
     }
   };
 
@@ -606,7 +664,15 @@ export const ProofDocumentsScreen: React.FC = () => {
       return;
     }
 
-    const dependentId = selectedDependent?.id || 'c8d4e2a1-7b9f-4e3a-b8c1-123456789abc';
+    const dependentId =
+      route.params?.dependentId ||
+      (route.params?.dependentData as any)?.id ||
+      selectedDependent?.id;
+
+    if (!dependentId) {
+      Alert.alert('Chưa có hồ sơ', 'Không tìm thấy hồ sơ người phụ thuộc để tải lên.');
+      return;
+    }
 
     try {
       setUploading(true);
@@ -626,10 +692,13 @@ export const ProofDocumentsScreen: React.FC = () => {
         ? 'Tải lên thành công! Hồ sơ minh chứng người phụ thuộc đã đủ điều kiện giảm trừ gia cảnh.'
         : 'Tải lên thành công! Ảnh minh chứng đã được lưu trữ bảo mật trên hệ thống Tổng cục Thuế.';
 
+      const goHome = () => navigation.reset({ index: 0, routes: [{ name: 'Home' }] });
+
       if (Platform.OS === 'web') {
         window.alert(msg);
+        goHome();
       } else {
-        Alert.alert('Thành công', msg);
+        Alert.alert('Thành công', msg, [{ text: 'Về trang chủ', onPress: goHome }]);
       }
     } catch (err: any) {
       const errMsg = err.response?.data?.message || 'Không thể tải lên tệp. Vui lòng thử lại sau.';
@@ -653,7 +722,7 @@ export const ProofDocumentsScreen: React.FC = () => {
           <Ionicons name="arrow-back" size={26} color="#1A1A1A" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Ảnh minh chứng</Text>
-        <View style={{ width: 44 }} />
+        <View style={styles.homeSlot}><HomeHeaderButton /></View>
       </View>
 
       {/* Đã ẩn các tab nhóm khác theo yêu cầu - Chỉ hiển thị đúng nhóm người dùng đã chọn */}
@@ -663,7 +732,12 @@ export const ProofDocumentsScreen: React.FC = () => {
           <View style={styles.applicantBadge} testID="dependentInfoBanner">
             <Ionicons name="person-circle" size={22} color={theme.colors.primary} />
             <Text style={styles.applicantText} numberOfLines={1}>
-              Hồ sơ: <Text style={{ fontWeight: '700' }}>{route.params.dependentData.fullName}</Text> (CCCD: {route.params.dependentData.citizenId})
+              Hồ sơ: <Text style={{ fontWeight: '700' }}>{formatPersonName(route.params.dependentData.fullName)}</Text>{' '}
+              {route.params.dependentData.citizenId
+                ? `(CCCD: ${route.params.dependentData.citizenId})`
+                : route.params.dependentData.birthCertNumber
+                ? `(Số GKS: ${route.params.dependentData.birthCertNumber})`
+                : ''}
             </Text>
           </View>
         )}
@@ -698,51 +772,125 @@ export const ProofDocumentsScreen: React.FC = () => {
               </View>
 
               {/* Khung upload chữ nhật bo góc lớn theo đúng Figma */}
-              <TouchableOpacity
+              <View
                 style={[
                   styles.uploadBox,
                   selectedFile && styles.uploadBoxSelected,
                   isUploaded && styles.uploadBoxUploaded,
                 ]}
-                activeOpacity={0.75}
-                onPress={() => handleOpenDocPicker(docItem.key, docItem.title, docItem.docType)}
                 testID={`docUploadBox_${docItem.key}`}
               >
                 {selectedFile ? (
                   <View style={styles.selectedFileContent}>
-                    {selectedFile.uri && selectedFile.type.includes('image') ? (
-                      <Image
-                        source={{ uri: selectedFile.uri }}
-                        style={styles.thumbnailPreview}
-                        resizeMode="cover"
-                      />
+                    {selectedFile.uri && (selectedFile.type?.includes('image') || !selectedFile.type?.includes('pdf')) ? (
+                      <TouchableOpacity
+                        activeOpacity={0.85}
+                        onPress={() => {
+                          setPreviewDoc({
+                            uri: selectedFile.uri,
+                            title: docItem.title,
+                            docType: docItem.docType,
+                            fileName: selectedFile.name,
+                            uploadedAt: selectedFile.uploadedAt,
+                            isReadable: selectedFile.isReadable,
+                            mimeType: selectedFile.type,
+                          });
+                        }}
+                        style={styles.previewImageTouchable}
+                        accessibilityRole="button"
+                        accessibilityLabel="Phóng to xem ảnh minh chứng"
+                      >
+                        <Image
+                          source={{ uri: selectedFile.uri }}
+                          style={styles.thumbnailPreview}
+                          resizeMode="cover"
+                        />
+                        <View style={styles.zoomPromptBadge}>
+                          <Ionicons name="expand-outline" size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
+                          <Text style={styles.zoomPromptText}>Chạm để xem ảnh lớn</Text>
+                        </View>
+                      </TouchableOpacity>
                     ) : (
-                      <View style={styles.fileIconBadge}>
+                      <TouchableOpacity
+                        activeOpacity={0.85}
+                        onPress={() => {
+                          setPreviewDoc({
+                            uri: selectedFile.uri,
+                            title: docItem.title,
+                            docType: docItem.docType,
+                            fileName: selectedFile.name,
+                            uploadedAt: selectedFile.uploadedAt,
+                            isReadable: selectedFile.isReadable,
+                            mimeType: selectedFile.type,
+                          });
+                        }}
+                        style={styles.fileIconBadge}
+                        accessibilityRole="button"
+                        accessibilityLabel="Xem chi tiết tệp"
+                      >
                         <Ionicons
                           name={isUploaded ? 'checkmark-circle' : 'document-text'}
-                          size={32}
+                          size={40}
                           color={isUploaded ? theme.colors.success : theme.colors.primary}
                         />
-                      </View>
+                        <Text style={styles.viewPdfNotice}>Chạm để xem tệp</Text>
+                      </TouchableOpacity>
                     )}
+
                     <Text style={styles.selectedFileName} numberOfLines={1}>
                       {selectedFile.name}
                     </Text>
                     <Text style={styles.selectedFileSize}>
-                      {isUploaded ? '✓ Đã tải lên máy chủ' : `Kích thước: ${selectedFile.sizeText}`}
+                      {isUploaded ? '✓ Đã lưu trên máy chủ' : `Kích thước: ${selectedFile.sizeText}`}
                     </Text>
-                    <Text style={styles.repickText}>Bấm vào đây để đổi hoặc chụp lại ảnh</Text>
+
+                    {/* Hàng nút hành động: Xem ảnh lớn & Đổi ảnh */}
+                    <View style={styles.docActionButtonsRow}>
+                      <TouchableOpacity
+                        style={styles.previewDocBtn}
+                        onPress={() => {
+                          setPreviewDoc({
+                            uri: selectedFile.uri,
+                            title: docItem.title,
+                            docType: docItem.docType,
+                            fileName: selectedFile.name,
+                            uploadedAt: selectedFile.uploadedAt,
+                            isReadable: selectedFile.isReadable,
+                            mimeType: selectedFile.type,
+                          });
+                        }}
+                        accessibilityRole="button"
+                        accessibilityLabel="Xem ảnh phóng to"
+                      >
+                        <Ionicons name="eye-outline" size={16} color={theme.colors.primary} style={{ marginRight: 4 }} />
+                        <Text style={styles.previewDocBtnText}>Xem ảnh lớn</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.repickActionBtn}
+                        onPress={() => handleOpenDocPicker(docItem.key, docItem.title, docItem.docType)}
+                        accessibilityRole="button"
+                        accessibilityLabel="Đổi hoặc chụp lại ảnh"
+                      >
+                        <Ionicons name="camera-reverse-outline" size={16} color="#666666" style={{ marginRight: 4 }} />
+                        <Text style={styles.repickActionBtnText}>Đổi ảnh khác</Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
                 ) : (
-                  <View style={styles.emptyUploadContent}>
+                  <TouchableOpacity
+                    style={styles.emptyUploadContent}
+                    activeOpacity={0.75}
+                    onPress={() => handleOpenDocPicker(docItem.key, docItem.title, docItem.docType)}
+                  >
                     <View style={styles.uploadIconContainer}>
                       <Ionicons name="arrow-up" size={32} color="#8B1E1E" style={{ marginBottom: -4 }} />
                       <View style={styles.uploadTrayLine} />
                     </View>
                     <Text style={styles.emptyUploadHint}>Bấm để chụp hoặc tải ảnh minh chứng</Text>
-                  </View>
+                  </TouchableOpacity>
                 )}
-              </TouchableOpacity>
+              </View>
             </View>
           );
         })}
@@ -750,19 +898,22 @@ export const ProofDocumentsScreen: React.FC = () => {
         {/* Khoảng cách trước thanh nút bấm */}
         <View style={{ height: 20 }} />
 
-        {/* Nút Quét thông minh duy nhất theo đúng Figma (không có nút nộp hồ sơ) */}
+        {/* Nút Lưu thông tin & Hoàn tất (Bỏ quét thông minh do chưa có AI) */}
         <View style={styles.actionRow}>
           <TouchableOpacity
-            style={styles.smartScanBtn}
-            onPress={handleSmartScan}
+            style={styles.saveInfoBtn}
+            onPress={handleSaveAndContinue}
             activeOpacity={0.8}
             disabled={uploading}
-            testID="smartScanBtn"
+            testID="saveAndContinueBtn"
           >
             {uploading ? (
-              <ActivityIndicator size="small" color="#1A1A1A" />
+              <ActivityIndicator size="small" color="#FFFFFF" />
             ) : (
-              <Text style={styles.smartScanBtnText}>Quét thông minh</Text>
+              <>
+                <Ionicons name="checkmark-circle-outline" size={20} color="#FFFFFF" style={{ marginRight: 8 }} />
+                <Text style={styles.saveInfoBtnText}>Lưu thông tin hồ sơ</Text>
+              </>
             )}
           </TouchableOpacity>
         </View>
@@ -822,16 +973,7 @@ export const ProofDocumentsScreen: React.FC = () => {
               <Ionicons name="chevron-forward" size={18} color="#8E8E93" />
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.sheetOption} onPress={handlePickSampleFast}>
-              <View style={[styles.sheetIconBox, { backgroundColor: '#F3E5F5' }]}>
-                <Ionicons name="flash" size={22} color="#7B1FA2" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.sheetOptionTitle}>Dùng tệp mẫu test nhanh</Text>
-                <Text style={styles.sheetOptionDesc}>Dành cho giả lập khi không có ảnh thật</Text>
-              </View>
-              <Ionicons name="chevron-forward" size={18} color="#8E8E93" />
-            </TouchableOpacity>
+
 
             <TouchableOpacity
               style={styles.sheetCancelBtn}
@@ -893,11 +1035,28 @@ export const ProofDocumentsScreen: React.FC = () => {
           </View>
         </TouchableOpacity>
       </Modal>
+
+      {/* Modal Xem ảnh / tài liệu minh chứng phóng to full-screen */}
+      <DocumentViewerModal
+        visible={!!previewDoc}
+        onClose={() => setPreviewDoc(null)}
+        document={previewDoc}
+        onRePick={() => {
+          if (previewDoc?.docType) {
+            const targetDoc = activeDocs.find((d) => d.docType === previewDoc.docType);
+            if (targetDoc) {
+              handleOpenDocPicker(targetDoc.key, targetDoc.title, targetDoc.docType);
+            }
+          }
+        }}
+      />
     </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
+  // Ô phải header: nút về Trang chủ, giữ độ rộng cũ để tiêu đề vẫn ở giữa
+  homeSlot: { width: 44, alignItems: 'flex-end', justifyContent: 'center' },
   safeArea: {
     flex: 1,
     backgroundColor: '#FFFFFF',
@@ -993,7 +1152,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   uploadBox: {
-    height: 150,
+    minHeight: 140,
     backgroundColor: '#F7F7F8',
     borderRadius: 18,
     borderWidth: 1.5,
@@ -1001,7 +1160,8 @@ const styles = StyleSheet.create({
     borderStyle: 'solid',
     alignItems: 'center',
     justifyContent: 'center',
-    overflow: 'hidden',
+    paddingVertical: 14,
+    paddingHorizontal: 12,
   },
   uploadBoxSelected: {
     borderColor: theme.colors.primary,
@@ -1032,18 +1192,50 @@ const styles = StyleSheet.create({
     color: '#8E8E93',
   },
   selectedFileContent: {
+    width: '100%',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 20,
+  },
+  previewImageTouchable: {
+    width: 220,
+    height: 130,
+    borderRadius: 10,
+    overflow: 'hidden',
+    position: 'relative',
+    backgroundColor: '#F0EAE1',
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#E2DBD0',
   },
   thumbnailPreview: {
-    width: 50,
-    height: 50,
-    borderRadius: 8,
-    marginBottom: 6,
+    width: '100%',
+    height: '100%',
+  },
+  zoomPromptBadge: {
+    position: 'absolute',
+    bottom: 6,
+    right: 6,
+    backgroundColor: 'rgba(0, 0, 0, 0.65)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  zoomPromptText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '600',
   },
   fileIconBadge: {
-    marginBottom: 6,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  viewPdfNotice: {
+    fontSize: 11,
+    color: theme.colors.primary,
+    marginTop: 4,
+    fontWeight: '600',
   },
   selectedFileName: {
     fontSize: 14,
@@ -1055,12 +1247,42 @@ const styles = StyleSheet.create({
   selectedFileSize: {
     fontSize: 12,
     color: '#666666',
-    marginBottom: 6,
+    marginBottom: 8,
   },
-  repickText: {
-    fontSize: 11,
+  docActionButtonsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    marginTop: 4,
+  },
+  previewDocBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FAF0E8',
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E8D8CA',
+  },
+  previewDocBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
     color: theme.colors.primary,
-    textDecorationLine: 'underline',
+  },
+  repickActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0F0F2',
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+  },
+  repickActionBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#555555',
   },
   actionRow: {
     marginTop: 12,
@@ -1068,18 +1290,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  smartScanBtn: {
-    height: 46,
-    paddingHorizontal: 32,
-    backgroundColor: '#E5E5EA',
+  saveInfoBtn: {
+    height: 48,
+    paddingHorizontal: 28,
+    backgroundColor: theme.colors.primary,
     borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
+    flexDirection: 'row',
+    minWidth: 220,
+    ...theme.shadows.button,
   },
-  smartScanBtnText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#1A1A1A',
+  saveInfoBtnText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
   // Styles Modal đọc chi tiết quy định luật (chuẩn Frame 262, 263, 264)
   lawModalOverlay: {
@@ -1095,11 +1320,15 @@ const styles = StyleSheet.create({
     backgroundColor: '#F5F5F7',
     borderRadius: 18,
     padding: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 10,
-    elevation: 6,
+    ...(Platform.OS === 'web'
+      ? { boxShadow: '0px 4px 10px rgba(0, 0, 0, 0.2)' }
+      : {
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.2,
+          shadowRadius: 10,
+          elevation: 6,
+        }),
   },
   lawModalHeader: {
     flexDirection: 'row',

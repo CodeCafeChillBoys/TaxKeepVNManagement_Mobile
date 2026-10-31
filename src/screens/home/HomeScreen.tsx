@@ -1,60 +1,205 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Alert,
   Modal,
   FlatList,
   RefreshControl,
   ActivityIndicator,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
+import { fonts } from '../../constants/fonts';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { RootNavigationProp } from '../../navigation/types';
-import { dependentDocumentApi, AgeReminderItemDto } from '../../api/dependentDocumentApi';
+import {
+  dependentDocumentApi,
+  AgeReminderItemDto,
+  DependentItem,
+} from '../../api/dependentDocumentApi';
+import { dependentLifecycleApi } from '../../api/dependentLifecycleApi';
 import { notificationApi, NotificationItem } from '../../api/notificationApi';
+import { taxSettlementApi } from '../../api/taxSettlementApi';
+import type { TaxDeadlineCountdown } from '../../types/taxSettlement';
+import { deadlineDisplay } from './homeDeadlineCountdown';
+import { profileApi } from '../../api/profileApi';
+import {
+  buildHomeReminderChangeGroupPlan,
+  runHomeReminderChangeGroup,
+  type HomeReminderConfirmPlan,
+} from './homeReminderChangeGroup';
+import {
+  buildPendingUploadAgeReminders,
+  isReminderAwaitingUploadOnly,
+  mergeAgeTransitionReminders,
+  proofNavFromAgeReminder,
+} from './homeAgeReminderBanner';
+import { Dialog } from '../../components/common/Dialog';
+import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
+import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
+import { MainTabBar } from '../../components/navigation/MainTabBar';
+import { humanizeGroupCodes } from '../dependent/dependentGroupUtils';
+import { formatPersonName } from '../../utils/formatPersonName';
+import { consultationApi } from '../../api/consultationApi';
+import type { UpcomingMeetingReminderDto } from '../../types/consultation';
+import { formatVietnameseDate, formatTimeRange } from '../../types/consultation';
+
+const DEADLINE_COLORS = {
+  normal: theme.colors.primaryDark,
+  warning: theme.colors.warning,
+  danger: theme.colors.error,
+};
+
+type TodoItem = {
+  id: string;
+  title: string;
+  subtitle: string;
+  kind: 'age' | 'incomplete';
+  reminder?: AgeReminderItemDto;
+  dependent?: DependentItem;
+};
+
+function initialFromName(name?: string | null): string {
+  const trimmed = (name || '').trim();
+  if (!trimmed) return '?';
+  const parts = trimmed.split(/\s+/);
+  return (parts[parts.length - 1] || '?').charAt(0).toUpperCase();
+}
 
 export const HomeScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
-  const { user, logout } = useAuthStore();
+  const { user } = useAuthStore();
+  const userRole = (user?.role || '').toLowerCase();
+  const isExpert = userRole === 'expert' || userRole.includes('expert');
 
-  // Nhắc nhở chuyển nhóm tuổi NPT: GET /api/v1/dependents/reminders/age-transitions
   const [reminders, setReminders] = useState<AgeReminderItemDto[]>([]);
+  const [dependents, setDependents] = useState<DependentItem[]>([]);
+  const [reminderPatching, setReminderPatching] = useState(false);
+  const [changeGroupConfirm, setChangeGroupConfirm] =
+    useState<HomeReminderConfirmPlan | null>(null);
+  const [infoDialog, setInfoDialog] = useState<{
+    title: string;
+    message: string;
+  } | null>(null);
 
-  // Thông báo hệ thống: GET /api/v1/notifications & PATCH /api/v1/notifications/{id}/read
   const [unreadCount, setUnreadCount] = useState<number>(0);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [notifModalVisible, setNotifModalVisible] = useState<boolean>(false);
   const [notifTab, setNotifTab] = useState<'ALL' | 'UNREAD'>('ALL');
   const [loadingNotifs, setLoadingNotifs] = useState<boolean>(false);
   const [refreshingNotifs, setRefreshingNotifs] = useState<boolean>(false);
+  const [deadline, setDeadline] = useState<TaxDeadlineCountdown | null>(null);
+  const [promptAnswered, setPromptAnswered] = useState(false);
+  const [upcomingMeeting, setUpcomingMeeting] = useState<UpcomingMeetingReminderDto | null>(null);
+  const [joiningMeeting, setJoiningMeeting] = useState<boolean>(false);
 
-  // Tải dữ liệu nhắc nhở và thông báo khi màn hình hiển thị
   const fetchDashboardData = useCallback(async () => {
+    // Tách riêng: lỗi đếm ngược không làm hỏng phần nhắc NPT / thông báo
+    taxSettlementApi
+      .getDeadlineCountdown()
+      .then(setDeadline)
+      .catch((err) => console.warn('HomeScreen deadline countdown error:', err));
     try {
-      // 1. Gọi API nhắc nhở chuyển nhóm tuổi NPT (Điều 4.1.a & Điều 4.1.đ TT 111/2013/TT-BTC)
-      const remindersData = await dependentDocumentApi.getAgeTransitionReminders();
-      setReminders(remindersData);
+      const [remindersData, deps] = await Promise.all([
+        dependentDocumentApi.getAgeTransitionReminders(),
+        dependentDocumentApi.getDependents({ size: 50 }),
+      ]);
+      const pendingUpload = buildPendingUploadAgeReminders(deps);
+      setReminders(mergeAgeTransitionReminders(remindersData, pendingUpload));
+      setDependents(deps);
 
-      // 2. Lấy số lượng thông báo chưa đọc hiển thị badge
       const count = await notificationApi.getUnreadCount();
       setUnreadCount(count);
+
+      notificationApi
+        .getNotifications({ size: 20 })
+        .then((notifData) => {
+          if (notifData?.items) {
+            setNotifications(notifData.items);
+          }
+        })
+        .catch(() => {});
+
+      // Nhắc nhở ca họp trực tuyến sắp diễn ra
+      consultationApi
+        .getUpcomingMeetingReminder()
+        .then((reminder) => {
+          setUpcomingMeeting(reminder?.hasUpcomingMeeting ? reminder : null);
+        })
+        .catch(() => {
+          setUpcomingMeeting(null);
+        });
+
+      // Đồng bộ thông tin vai trò người dùng (nếu vừa được duyệt chuyên gia)
+      profileApi.getProfile().then((prof) => {
+        if (prof?.userRole && user && user.role !== prof.userRole) {
+          useAuthStore.setState({
+            user: { ...user, role: prof.userRole },
+          });
+        }
+      }).catch(() => {});
     } catch (err) {
       console.warn('HomeScreen fetchDashboardData error:', err);
     }
-  }, []);
+  }, [user]);
 
   useFocusEffect(
     useCallback(() => {
       fetchDashboardData();
     }, [fetchDashboardData])
   );
+
+  const displayName = formatPersonName(user?.fullName) || 'Người nộp thuế';
+  const deadlineView = deadline ? deadlineDisplay(deadline) : null;
+  const promptTaxYear = deadline?.shouldPromptSettlementCheck ? deadline.promptTaxYear : null;
+
+  const answerSettlementPrompt = (response: 'YES' | 'NO' | 'DISMISSED') => {
+    if (!promptTaxYear) return;
+    setPromptAnswered(true);
+    taxSettlementApi
+      .acknowledgeSettlementPrompt(promptTaxYear, response)
+      .catch((err) => console.warn('HomeScreen acknowledge prompt error:', err));
+    if (response === 'NO') navigation.navigate('SettlementStart');
+  };
+
+  const todoItems = useMemo((): TodoItem[] => {
+    const items: TodoItem[] = [];
+    const reminderIds = new Set(reminders.map((r) => r.dependentId));
+
+    for (const r of reminders) {
+      const name = formatPersonName(r.fullName);
+      const isSoon = r.transitionStatus === 'TURNING_18_SOON';
+      items.push({
+        id: `age-${r.dependentId}`,
+        title: isSoon
+          ? `${name} sắp tròn 18 tuổi`
+          : `${name} đã tròn 18 tuổi`,
+        subtitle: 'Nộp giấy tờ sinh viên để không bị tạm dừng giảm trừ',
+        kind: 'age',
+        reminder: r,
+      });
+    }
+
+    for (const dep of dependents) {
+      if (dep.isProfileComplete || reminderIds.has(dep.id)) continue;
+      const name = formatPersonName(dep.fullName);
+      items.push({
+        id: `inc-${dep.id}`,
+        title: `${name} thiếu giấy tờ minh chứng`,
+        subtitle: 'Hồ sơ chưa được tính giảm trừ',
+        kind: 'incomplete',
+        dependent: dep,
+      });
+    }
+
+    return items;
+  }, [reminders, dependents]);
 
   const handleOpenNotifications = async () => {
     setNotifModalVisible(true);
@@ -90,7 +235,9 @@ export const HomeScreen: React.FC = () => {
     const success = await notificationApi.markAsRead(item.notificationId);
     if (success) {
       setNotifications((prev) =>
-        prev.map((n) => (n.notificationId === item.notificationId ? { ...n, isRead: true } : n))
+        prev.map((n) =>
+          n.notificationId === item.notificationId ? { ...n, isRead: true } : n
+        )
       );
       setUnreadCount((prev) => Math.max(0, prev - 1));
     }
@@ -106,10 +253,86 @@ export const HomeScreen: React.FC = () => {
     await Promise.all(unreadItems.map((n) => notificationApi.markAsRead(n.notificationId)));
   };
 
+  const extractConsultationBookingTarget = useCallback(
+    (
+      item: NotificationItem
+    ): { bookingId?: string; isExpertView: boolean; isConsultationNotif: boolean } => {
+      const url = item.targetActionUrl || '';
+      const type = item.notificationType || '';
+      const expertMatch = url.match(/\/expert\/bookings\/([0-9a-fA-F-]{36})/i);
+      if (expertMatch?.[1]) {
+        return { bookingId: expertMatch[1], isExpertView: true, isConsultationNotif: true };
+      }
+      const userMatch = url.match(/\/(?:consultation\/bookings|consultations|bookings)\/([0-9a-fA-F-]{36})/i);
+      const isExpertType =
+        type === 'USER_NO_SHOW_EXPERT_NOTIFIED' || type === 'EXPERT_NO_SHOW_PENALTY';
+      if (userMatch?.[1]) {
+        return {
+          bookingId: userMatch[1],
+          isExpertView: isExpertType,
+          isConsultationNotif: true,
+        };
+      }
+      const isConsultationNotif =
+        [
+          'USER_NO_SHOW',
+          'USER_NO_SHOW_CLOSED',
+          'USER_NO_SHOW_EXPERT_NOTIFIED',
+          'EXPERT_NO_SHOW_REFUND',
+          'EXPERT_NO_SHOW_REFUNDED',
+          'EXPERT_NO_SHOW_PENALTY',
+          'CONSULTATION_COMPLETED',
+          'CONSULTATION_BOOKING',
+          'DISPUTE_RESOLVED',
+        ].includes(type) ||
+        url.includes('/consultation') ||
+        url.includes('/bookings');
+
+      return {
+        bookingId: undefined,
+        isExpertView: isExpertType,
+        isConsultationNotif,
+      };
+    },
+    []
+  );
+
+  const unreadNoShowNotifications = useMemo(
+    () =>
+      notifications.filter(
+        (n) =>
+          !n.isRead &&
+          [
+            'USER_NO_SHOW',
+            'USER_NO_SHOW_CLOSED',
+            'USER_NO_SHOW_EXPERT_NOTIFIED',
+            'EXPERT_NO_SHOW_REFUND',
+            'EXPERT_NO_SHOW_REFUNDED',
+            'EXPERT_NO_SHOW_PENALTY',
+          ].includes(n.notificationType)
+      ),
+    [notifications]
+  );
+
   const handleNotificationPress = async (item: NotificationItem) => {
     await handleMarkAsRead(item);
 
-    // Chuyển hướng thông minh theo ngữ cảnh của thông báo
+    const consultationTarget = extractConsultationBookingTarget(item);
+    if (consultationTarget.isConsultationNotif) {
+      setNotifModalVisible(false);
+      if (consultationTarget.bookingId) {
+        navigation.navigate('BookingDetail', {
+          bookingId: consultationTarget.bookingId,
+          isExpertView: consultationTarget.isExpertView,
+        });
+      } else if (consultationTarget.isExpertView) {
+        navigation.navigate('ExpertBookings');
+      } else {
+        navigation.navigate('MyBookings');
+      }
+      return;
+    }
+
     if (
       item.notificationType === 'AGE_TRANSITION_ALERT' ||
       item.title.toLowerCase().includes('18 tuổi') ||
@@ -117,7 +340,7 @@ export const HomeScreen: React.FC = () => {
     ) {
       setNotifModalVisible(false);
       navigation.navigate('ProofDocuments', {
-        groupIndex: 1, // Nhóm 2: Con từ 18 tuổi trở lên đang theo học (CHILD_STUDYING)
+        groupIndex: 1,
       });
     } else if (item.notificationType === 'DEPENDENT_REGISTRATION') {
       setNotifModalVisible(false);
@@ -125,283 +348,579 @@ export const HomeScreen: React.FC = () => {
     }
   };
 
-  const handleLogout = () => {
-    Alert.alert('Đăng xuất', 'Bạn có chắc chắn muốn đăng xuất khỏi ứng dụng?', [
-      { text: 'Hủy', style: 'cancel' },
-      {
-        text: 'Đăng xuất',
-        style: 'destructive',
-        onPress: async () => {
-          await logout();
-          navigation.replace('Login');
-        },
-      },
-    ]);
+  const handleReminderUploadPress = (item: AgeReminderItemDto) => {
+    if (reminderPatching) return;
+    if (isReminderAwaitingUploadOnly(item)) {
+      const nav = proofNavFromAgeReminder(item);
+      navigation.navigate(nav.screen, nav.params);
+      return;
+    }
+    setChangeGroupConfirm(
+      buildHomeReminderChangeGroupPlan({
+        dependentId: item.dependentId,
+        fullName: item.fullName,
+        recommendedGroup: item.recommendedGroup || 'CHILD_OVER_18_STUDYING',
+      })
+    );
+  };
+
+  const handleConfirmReminderChangeGroup = async () => {
+    if (!changeGroupConfirm || reminderPatching) return;
+    const plan = changeGroupConfirm;
+    setChangeGroupConfirm(null);
+    setReminderPatching(true);
+    try {
+      const result = await runHomeReminderChangeGroup({
+        dependentId: plan.dependentId,
+        newGroup: plan.newGroup,
+        updateDependentGroup: dependentLifecycleApi.updateDependentGroup,
+      });
+      if (!result.ok) {
+        setInfoDialog({ title: 'Không thể chuyển nhóm', message: result.message });
+        return;
+      }
+      navigation.navigate(result.navigation.screen, result.navigation.params);
+    } finally {
+      setReminderPatching(false);
+    }
+  };
+
+  const handleTodoPress = (item: TodoItem) => {
+    if (item.kind === 'age' && item.reminder) {
+      handleReminderUploadPress(item.reminder);
+      return;
+    }
+    if (item.dependent) {
+      navigation.navigate('ProofDocuments', {
+        dependentId: item.dependent.id,
+        groupIndex: 0,
+      });
+    }
+  };
+
+  const handleJoinUpcomingMeeting = async () => {
+    if (!upcomingMeeting?.bookingId) return;
+    setJoiningMeeting(true);
+    try {
+      const res = await consultationApi.joinConsultation(upcomingMeeting.bookingId);
+      if (res?.roomUrl) {
+        await Linking.openURL(res.roomUrl);
+      } else if (upcomingMeeting.roomUrl) {
+        await Linking.openURL(upcomingMeeting.roomUrl);
+      } else {
+        navigation.navigate('BookingDetail', { bookingId: upcomingMeeting.bookingId });
+      }
+    } catch (err: any) {
+      if (upcomingMeeting.roomUrl) {
+        await Linking.openURL(upcomingMeeting.roomUrl).catch(() => {});
+      } else {
+        navigation.navigate('BookingDetail', { bookingId: upcomingMeeting.bookingId });
+      }
+    } finally {
+      setJoiningMeeting(false);
+    }
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      {/* Top Bar theo Figma iPhone 17 - 16 */}
+    <SafeAreaView style={styles.safeArea} edges={['top']}>
+      <DrumPatternBackdrop variant="soft" />
+
       <View style={styles.header}>
         <TouchableOpacity
-          style={styles.userInfoRow}
+          style={styles.avatar}
           onPress={() => navigation.navigate('Profile')}
           activeOpacity={0.8}
+          accessibilityLabel="Hồ sơ cá nhân"
         >
-          <View style={styles.avatar}>
-            <Ionicons name="person" size={24} color="#FFFFFF" />
-          </View>
-          <View>
-            <Text style={styles.welcomeText}>Xin chào,</Text>
-            <Text style={styles.userName}>{user?.fullName || 'Người nộp thuế'}</Text>
-          </View>
+          <Text style={styles.avatarLetter}>{initialFromName(displayName)}</Text>
         </TouchableOpacity>
 
-        <View style={styles.headerActions}>
-          {/* Chuông thông báo có Badge số lượng chưa đọc */}
-          <TouchableOpacity
-            style={styles.iconBtn}
-            onPress={handleOpenNotifications}
-            testID="notificationBellBtn"
-            accessibilityLabel="Thông báo hệ thống"
-          >
-            <Ionicons name="notifications-outline" size={22} color={theme.colors.textPrimary} />
-            {unreadCount > 0 && (
-              <View style={styles.unreadBadge}>
-                <Text style={styles.unreadBadgeText}>
-                  {unreadCount > 9 ? '9+' : unreadCount}
-                </Text>
-              </View>
-            )}
-          </TouchableOpacity>
-
-          <TouchableOpacity style={[styles.iconBtn, { marginLeft: 8 }]} onPress={handleLogout}>
-            <Ionicons name="log-out-outline" size={22} color={theme.colors.error} />
-          </TouchableOpacity>
+        <View style={styles.headerCenter}>
+          <Text style={styles.welcomeText}>Xin chào</Text>
+          <Text style={styles.userName} numberOfLines={1}>
+            {displayName}
+          </Text>
         </View>
+
+        <TouchableOpacity
+          style={styles.bellBtn}
+          onPress={handleOpenNotifications}
+          testID="notificationBellBtn"
+          accessibilityLabel="Thông báo hệ thống"
+        >
+          <Ionicons name="notifications-outline" size={24} color={theme.colors.textPrimary} />
+          {unreadCount > 0 ? <View style={styles.unreadDotHeader} /> : null}
+        </TouchableOpacity>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* Banner Country & Pride theo Figma */}
-        <View style={styles.heroBanner}>
-          <View style={styles.bannerTextCol}>
-            <Text style={styles.bannerTag}>PHÁP LUẬT THUẾ TNCN</Text>
-            <Text style={styles.bannerTitle}>TaxKeep VN</Text>
-            <Text style={styles.bannerSubtitle}>
-              Hệ thống kê khai và giảm trừ gia cảnh thông minh
+      <View style={styles.flex}>
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.deductionBlock} testID="homeDeadlineCountdown">
+            <Text style={styles.deductionLabel}>Hạn nộp quyết toán thuế TNCN</Text>
+            <Text
+              style={[styles.deductionAmount, deadlineView && { color: DEADLINE_COLORS[deadlineView.tone] }]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.6}
+              testID="homeDeadlineDays"
+            >
+              {deadlineView?.headline ?? '—'}
+            </Text>
+            {deadlineView ? (
+              <Text style={styles.deductionMeta} numberOfLines={2}>
+                {deadlineView.meta}
+              </Text>
+            ) : null}
+          </View>
+
+          <GoldDoubleRule style={styles.rule} />
+
+          <View style={styles.todoHeader}>
+            <Text style={styles.todoTitle}>Cần xử lý</Text>
+            <Text style={styles.todoCount}>
+              {todoItems.length} việc
             </Text>
           </View>
-          <View style={styles.bannerBadge}>
-            <Ionicons name="shield-checkmark" size={36} color={theme.colors.gold} />
-          </View>
-        </View>
 
-        {/* Banner Cảnh báo chuyển nhóm tuổi NPT (Điều 4.1.đ TT111 / GET /api/v1/dependents/reminders/age-transitions) */}
-        {reminders.length > 0 && (
-          <View style={styles.reminderBanner} testID="ageTransitionReminderBanner">
-            <View style={styles.reminderHeader}>
-              <View style={styles.reminderIconCircle}>
-                <Ionicons name="alert-circle" size={24} color={theme.colors.warning} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <View style={styles.reminderTitleRow}>
-                  <Text style={styles.reminderTitle}>Cảnh báo chuyển nhóm tuổi NPT</Text>
-                  <View style={styles.statusPill}>
-                    <Text style={styles.statusPillText}>
-                      {reminders[0].transitionStatus === 'TURNING_18_SOON'
-                        ? `Còn ${reminders[0].daysRemaining} ngày`
-                        : 'Đã tròn 18 tuổi'}
-                    </Text>
-                  </View>
-                </View>
-                <Text style={styles.reminderDesc}>{reminders[0].message}</Text>
-              </View>
+          {todoItems.length === 0 ? (
+            <View style={styles.todoEmpty}>
+              <Text style={styles.todoEmptyText}>Không có việc cần xử lý lúc này.</Text>
             </View>
-
-            <TouchableOpacity
-              style={styles.reminderActionBtn}
-              activeOpacity={0.8}
-              onPress={() =>
-                navigation.navigate('ProofDocuments', {
-                  groupIndex: 1, // Nhóm 2: Con từ 18 tuổi trở lên đang theo học (CHILD_STUDYING)
-                  dependentId: reminders[0].dependentId,
-                })
-              }
-              testID="btnUploadStudentCardReminder"
-              accessibilityRole="button"
-              accessibilityLabel="Bổ sung hồ sơ sinh viên ngay"
-            >
-              <Text style={styles.reminderActionBtnText}>Bổ sung hồ sơ sinh viên ngay</Text>
-              <Ionicons name="arrow-forward" size={16} color="#FFFFFF" />
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {/* Thanh tìm kiếm */}
-        <View style={styles.searchBar}>
-          <Ionicons name="search-outline" size={20} color={theme.colors.textSecondary} />
-          <Text style={styles.searchPlaceholder}>Tìm kiếm quy định luật, hồ sơ...</Text>
-        </View>
-
-        {/* Mục Tiện ích */}
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Tiện ích nổi bật</Text>
-          <Text style={styles.sectionMore}>Xem tất cả</Text>
-        </View>
-
-        <View style={styles.gridContainer}>
-          {/* Nút vào màn Đơn đăng ký nộp thuế (iPhone 17 - 13) */}
-          <TouchableOpacity
-            style={styles.gridCardHighlight}
-            activeOpacity={0.8}
-            onPress={() => navigation.navigate('TaxRegistration')}
-            testID="homeTaxRegistrationCard"
-            accessibilityRole="button"
-            accessibilityLabel="Đơn đăng kí nộp thuế"
-          >
-            <View style={styles.gridIconCircleHighlight}>
-              <Ionicons name="document-text" size={24} color="#FFFFFF" />
-            </View>
-            <Text style={styles.gridTitleHighlight}>Đơn đăng kí nộp thuế</Text>
-            <Text style={styles.gridSubtitleHighlight}>Khai người phụ thuộc theo luật</Text>
-          </TouchableOpacity>
-
-          {/* Tiện ích 2 */}
-          <TouchableOpacity
-            style={styles.gridCard}
-            onPress={() => navigation.navigate('LawConditions')}
-            accessibilityRole="button"
-            accessibilityLabel="Điều kiện luật 5 nhóm giảm trừ"
-            testID="homeLawConditionsCard"
-          >
-            <View style={styles.gridIconCircle}>
-              <Ionicons name="book-outline" size={22} color={theme.colors.primary} />
-            </View>
-            <Text style={styles.gridTitle}>Điều kiện luật</Text>
-            <Text style={styles.gridSubtitle}>5 nhóm giảm trừ</Text>
-          </TouchableOpacity>
-
-          {/* Tiện ích 3 */}
-          <TouchableOpacity
-            style={styles.gridCard}
-            onPress={() => Alert.alert('Quét CCCD', 'Component quét camera căn cước công dân (1.1.T4).')}
-          >
-            <View style={styles.gridIconCircle}>
-              <Ionicons name="scan-outline" size={22} color={theme.colors.primary} />
-            </View>
-            <Text style={styles.gridTitle}>Quét căn cước</Text>
-            <Text style={styles.gridSubtitle}>Nhận diện tự động</Text>
-          </TouchableOpacity>
-
-          {/* Tiện ích 4: Hồ sơ cá nhân (Task 1.3.T3) */}
-          <TouchableOpacity
-            style={styles.gridCard}
-            onPress={() => navigation.navigate('Profile')}
-            accessibilityRole="button"
-            accessibilityLabel="Hồ sơ cá nhân"
-            testID="homeProfileCard"
-          >
-            <View style={styles.gridIconCircle}>
-              <Ionicons name="person-circle-outline" size={22} color={theme.colors.primary} />
-            </View>
-            <Text style={styles.gridTitle}>Hồ sơ cá nhân</Text>
-            <Text style={styles.gridSubtitle}>Xem và chỉnh sửa</Text>
-          </TouchableOpacity>
-
-          {/* Tiện ích 5: Nơi chi trả thu nhập */}
-          <TouchableOpacity
-            style={styles.gridCard}
-            onPress={() => navigation.navigate('IncomeSourceList')}
-            accessibilityRole="button"
-            accessibilityLabel="Nơi chi trả thu nhập"
-            testID="homeIncomeSourceCard"
-          >
-            <View style={styles.gridIconCircle}>
-              <Ionicons name="business-outline" size={22} color={theme.colors.primary} />
-            </View>
-            <Text style={styles.gridTitle}>Nơi chi trả</Text>
-            <Text style={styles.gridSubtitle}>Nguồn thu nhập</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Thông tin tài khoản hiện tại */}
-        <View style={styles.accountCard}>
-          <Text style={styles.accountCardTitle}>Thông tin xác thực phiên làm việc</Text>
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Số CCCD:</Text>
-            <Text style={styles.infoVal}>{user?.citizenId || 'Chưa cập nhật'}</Text>
-          </View>
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Email:</Text>
-            <Text style={styles.infoVal}>{user?.email || 'Chưa cập nhật'}</Text>
-          </View>
-          <View style={styles.infoRow}>
-            <Text style={styles.infoLabel}>Trạng thái:</Text>
-            <Text style={[styles.infoVal, { color: theme.colors.success }]}>✓ Đang hoạt động</Text>
-          </View>
-        </View>
-      </ScrollView>
-
-      {/* Modal Danh sách thông báo: GET /api/v1/notifications & PATCH /api/v1/notifications/{id}/read */}
-      <Modal
-        visible={notifModalVisible}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setNotifModalVisible(false)}
-      >
-        <SafeAreaView style={styles.modalContainer}>
-          {/* Modal Header */}
-          <View style={styles.modalHeader}>
-            <View style={styles.modalHeaderTitleRow}>
-              <Text style={styles.modalTitle}>Thông báo hệ thống</Text>
-              {unreadCount > 0 && (
-                <View style={styles.modalBadge}>
-                  <Text style={styles.modalBadgeText}>{unreadCount} mới</Text>
-                </View>
-              )}
-            </View>
-            <View style={styles.modalHeaderActions}>
-              {unreadCount > 0 && (
-                <TouchableOpacity onPress={handleMarkAllAsRead} style={styles.markAllBtn}>
-                  <Text style={styles.markAllBtnText}>Đã đọc tất cả</Text>
-                </TouchableOpacity>
-              )}
+          ) : (
+            todoItems.map((item, index) => (
               <TouchableOpacity
-                onPress={() => setNotifModalVisible(false)}
-                style={styles.closeModalBtn}
-                accessibilityLabel="Đóng"
+                key={item.id}
+                style={styles.todoRow}
+                activeOpacity={0.7}
+                onPress={() => handleTodoPress(item)}
+                disabled={reminderPatching}
+                testID={
+                  item.kind === 'age' ? 'btnUploadStudentCardReminder' : `homeTodo_${item.id}`
+                }
+                accessibilityRole="button"
               >
-                <Ionicons name="close" size={24} color={theme.colors.textPrimary} />
+                <Text style={styles.todoIndex}>
+                  {String(index + 1).padStart(2, '0')}
+                </Text>
+                <View style={styles.todoBody}>
+                  <Text style={styles.todoItemTitle}>{item.title}</Text>
+                  <Text style={styles.todoItemSubtitle}>{item.subtitle}</Text>
+                </View>
+                {reminderPatching && item.kind === 'age' ? (
+                  <ActivityIndicator size="small" color={theme.colors.gold} />
+                ) : (
+                  <Ionicons name="chevron-forward" size={16} color="#999999" />
+                )}
+              </TouchableOpacity>
+            ))
+          )}
+
+          {/* ── BANNER CẢNH BÁO CA TƯ VẤN ĐÓNG DO VẮNG MẶT (NO-SHOW) CHƯA ĐỌC ── */}
+          {unreadNoShowNotifications.map((notif) => {
+            const isUserNoShowForCustomer =
+              notif.notificationType === 'USER_NO_SHOW' ||
+              notif.notificationType === 'USER_NO_SHOW_CLOSED';
+            const isExpertProtected = notif.notificationType === 'USER_NO_SHOW_EXPERT_NOTIFIED';
+            return (
+              <TouchableOpacity
+                key={notif.notificationId}
+                activeOpacity={0.85}
+                onPress={() => handleNotificationPress(notif)}
+                style={{
+                  backgroundColor: isExpertProtected
+                    ? '#ECFDF5'
+                    : isUserNoShowForCustomer
+                    ? '#FFF7ED'
+                    : '#FEF2F2',
+                  borderWidth: 1,
+                  borderColor: isExpertProtected
+                    ? '#A7F3D0'
+                    : isUserNoShowForCustomer
+                    ? '#FED7AA'
+                    : '#FECACA',
+                  borderRadius: 12,
+                  padding: 14,
+                  marginBottom: 14,
+                }}
+                testID={`homeNoShowAlert_${notif.notificationId}`}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <Ionicons
+                    name={isExpertProtected ? 'shield-checkmark' : 'alert-circle'}
+                    size={18}
+                    color={isExpertProtected ? '#059669' : isUserNoShowForCustomer ? '#C2410C' : '#DC2626'}
+                  />
+                  <Text
+                    style={{
+                      flex: 1,
+                      fontFamily: fonts.serifBold,
+                      fontSize: 14,
+                      color: isExpertProtected ? '#065F46' : isUserNoShowForCustomer ? '#9A3412' : '#991B1B',
+                    }}
+                  >
+                    {notif.title}
+                  </Text>
+                </View>
+                <Text
+                  style={{
+                    fontFamily: fonts.body,
+                    fontSize: 12.5,
+                    lineHeight: 18,
+                    color: isExpertProtected ? '#047857' : isUserNoShowForCustomer ? '#C2410C' : '#B91C1C',
+                    marginBottom: 8,
+                  }}
+                >
+                  {notif.message}
+                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
+                  <Text
+                    style={{
+                      fontFamily: fonts.bodyBold,
+                      fontSize: 12,
+                      color: isExpertProtected ? '#059669' : isUserNoShowForCustomer ? '#C2410C' : '#DC2626',
+                    }}
+                  >
+                    Xem chi tiết ca tư vấn
+                  </Text>
+                  <Ionicons
+                    name="chevron-forward"
+                    size={14}
+                    color={isExpertProtected ? '#059669' : isUserNoShowForCustomer ? '#C2410C' : '#DC2626'}
+                  />
+                </View>
+              </TouchableOpacity>
+            );
+          })}
+
+          {/* Banner lịch hẹn trực tuyến sắp diễn ra */}
+          {upcomingMeeting && upcomingMeeting.hasUpcomingMeeting ? (
+            <View
+              style={[
+                styles.upcomingCard,
+                upcomingMeeting.urgencyLevel === 'IN_PROGRESS' && styles.upcomingCardInProgress,
+                upcomingMeeting.urgencyLevel === 'OPENED' && styles.upcomingCardOpened,
+              ]}
+              testID="homeUpcomingMeetingBanner"
+            >
+              <View style={styles.upcomingHeader}>
+                <View
+                  style={[
+                    styles.upcomingBadge,
+                    upcomingMeeting.urgencyLevel === 'IN_PROGRESS' && styles.upcomingBadgeInProgress,
+                    upcomingMeeting.urgencyLevel === 'OPENED' && styles.upcomingBadgeOpened,
+                  ]}
+                >
+                  <Ionicons
+                    name={
+                      upcomingMeeting.urgencyLevel === 'IN_PROGRESS' || upcomingMeeting.urgencyLevel === 'OPENED'
+                        ? 'videocam'
+                        : 'alarm-outline'
+                    }
+                    size={12}
+                    color="#FFFFFF"
+                  />
+                  <Text style={styles.upcomingBadgeText}>
+                    {upcomingMeeting.urgencyLevel === 'IN_PROGRESS'
+                      ? 'ĐANG DIỄN RA'
+                      : upcomingMeeting.urgencyLevel === 'OPENED'
+                      ? 'PHÒNG ĐÃ MỞ'
+                      : upcomingMeeting.urgencyLevel === 'SOON'
+                      ? 'SẮP BẮT ĐẦU'
+                      : 'LỊCH HẸN SẮP TỚI'}
+                  </Text>
+                </View>
+
+                <TouchableOpacity
+                  onPress={() => {
+                    if (upcomingMeeting.bookingId) {
+                      navigation.navigate('BookingDetail', { bookingId: upcomingMeeting.bookingId });
+                    }
+                  }}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  style={styles.upcomingDetailLink}
+                  accessibilityRole="button"
+                  accessibilityLabel="Xem chi tiết lịch hẹn"
+                >
+                  <Text style={styles.upcomingDetailLinkText}>Chi tiết</Text>
+                  <Ionicons name="chevron-forward" size={12} color={theme.colors.primary} />
+                </TouchableOpacity>
+              </View>
+
+              <Text style={styles.upcomingTitle} numberOfLines={2}>
+                {upcomingMeeting.topicTitle || 'Tư vấn trực tuyến cùng chuyên gia thuế'}
+              </Text>
+
+              <View style={styles.upcomingMetaRow}>
+                <Ionicons name="person-outline" size={13} color="#444444" />
+                <Text style={styles.upcomingMetaText} numberOfLines={1}>
+                  {upcomingMeeting.partnerRole === 'TAXPAYER' ? 'Khách hàng: ' : 'Chuyên gia: '}
+                  {upcomingMeeting.partnerName || 'Chuyên gia tư vấn'}
+                </Text>
+              </View>
+
+              <View style={styles.upcomingTimeRow}>
+                <View style={styles.upcomingTimePill}>
+                  <Ionicons name="calendar-outline" size={13} color={theme.colors.primaryDark} />
+                  <Text style={styles.upcomingTimeText}>
+                    {formatVietnameseDate(upcomingMeeting.slotDate ?? undefined)}
+                  </Text>
+                </View>
+                <View style={styles.upcomingTimePill}>
+                  <Ionicons name="time-outline" size={13} color={theme.colors.primaryDark} />
+                  <Text style={styles.upcomingTimeText}>
+                    {formatTimeRange(upcomingMeeting.startTime ?? undefined, upcomingMeeting.endTime ?? undefined)}
+                  </Text>
+                </View>
+              </View>
+
+              {upcomingMeeting.reminderMessage ? (
+                <Text style={styles.upcomingMessage}>{upcomingMeeting.reminderMessage}</Text>
+              ) : null}
+
+              <View style={styles.upcomingActionsRow}>
+                {upcomingMeeting.canJoinRoom || upcomingMeeting.isRoomOpen ? (
+                  <TouchableOpacity
+                    style={styles.upcomingJoinBtn}
+                    onPress={handleJoinUpcomingMeeting}
+                    disabled={joiningMeeting}
+                    activeOpacity={0.85}
+                    accessibilityRole="button"
+                    accessibilityLabel="Vào phòng tư vấn ngay"
+                  >
+                    {joiningMeeting ? (
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    ) : (
+                      <>
+                        <Ionicons name="videocam" size={16} color="#FFFFFF" />
+                        <Text style={styles.upcomingJoinBtnText}>Vào phòng họp ngay</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                ) : null}
+
+                <TouchableOpacity
+                  style={[
+                    styles.upcomingViewDetailBtn,
+                    !(upcomingMeeting.canJoinRoom || upcomingMeeting.isRoomOpen) &&
+                      styles.upcomingViewDetailBtnFull,
+                  ]}
+                  onPress={() => {
+                    if (upcomingMeeting.bookingId) {
+                      navigation.navigate('BookingDetail', { bookingId: upcomingMeeting.bookingId });
+                    }
+                  }}
+                  activeOpacity={0.85}
+                  accessibilityRole="button"
+                  accessibilityLabel="Xem chi tiết lịch hẹn"
+                >
+                  <Ionicons name="calendar-outline" size={15} color={theme.colors.primary} />
+                  <Text style={styles.upcomingViewDetailBtnText}>
+                    {upcomingMeeting.canJoinRoom || upcomingMeeting.isRoomOpen
+                      ? 'Hồ sơ hẹn'
+                      : 'Xem chi tiết'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : null}
+
+          {/* Banner tư vấn chuyên gia thuế */}
+          <View style={styles.consultBannerCard} testID="homeConsultBanner">
+            <View style={styles.consultBannerHeader}>
+              <View style={styles.consultBannerTag}>
+                <Ionicons name="ribbon" size={12} color="#FFFFFF" />
+                <Text style={styles.consultBannerTagText}>TƯ VẤN CHUYÊN GIA</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => navigation.navigate('MyBookings', {})}
+                style={styles.myBookingsLink}
+                accessibilityRole="button"
+                accessibilityLabel="Lịch hẹn của tôi"
+              >
+                <Ionicons name="calendar-outline" size={13} color={theme.colors.primary} />
+                <Text style={styles.myBookingsLinkText}>Lịch hẹn của tôi</Text>
               </TouchableOpacity>
             </View>
+            <Text style={styles.consultBannerTitle}>Đặt lịch tư vấn thuế cùng chuyên gia</Text>
+            <Text style={styles.consultBannerSubtitle}>
+              Hỗ trợ giải đáp chuyên sâu về thuế TNCN, quyết toán & hoàn thuế với đội ngũ chuyên gia đã xác
+              thực chứng chỉ hành nghề.
+            </Text>
+            <View style={styles.consultBannerBtnRow}>
+              <TouchableOpacity
+                style={styles.consultBannerPrimaryBtn}
+                onPress={() => navigation.navigate('ExpertList')}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel="Tìm và đặt lịch ngay"
+              >
+                <Ionicons name="search" size={15} color="#FFFFFF" />
+                <Text style={styles.consultBannerPrimaryBtnText}>Tìm & Đặt lịch</Text>
+              </TouchableOpacity>
+
+              {!isExpert && (
+                <TouchableOpacity
+                  style={styles.consultBannerSecondaryBtn}
+                  onPress={() => navigation.navigate('ExpertApplication')}
+                  activeOpacity={0.85}
+                  accessibilityRole="button"
+                  accessibilityLabel="Trở thành chuyên gia"
+                >
+                  <Ionicons name="ribbon-outline" size={15} color={theme.colors.primary} />
+                  <Text style={styles.consultBannerSecondaryBtnText}>Đăng ký chuyên gia</Text>
+                </TouchableOpacity>
+              )}
+            </View>
           </View>
 
-          {/* Filter Tabs */}
+          <View style={styles.shortcutGrid} testID="homeShortcutGrid">
+            <TouchableOpacity
+              style={[styles.shortcutCell, styles.shortcutBorderRight, styles.shortcutBorderBottom]}
+              onPress={() => navigation.navigate('TaxRegistration')}
+              testID="homeTaxRegistrationCard"
+              accessibilityRole="button"
+              accessibilityLabel="Khai báo NPT"
+            >
+              <Ionicons name="person-add-outline" size={20} color={theme.colors.primary} />
+              <Text style={styles.shortcutLabel}>Khai báo NPT</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.shortcutCell, styles.shortcutBorderBottom]}
+              onPress={() => navigation.navigate('LawConditions')}
+              testID="homeLawConditionsCard"
+              accessibilityRole="button"
+              accessibilityLabel="Điều kiện luật"
+            >
+              <Ionicons name="book-outline" size={20} color={theme.colors.primary} />
+              <Text style={styles.shortcutLabel}>Điều kiện luật</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.shortcutCell, styles.shortcutBorderRight, styles.shortcutBorderBottom]}
+              onPress={() => navigation.navigate('IncomeSourceList')}
+              testID="homeIncomeSourceCard"
+              accessibilityRole="button"
+              accessibilityLabel="Nơi chi trả"
+            >
+              <Ionicons name="business-outline" size={20} color={theme.colors.primary} />
+              <Text style={styles.shortcutLabel}>Nơi chi trả</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.shortcutCell, styles.shortcutBorderBottom]}
+              onPress={() => navigation.navigate('ExpenseList')}
+              testID="homeExpenseListCard"
+              accessibilityRole="button"
+              accessibilityLabel="Hóa đơn chứng từ"
+            >
+              <Ionicons name="receipt-outline" size={20} color={theme.colors.primary} />
+              <Text style={styles.shortcutLabel}>Hóa đơn chứng từ</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.shortcutCell, styles.shortcutBorderRight, styles.shortcutBorderBottom]}
+              onPress={() => navigation.navigate('ExpertList')}
+              testID="homeExpertListCard"
+              accessibilityRole="button"
+              accessibilityLabel="Tư vấn chuyên gia"
+            >
+              <Ionicons name="chatbubbles-outline" size={20} color={theme.colors.primary} />
+              <Text style={styles.shortcutLabel}>Tư vấn chuyên gia</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.shortcutCell, styles.shortcutBorderBottom]}
+              onPress={() => navigation.navigate('MyBookings', {})}
+              testID="homeMyBookingsCard"
+              accessibilityRole="button"
+              accessibilityLabel="Lịch hẹn tư vấn"
+            >
+              <Ionicons name="calendar-outline" size={20} color={theme.colors.primary} />
+              <Text style={styles.shortcutLabel}>Lịch hẹn tư vấn</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.shortcutCell, styles.shortcutFullWidth]}
+              onPress={() => navigation.navigate('SettlementStart')}
+              testID="homeSettlementCard"
+              accessibilityRole="button"
+              accessibilityLabel="Quyết toán thuế"
+            >
+              <Ionicons name="calculator-outline" size={20} color={theme.colors.primary} />
+              <Text style={styles.shortcutLabel}>Quyết toán thuế</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+
+        {/* Nút nổi mở chat AI: góc phải dưới, ngay trên thanh tab */}
+        <TouchableOpacity
+          style={styles.chatFab}
+          onPress={() => navigation.navigate('TaxChat')}
+          testID="homeTaxChatFab"
+          accessibilityRole="button"
+          accessibilityLabel="Hỏi đáp thuế AI"
+        >
+          <Ionicons name="chatbubbles" size={20} color={theme.colors.textOnPrimary} />
+          <Text style={styles.chatFabText}>Hỏi AI</Text>
+        </TouchableOpacity>
+      </View>
+
+      <MainTabBar active="Home" />
+
+      <Modal
+        visible={notifModalVisible}
+        animationType="fade"
+        onRequestClose={() => setNotifModalVisible(false)}
+      >
+        <SafeAreaView style={styles.modalContainer} edges={['top', 'left', 'right']}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity
+              onPress={() => setNotifModalVisible(false)}
+              style={styles.closeModalBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Đóng"
+            >
+              <Ionicons name="arrow-back" size={24} color={theme.colors.textPrimary} />
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>Thông báo</Text>
+            {unreadCount > 0 ? (
+              <TouchableOpacity onPress={handleMarkAllAsRead} style={styles.markAllBtn}>
+                <Text style={styles.markAllBtnText}>Đọc hết</Text>
+              </TouchableOpacity>
+            ) : (
+              <View style={styles.closeModalBtn} />
+            )}
+          </View>
+
           <View style={styles.tabBar}>
             <TouchableOpacity
               style={[styles.tabItem, notifTab === 'ALL' && styles.tabItemActive]}
               onPress={() => setNotifTab('ALL')}
             >
               <Text style={[styles.tabItemText, notifTab === 'ALL' && styles.tabItemTextActive]}>
-                Tất cả ({notifications.length})
+                Tất cả
+              </Text>
+              <Text style={[styles.tabCount, notifTab === 'ALL' && styles.tabCountActive]}>
+                {notifications.length}
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.tabItem, notifTab === 'UNREAD' && styles.tabItemActive]}
               onPress={() => setNotifTab('UNREAD')}
             >
-              <Text
-                style={[
-                  styles.tabItemText,
-                  notifTab === 'UNREAD' && styles.tabItemTextActive,
-                ]}
-              >
-                Chưa đọc ({unreadCount})
+              <Text style={[styles.tabItemText, notifTab === 'UNREAD' && styles.tabItemTextActive]}>
+                Chưa đọc
+              </Text>
+              <Text style={[styles.tabCount, notifTab === 'UNREAD' && styles.tabCountActive]}>
+                {unreadCount}
               </Text>
             </TouchableOpacity>
           </View>
 
-          {/* Danh sách thông báo */}
           {loadingNotifs ? (
             <View style={styles.loadingCenter}>
               <ActivityIndicator size="large" color={theme.colors.primary} />
@@ -425,15 +944,10 @@ export const HomeScreen: React.FC = () => {
               }
               ListEmptyComponent={
                 <View style={styles.emptyContainer}>
-                  <Ionicons
-                    name="notifications-off-outline"
-                    size={48}
-                    color={theme.colors.textPlaceholder}
-                  />
                   <Text style={styles.emptyText}>
                     {notifTab === 'UNREAD'
-                      ? 'Không có thông báo chưa đọc nào.'
-                      : 'Bạn chưa có thông báo nào từ hệ thống.'}
+                      ? 'Không còn thông báo chưa đọc.'
+                      : 'Chưa có thông báo.'}
                   </Text>
                 </View>
               }
@@ -441,67 +955,52 @@ export const HomeScreen: React.FC = () => {
                 const isAgeReminder =
                   item.notificationType === 'AGE_TRANSITION_ALERT' ||
                   item.title.toLowerCase().includes('18 tuổi');
+                const consultationTarget = extractConsultationBookingTarget(item);
+                const isNoShowAlert = [
+                  'USER_NO_SHOW',
+                  'USER_NO_SHOW_CLOSED',
+                  'USER_NO_SHOW_EXPERT_NOTIFIED',
+                  'EXPERT_NO_SHOW_REFUND',
+                  'EXPERT_NO_SHOW_REFUNDED',
+                  'EXPERT_NO_SHOW_PENALTY',
+                ].includes(item.notificationType);
                 return (
                   <TouchableOpacity
                     style={[
                       styles.notifCard,
                       !item.isRead && styles.notifCardUnread,
+                      isNoShowAlert && !item.isRead && { borderColor: '#FED7AA', backgroundColor: '#FFFBF5' },
                     ]}
                     activeOpacity={0.7}
                     onPress={() => handleNotificationPress(item)}
                   >
-                    <View
+                    <Text style={styles.notifTime}>
+                      {new Date(item.createdAt).toLocaleDateString('vi-VN', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </Text>
+                    <Text
                       style={[
-                        styles.notifIconCircle,
-                        isAgeReminder && { backgroundColor: theme.colors.warningBackground },
+                        styles.notifItemTitle,
+                        !item.isRead && styles.notifItemTitleUnread,
+                        isNoShowAlert && { color: '#9A3412' },
                       ]}
+                      numberOfLines={2}
                     >
-                      <Ionicons
-                        name={
-                          isAgeReminder
-                            ? 'time-outline'
-                            : item.notificationType === 'TAX_FILING'
-                            ? 'document-text-outline'
-                            : 'notifications-outline'
-                        }
-                        size={20}
-                        color={isAgeReminder ? theme.colors.warning : theme.colors.primary}
-                      />
-                    </View>
-
-                    <View style={styles.notifBody}>
-                      <View style={styles.notifTitleRow}>
-                        <Text
-                          style={[
-                            styles.notifItemTitle,
-                            !item.isRead && styles.notifItemTitleUnread,
-                          ]}
-                          numberOfLines={1}
-                        >
-                          {item.title}
-                        </Text>
-                        {!item.isRead && <View style={styles.unreadDot} />}
-                      </View>
-
-                      <Text style={styles.notifMessage} numberOfLines={3}>
-                        {item.message}
-                      </Text>
-
-                      <View style={styles.notifFooterRow}>
-                        <Text style={styles.notifTime}>
-                          {new Date(item.createdAt).toLocaleDateString('vi-VN', {
-                            day: '2-digit',
-                            month: '2-digit',
-                            year: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                        </Text>
-                        {isAgeReminder && (
-                          <Text style={styles.notifActionPrompt}>Bổ sung giấy tờ →</Text>
-                        )}
-                      </View>
-                    </View>
+                      {humanizeGroupCodes(item.title)}
+                    </Text>
+                    <Text style={styles.notifMessage} numberOfLines={4}>
+                      {humanizeGroupCodes(item.message)}
+                    </Text>
+                    {isAgeReminder ? (
+                      <Text style={styles.notifActionPrompt}>Bổ sung giấy tờ</Text>
+                    ) : consultationTarget.isConsultationNotif ? (
+                      <Text style={styles.notifActionPrompt}>Xem chi tiết ca tư vấn →</Text>
+                    ) : null}
                   </TouchableOpacity>
                 );
               }}
@@ -509,6 +1008,43 @@ export const HomeScreen: React.FC = () => {
           )}
         </SafeAreaView>
       </Modal>
+
+      <Dialog
+        visible={!!changeGroupConfirm}
+        title={changeGroupConfirm?.confirmTitle ?? ''}
+        message={changeGroupConfirm?.confirmMessage ?? ''}
+        detailLabel="Nhóm đích"
+        detail={changeGroupConfirm?.newGroupLabel}
+        primaryLabel="Xác nhận"
+        secondaryLabel="Hủy"
+        onPrimary={() => {
+          void handleConfirmReminderChangeGroup();
+        }}
+        onSecondary={() => setChangeGroupConfirm(null)}
+        onRequestClose={() => setChangeGroupConfirm(null)}
+        testID="homeReminderChangeGroupDialog"
+      />
+
+      <Dialog
+        visible={!!promptTaxYear && !promptAnswered}
+        title={`Quyết toán thuế TNCN năm ${promptTaxYear ?? ''}`}
+        message={deadline?.promptQuestion ?? 'Bạn đã quyết toán thuế chưa?'}
+        primaryLabel="Đã quyết toán"
+        secondaryLabel="Chưa, quyết toán ngay"
+        onPrimary={() => answerSettlementPrompt('YES')}
+        onSecondary={() => answerSettlementPrompt('NO')}
+        onRequestClose={() => answerSettlementPrompt('DISMISSED')}
+        testID="homeSettlementPromptDialog"
+      />
+
+      <Dialog
+        visible={!!infoDialog}
+        title={infoDialog?.title ?? ''}
+        message={infoDialog?.message ?? ''}
+        primaryLabel="Đóng"
+        onPrimary={() => setInfoDialog(null)}
+        onRequestClose={() => setInfoDialog(null)}
+      />
     </SafeAreaView>
   );
 };
@@ -521,296 +1057,441 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingTop: 8,
+    zIndex: 1,
+  },
+  avatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: theme.colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarLetter: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 16,
+    lineHeight: 20,
+    color: '#FFFFFF',
+  },
+  headerCenter: {
+    flex: 1,
+    alignItems: 'center',
+    paddingHorizontal: 8,
+  },
+  welcomeText: {
+    ...theme.typography.helper,
+    color: '#5A4A22',
+  },
+  userName: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 17,
+    lineHeight: 22,
+    color: theme.colors.textPrimary,
+  },
+  bellBtn: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  unreadDotHeader: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: theme.colors.error,
+    borderWidth: 1.5,
+    borderColor: '#ECE9C2',
+  },
+  flex: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingHorizontal: 20,
+    // Chừa chỗ cho nút "Hỏi AI" để không che ô cuối khi cuộn hết
+    paddingBottom: 88,
+  },
+  chatFab: {
+    position: 'absolute',
+    right: 20,
+    bottom: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    height: 52,
+    paddingHorizontal: 18,
+    borderRadius: 26,
+    backgroundColor: theme.colors.primary,
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+  },
+  chatFabText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 14,
+    color: theme.colors.textOnPrimary,
+  },
+  deductionBlock: {
+    marginTop: 46,
+    alignItems: 'center',
+    gap: 4,
+  },
+  deductionLabel: {
+    fontFamily: fonts.bodyMedium,
+    fontSize: 12,
+    lineHeight: 16,
+    color: '#5A4A22',
+  },
+  deductionAmount: {
+    ...theme.typography.amountLarge,
+    // Chữ (có dấu tiếng Việt) thay cho số tiền: dòng cao hơn để không cắt dấu/đuôi chữ
+    lineHeight: 50,
+    alignSelf: 'stretch',
+    textAlign: 'center',
+    color: theme.colors.primaryDark,
+    fontVariant: ['tabular-nums'],
+  },
+  deductionMeta: {
+    ...theme.typography.helper,
+    color: theme.colors.textSecondary,
+    textAlign: 'center',
+  },
+  rule: {
+    marginTop: 24,
+  },
+  todoHeader: {
+    marginTop: 16,
+    flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.sm,
-    backgroundColor: theme.colors.surface,
+    alignItems: 'baseline',
+  },
+  todoTitle: {
+    ...theme.typography.sectionTitle,
+    color: theme.colors.textPrimary,
+  },
+  todoCount: {
+    ...theme.typography.fieldLabel,
+    color: theme.colors.primary,
+  },
+  todoEmpty: {
+    paddingVertical: 16,
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
   },
-  userInfoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  avatar: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: theme.colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  welcomeText: {
-    ...theme.typography.caption,
+  todoEmptyText: {
+    ...theme.typography.body,
+    fontSize: 13,
     color: theme.colors.textSecondary,
   },
-  userName: {
-    ...theme.typography.titleMedium,
-    fontSize: 16,
-    color: theme.colors.textPrimary,
-  },
-  headerActions: {
+  todoRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-  },
-  iconBtn: {
-    padding: 8,
-    borderRadius: theme.borderRadius.sm,
-    backgroundColor: theme.colors.surfaceSecondary,
-    position: 'relative',
-  },
-  unreadBadge: {
-    position: 'absolute',
-    top: -4,
-    right: -4,
-    backgroundColor: theme.colors.error,
-    borderRadius: 10,
-    minWidth: 18,
-    height: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 4,
-    borderWidth: 1.5,
-    borderColor: theme.colors.surface,
-  },
-  unreadBadgeText: {
-    color: '#FFFFFF',
-    fontSize: 10,
-    fontWeight: '700',
-  },
-  scrollContent: {
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.md,
-  },
-  heroBanner: {
-    backgroundColor: theme.colors.primaryDark,
-    borderRadius: theme.borderRadius.lg,
-    padding: theme.spacing.lg,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    ...theme.shadows.button,
-    marginBottom: theme.spacing.md,
-  },
-  bannerTextCol: {
-    flex: 1,
-  },
-  bannerTag: {
-    ...theme.typography.caption,
-    color: theme.colors.goldLight,
-    fontWeight: '700',
-    marginBottom: 4,
-    letterSpacing: 0.5,
-  },
-  bannerTitle: {
-    ...theme.typography.titleLarge,
-    color: '#FFFFFF',
-    marginBottom: 4,
-  },
-  bannerSubtitle: {
-    ...theme.typography.bodySmall,
-    color: '#E0E0E0',
-  },
-  bannerBadge: {
-    padding: 8,
-    borderRadius: theme.borderRadius.md,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-  },
-
-  // Reminder Banner Styles
-  reminderBanner: {
-    backgroundColor: theme.colors.warningBackground,
-    borderRadius: theme.borderRadius.md,
-    padding: theme.spacing.md,
-    borderWidth: 1.5,
-    borderColor: theme.colors.warning,
-    marginBottom: theme.spacing.md,
-    ...theme.shadows.card,
-  },
-  reminderHeader: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 10,
-  },
-  reminderIconCircle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#FFE0B2',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  reminderTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 4,
-    flexWrap: 'wrap',
-    gap: 6,
-  },
-  reminderTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#B74700',
-  },
-  statusPill: {
-    backgroundColor: theme.colors.warning,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 10,
-  },
-  statusPillText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  reminderDesc: {
-    ...theme.typography.bodySmall,
-    color: '#5C3800',
-    lineHeight: 18,
-  },
-  reminderActionBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: theme.colors.warning,
-    paddingVertical: 9,
-    paddingHorizontal: 14,
-    borderRadius: theme.borderRadius.sm,
-    gap: 6,
-  },
-  reminderActionBtnText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-
-  searchBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.borderRadius.md,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    paddingHorizontal: 14,
-    height: 46,
-    marginBottom: theme.spacing.lg,
+    alignItems: 'flex-start',
     gap: 10,
+    paddingVertical: 13,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
   },
-  searchPlaceholder: {
-    ...theme.typography.bodyMedium,
-    color: theme.colors.textPlaceholder,
+  todoIndex: {
+    ...theme.typography.indexNumber,
+    color: theme.colors.gold,
+    width: 28,
   },
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: theme.spacing.sm,
+  todoBody: {
+    flex: 1,
+    gap: 3,
   },
-  sectionTitle: {
-    ...theme.typography.titleMedium,
+  todoItemTitle: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 14,
+    lineHeight: 20,
     color: theme.colors.textPrimary,
   },
-  sectionMore: {
-    ...theme.typography.bodySmall,
-    color: theme.colors.primary,
-    fontWeight: '600',
+  todoItemSubtitle: {
+    ...theme.typography.helper,
+    color: theme.colors.textSecondary,
   },
-  gridContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-    marginBottom: theme.spacing.lg,
-  },
-  gridCardHighlight: {
-    width: '100%',
-    backgroundColor: theme.colors.primary,
-    borderRadius: theme.borderRadius.md,
-    padding: theme.spacing.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    ...theme.shadows.button,
-  },
-  gridIconCircleHighlight: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 14,
-  },
-  gridTitleHighlight: {
-    ...theme.typography.titleMedium,
-    fontSize: 16,
-    color: '#FFFFFF',
-    fontWeight: '700',
-  },
-  gridSubtitleHighlight: {
-    ...theme.typography.caption,
-    color: '#F0EAE1',
-    marginTop: 2,
-  },
-  gridCard: {
-    flex: 1,
-    minWidth: '45%',
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.borderRadius.md,
-    padding: theme.spacing.md,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
+  consultBannerCard: {
+    marginTop: 18,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1.5,
+    borderColor: '#E8D5B5',
     ...theme.shadows.card,
   },
-  gridIconCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: theme.colors.surfaceSecondary,
+  // Upcoming meeting banner styles
+  upcomingCard: {
+    marginTop: 18,
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1.5,
+    borderColor: '#FDE68A',
+    backgroundColor: '#FFFBEB',
+    ...theme.shadows.card,
+  },
+  upcomingCardOpened: {
+    borderColor: '#A7F3D0',
+    backgroundColor: '#F0FDF4',
+  },
+  upcomingCardInProgress: {
+    borderColor: '#FECACA',
+    backgroundColor: '#FEF2F2',
+  },
+  upcomingHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    justifyContent: 'center',
     marginBottom: 8,
   },
-  gridTitle: {
-    ...theme.typography.bodyLarge,
-    fontWeight: '600',
+  upcomingBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#D97706',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+    gap: 4,
+  },
+  upcomingBadgeOpened: {
+    backgroundColor: '#059669',
+  },
+  upcomingBadgeInProgress: {
+    backgroundColor: '#DC2626',
+  },
+  upcomingBadgeText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 10,
+    color: '#FFFFFF',
+    letterSpacing: 0.5,
+  },
+  upcomingDetailLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  upcomingDetailLinkText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 11,
+    color: theme.colors.primary,
+  },
+  upcomingTitle: {
+    fontFamily: fonts.serifBold,
+    fontSize: 15,
+    color: theme.colors.primaryDark,
+    lineHeight: 20,
+    marginBottom: 6,
+  },
+  upcomingMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginBottom: 8,
+  },
+  upcomingMetaText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 12,
+    color: '#333333',
+    flex: 1,
+  },
+  upcomingTimeRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 8,
+  },
+  upcomingTimePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  upcomingTimeText: {
+    fontFamily: fonts.bodyMedium,
+    fontSize: 11,
     color: theme.colors.textPrimary,
   },
-  gridSubtitle: {
-    ...theme.typography.caption,
-    color: theme.colors.textSecondary,
-    marginTop: 2,
-  },
-  accountCard: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.borderRadius.md,
-    padding: theme.spacing.md,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    ...theme.shadows.card,
-  },
-  accountCardTitle: {
-    ...theme.typography.bodyLarge,
-    fontWeight: '700',
-    color: theme.colors.primaryDark,
+  upcomingMessage: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: '#4B5563',
+    lineHeight: 17,
     marginBottom: 10,
   },
-  infoRow: {
+  upcomingActionsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 2,
+  },
+  upcomingJoinBtn: {
+    flex: 1.4,
+    height: 40,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#059669',
+    borderRadius: 8,
+    gap: 6,
+    ...theme.shadows.button,
+  },
+  upcomingJoinBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12,
+    color: '#FFFFFF',
+  },
+  upcomingViewDetailBtn: {
+    flex: 1,
+    height: 40,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: theme.colors.primary,
+    borderRadius: 8,
+    gap: 5,
+  },
+  upcomingViewDetailBtnFull: {
+    flex: 1,
+  },
+  upcomingViewDetailBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12,
+    color: theme.colors.primary,
+  },
+  consultBannerHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingVertical: 4,
+    alignItems: 'center',
+    marginBottom: 8,
   },
-  infoLabel: {
-    ...theme.typography.bodyMedium,
-    color: theme.colors.textSecondary,
+  consultBannerTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: theme.colors.primary,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+    gap: 4,
   },
-  infoVal: {
-    ...theme.typography.bodyMedium,
-    fontWeight: '600',
+  consultBannerTagText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 10,
+    color: '#FFFFFF',
+    letterSpacing: 0.5,
+  },
+  myBookingsLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  myBookingsLinkText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 11,
+    color: theme.colors.primary,
+  },
+  consultBannerTitle: {
+    fontFamily: fonts.serifBold,
+    fontSize: 15,
+    color: theme.colors.primaryDark,
+    lineHeight: 20,
+    marginBottom: 4,
+  },
+  consultBannerSubtitle: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: '#555555',
+    lineHeight: 17,
+    marginBottom: 12,
+  },
+  consultBannerBtnRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 2,
+  },
+  consultBannerPrimaryBtn: {
+    flex: 1,
+    height: 40,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: theme.colors.primary,
+    borderRadius: 8,
+    gap: 6,
+    ...theme.shadows.button,
+  },
+  consultBannerPrimaryBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12,
+    color: '#FFFFFF',
+  },
+  consultBannerSecondaryBtn: {
+    flex: 1,
+    height: 40,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: theme.colors.primary,
+    borderRadius: 8,
+    gap: 5,
+  },
+  consultBannerSecondaryBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12,
+    color: theme.colors.primary,
+  },
+  shortcutGrid: {
+    marginTop: 18,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    overflow: 'hidden',
+  },
+  shortcutCell: {
+    width: '50%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+  },
+  shortcutBorderRight: {
+    borderRightWidth: 1,
+    borderRightColor: theme.colors.border,
+  },
+  shortcutBorderBottom: {
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+  },
+  shortcutFullWidth: {
+    width: '100%',
+  },
+  shortcutLabel: {
+    ...theme.typography.fieldLabel,
     color: theme.colors.textPrimary,
+    flexShrink: 1,
   },
 
-  // Modal Notification Styles
+  // Notification modal (giữ logic cũ)
   modalContainer: {
     flex: 1,
     backgroundColor: theme.colors.background,
@@ -818,171 +1499,133 @@ const styles = StyleSheet.create({
   modalHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.sm + 4,
-    backgroundColor: theme.colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-  },
-  modalHeaderTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+    paddingHorizontal: 8,
+    paddingBottom: 4,
   },
   modalTitle: {
-    fontSize: 18,
-    fontWeight: '700',
+    flex: 1,
+    textAlign: 'center',
+    fontFamily: fonts.serifBold,
+    fontSize: 20,
+    lineHeight: 26,
     color: theme.colors.textPrimary,
   },
-  modalBadge: {
-    backgroundColor: theme.colors.error,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 10,
-  },
-  modalBadgeText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  modalHeaderActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
   markAllBtn: {
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    borderRadius: theme.borderRadius.sm,
-    backgroundColor: theme.colors.surfaceSecondary,
+    width: 72,
+    height: 44,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+    paddingRight: 8,
   },
   markAllBtnText: {
-    fontSize: 12,
-    fontWeight: '600',
+    fontFamily: fonts.bodySemi,
+    fontSize: 13,
     color: theme.colors.primary,
   },
   closeModalBtn: {
-    padding: 4,
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   tabBar: {
     flexDirection: 'row',
-    backgroundColor: theme.colors.surface,
-    paddingHorizontal: theme.spacing.md,
+    marginHorizontal: 22,
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
   },
   tabItem: {
-    paddingVertical: 12,
-    marginRight: 20,
-    borderBottomWidth: 2,
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 6,
+    paddingVertical: 10,
+    marginRight: 22,
+    borderBottomWidth: 1,
     borderBottomColor: 'transparent',
+    marginBottom: -1,
   },
   tabItemActive: {
-    borderBottomColor: theme.colors.primary,
+    borderBottomColor: theme.colors.gold,
   },
   tabItemText: {
+    fontFamily: fonts.body,
     fontSize: 14,
-    fontWeight: '600',
     color: theme.colors.textSecondary,
   },
   tabItemTextActive: {
-    color: theme.colors.primary,
+    fontFamily: fonts.bodySemi,
+    color: theme.colors.textPrimary,
   },
-  notifListContent: {
-    padding: theme.spacing.md,
-    paddingBottom: 40,
+  tabCount: {
+    fontFamily: fonts.serif,
+    fontSize: 13,
+    color: '#999999',
+  },
+  tabCountActive: {
+    color: theme.colors.gold,
   },
   loadingCenter: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 10,
+    gap: 12,
   },
   loadingText: {
+    fontFamily: fonts.body,
     fontSize: 14,
     color: theme.colors.textSecondary,
+  },
+  notifListContent: {
+    paddingHorizontal: 22,
+    paddingBottom: 32,
+    flexGrow: 1,
   },
   emptyContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 60,
-    gap: 12,
+    paddingTop: 48,
   },
   emptyText: {
+    fontFamily: fonts.body,
     fontSize: 14,
+    lineHeight: 22,
     color: theme.colors.textSecondary,
-    textAlign: 'center',
   },
   notifCard: {
-    flexDirection: 'row',
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.borderRadius.md,
-    padding: 14,
-    marginBottom: 10,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    gap: 12,
-    ...theme.shadows.card,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+    gap: 4,
   },
   notifCardUnread: {
-    backgroundColor: '#FFFFFF',
-    borderColor: theme.colors.goldLight,
-    borderLeftWidth: 4,
+    borderLeftWidth: 2,
     borderLeftColor: theme.colors.primary,
-  },
-  notifIconCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: theme.colors.surfaceSecondary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  notifBody: {
-    flex: 1,
-  },
-  notifTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 4,
+    paddingLeft: 12,
   },
   notifItemTitle: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontFamily: fonts.body,
+    fontSize: 15,
+    lineHeight: 21,
     color: theme.colors.textPrimary,
-    flex: 1,
   },
   notifItemTitleUnread: {
-    fontWeight: '700',
-    color: theme.colors.primaryDark,
-  },
-  unreadDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: theme.colors.primary,
-    marginLeft: 6,
+    fontFamily: fonts.bodySemi,
   },
   notifMessage: {
+    fontFamily: fonts.body,
     fontSize: 13,
+    lineHeight: 19,
     color: theme.colors.textSecondary,
-    lineHeight: 18,
-    marginBottom: 6,
-  },
-  notifFooterRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
   },
   notifTime: {
-    fontSize: 11,
-    color: theme.colors.textPlaceholder,
+    fontFamily: fonts.body,
+    fontSize: 12,
+    lineHeight: 16,
+    color: '#8A8175',
   },
   notifActionPrompt: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: theme.colors.warning,
+    fontFamily: fonts.bodySemi,
+    fontSize: 13,
+    lineHeight: 18,
+    color: theme.colors.primary,
+    marginTop: 4,
   },
 });

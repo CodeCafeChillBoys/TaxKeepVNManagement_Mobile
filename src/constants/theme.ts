@@ -1,3 +1,6 @@
+import { Platform } from 'react-native';
+import { fonts } from './fonts';
+
 export const theme = {
   colors: {
     // Primary palette
@@ -66,6 +69,70 @@ export const theme = {
       fontWeight: '500' as const,
       lineHeight: 14,
     },
+    /** DanhGiaUI §8 — 1px = 1dp, không scale theo chiều rộng máy. */
+    appTitle: {
+      fontFamily: fonts.serifBold,
+      fontSize: 36,
+      lineHeight: 42,
+      letterSpacing: 0,
+    },
+    amountLarge: {
+      fontFamily: fonts.serifBold,
+      fontSize: 36,
+      lineHeight: 40,
+      letterSpacing: -0.2,
+    },
+    screenTitle: {
+      fontFamily: fonts.serifBold,
+      fontSize: 26,
+      lineHeight: 32,
+    },
+    sectionTitle: {
+      fontFamily: fonts.serifBold,
+      fontSize: 18,
+      lineHeight: 24,
+    },
+    eyebrow: {
+      fontFamily: fonts.bodySemi,
+      fontSize: 12,
+      lineHeight: 16,
+      letterSpacing: 1,
+    },
+    fieldLabel: {
+      fontFamily: fonts.bodySemi,
+      fontSize: 13,
+      lineHeight: 18,
+    },
+    inputText: {
+      fontFamily: fonts.body,
+      fontSize: 15,
+      lineHeight: 20,
+    },
+    buttonText: {
+      fontFamily: fonts.bodyBold,
+      fontSize: 16,
+      lineHeight: 20,
+    },
+    body: {
+      fontFamily: fonts.body,
+      fontSize: 14,
+      lineHeight: 20,
+    },
+    helper: {
+      fontFamily: fonts.body,
+      fontSize: 12,
+      lineHeight: 16,
+    },
+    indexNumber: {
+      fontFamily: fonts.serifBold,
+      fontSize: 15,
+      lineHeight: 20,
+    },
+    tabBarLabel: {
+      fontFamily: fonts.body,
+      fontSize: 10,
+      lineHeight: 12,
+    },
   },
   
   spacing: {
@@ -84,19 +151,29 @@ export const theme = {
   },
   
   shadows: {
-    card: {
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.06,
-      shadowRadius: 6,
-      elevation: 2,
-    },
-    button: {
-      shadowColor: '#8B1E1E',
-      shadowOffset: { width: 0, height: 3 },
-      shadowOpacity: 0.2,
-      shadowRadius: 5,
-      elevation: 3,
-    },
+    card: Platform.select({
+      web: {
+        boxShadow: '0px 2px 6px rgba(0, 0, 0, 0.06)',
+      },
+      default: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.06,
+        shadowRadius: 6,
+        elevation: 2,
+      },
+    }),
+    button: Platform.select({
+      web: {
+        boxShadow: '0px 3px 5px rgba(139, 30, 30, 0.2)',
+      },
+      default: {
+        shadowColor: '#8B1E1E',
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.2,
+        shadowRadius: 5,
+        elevation: 3,
+      },
+    }),
   },
 };

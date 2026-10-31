@@ -1,0 +1,177 @@
+﻿{
+    "canMerge":  false,
+    "headRevisionNo":  1,
+    "baseRevisionNo":  1,
+    "checks":  [
+                   {
+                       "code":  "CHK-01",
+                       "level":  "BLOCK",
+                       "passed":  true,
+                       "message":  "Mọi dòng ACCEPTED phải có căn cứ (Điều/Trang) và bản đề xuất phải có lý do",
+                       "items":  [
+
+                                 ]
+                   },
+                   {
+                       "code":  "CHK-02",
+                       "level":  "BLOCK",
+                       "passed":  true,
+                       "message":  "Mọi giá trị dòng ACCEPTED phải hợp lệ theo định dạng ValueKind",
+                       "items":  [
+
+                                 ]
+                   },
+                   {
+                       "code":  "CHK-03",
+                       "level":  "BLOCK",
+                       "passed":  true,
+                       "message":  "Tập phiên bản sau khi áp không bị chồng khoảng và không có dòng áp lỗi",
+                       "items":  [
+
+                                 ]
+                   },
+                   {
+                       "code":  "CHK-04",
+                       "level":  "BLOCK",
+                       "passed":  true,
+                       "message":  "Mọi mã luật của dòng ACCEPTED phải có trong danh mục và đang hoạt động",
+                       "items":  [
+
+                                 ]
+                   },
+                   {
+                       "code":  "CHK-05",
+                       "level":  "BLOCK",
+                       "passed":  true,
+                       "message":  "Không còn quy tắc luật bị bỏ lại chưa được xử lý (còn 0 rule)",
+                       "items":  [
+
+                                 ]
+                   },
+                   {
+                       "code":  "CHK-06",
+                       "level":  "BLOCK",
+                       "passed":  true,
+                       "message":  "Không còn dòng thay đổi ở trạng thái xung đột (CONFLICT)",
+                       "items":  [
+
+                                 ]
+                   },
+                   {
+                       "code":  "CHK-07",
+                       "level":  "BLOCK",
+                       "passed":  true,
+                       "message":  "Ngày áp dụng phải hợp lệ (ApplyTo \u003e ApplyFrom)",
+                       "items":  [
+
+                                 ]
+                   },
+                   {
+                       "code":  "CHK-08",
+                       "level":  "WARN",
+                       "passed":  false,
+                       "message":  "Kiểm tra các quy tắc bắt buộc cho luồng tính thuế",
+                       "items":  [
+
+                                 ]
+                   },
+                   {
+                       "code":  "CHK-09",
+                       "level":  "WARN",
+                       "passed":  true,
+                       "message":  "Số trang đã đọc khớp tổng số trang văn bản",
+                       "items":  [
+
+                                 ]
+                   },
+                   {
+                       "code":  "CHK-10",
+                       "level":  "WARN",
+                       "passed":  true,
+                       "message":  "Dòng END không để lại phiên bản thừa phía sau ngày kết thúc",
+                       "items":  [
+
+                                 ]
+                   },
+                   {
+                       "code":  "CHK-11",
+                       "level":  "BLOCK",
+                       "passed":  true,
+                       "message":  "Không có hai dòng ACCEPTED trùng mã và trùng ngày hiệu lực",
+                       "items":  [
+
+                                 ]
+                   },
+                   {
+                       "code":  "CHK-12",
+                       "level":  "BLOCK",
+                       "passed":  true,
+                       "message":  "Quan hệ REPLACES/REPEALS có ảnh hưởng quy tắc phải có ngày hiệu lực",
+                       "items":  [
+
+                                 ]
+                   },
+                   {
+                       "code":  "CHK-13",
+                       "level":  "BLOCK",
+                       "passed":  true,
+                       "message":  "Văn bản phải có đầy đủ số hiệu và loại văn bản",
+                       "items":  [
+
+                                 ]
+                   },
+                   {
+                       "code":  "CHK-14",
+                       "level":  "INFO",
+                       "passed":  true,
+                       "message":  "Bản đề xuất có nội dung được chấp nhận",
+                       "items":  [
+
+                                 ]
+                   },
+                   {
+                       "code":  "CHK-15",
+                       "level":  "BLOCK",
+                       "passed":  true,
+                       "message":  "Base revision (1) phải khớp HEAD (1)",
+                       "items":  [
+
+                                 ]
+                   },
+                   {
+                       "code":  "CHK-16",
+                       "level":  "BLOCK",
+                       "passed":  true,
+                       "message":  "Tất cả các dòng và quan hệ phải được xử lý xong (không còn PENDING)",
+                       "items":  [
+
+                                 ]
+                   },
+                   {
+                       "code":  "CHK-17",
+                       "level":  "BLOCK",
+                       "passed":  false,
+                       "message":  "Văn bản không được trùng số hiệu với văn bản thật đã tồn tại",
+                       "items":  [
+
+                                 ]
+                   }
+               ],
+    "preview":  {
+                    "added":  0,
+                    "updated":  0,
+                    "ended":  0,
+                    "recited":  3,
+                    "relations":  3,
+                    "newVersionIds":  [
+                                          "42cc0cf4-900f-4c9c-bca3-6bf25cba6d8f",
+                                          "fe50f356-29b5-4727-a030-621fc540024b",
+                                          "05d7d6f2-bebe-425c-9f18-dae67c27b1c1"
+                                      ],
+                    "supersededVersionIds":  [
+                                                 "dc88dd38-5737-47c8-b2d2-169fb6a79e9a",
+                                                 "cb291b79-7c21-4786-ab8c-e83bde4ec2ba",
+                                                 "94ddccdf-44d8-4397-a3a0-257a51715f5f"
+                                             ]
+                }
+}

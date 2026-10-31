@@ -10,14 +10,57 @@ import { HomeScreen } from '../screens/home/HomeScreen';
 import { ProfileScreen } from '../screens/profile/ProfileScreen';
 import { EditProfileScreen } from '../screens/profile/EditProfileScreen';
 import { IncomeSourceListScreen } from '../screens/incomeSource/IncomeSourceListScreen';
+import { IncomeMonthFormScreen } from '../screens/income/IncomeMonthFormScreen';
+import { WithholdingVoucherScreen } from '../screens/incomeSource/WithholdingVoucherScreen';
 import { ChangePasswordScreen } from '../screens/auth/ChangePasswordScreen';
 import { LawConditionsScreen } from '../screens/home/LawConditionsScreen';
 import { TaxRegistrationScreen } from '../screens/dependent/TaxRegistrationScreen';
 import { ProofDocumentsScreen } from '../screens/dependent/ProofDocumentsScreen';
+import { DependentSavedScreen } from '../screens/dependent/DependentSavedScreen';
+import { DependentListScreen } from '../screens/dependent/DependentListScreen';
+import { ScanIdentityScreen } from '../screens/common/ScanIdentityScreen';
+import { ExpenseListScreen } from '../screens/expense/ExpenseListScreen';
+import { ExpenseUploadScreen } from '../screens/expense/ExpenseUploadScreen';
+import { ExpenseReviewScreen } from '../screens/expense/ExpenseReviewScreen';
+import { SettlementStartScreen } from '../screens/settlement/SettlementStartScreen';
+import { SettlementPreviewScreen } from '../screens/settlement/SettlementPreviewScreen';
+import { SettlementSuccessScreen } from '../screens/settlement/SettlementSuccessScreen';
+import { SettlementListScreen } from '../screens/settlement/SettlementListScreen';
+import { SettlementDetailScreen } from '../screens/settlement/SettlementDetailScreen';
+import { SettlementExportFormScreen } from '../screens/settlement/SettlementExportFormScreen';
+import { SettlementPdfViewerScreen } from '../screens/settlement/SettlementPdfViewerScreen';
+import { SettlementZipReadyScreen } from '../screens/settlement/SettlementZipReadyScreen';
+import { SettlementDownloadExpiredScreen } from '../screens/settlement/SettlementDownloadExpiredScreen';
+import { TaxChatScreen } from '../screens/chat/TaxChatScreen';
+import { TaxChatHistoryScreen } from '../screens/chat/TaxChatHistoryScreen';
+import { ExpertListScreen } from '../screens/consultation/ExpertListScreen';
+import { ExpertDetailScreen } from '../screens/consultation/ExpertDetailScreen';
+import { BookingCreateScreen } from '../screens/consultation/BookingCreateScreen';
+import { MyBookingsScreen } from '../screens/consultation/MyBookingsScreen';
+import { BookingDetailScreen } from '../screens/consultation/BookingDetailScreen';
+import { ExpertBookingsScreen } from '../screens/consultation/ExpertBookingsScreen';
+import { ExpertSlotsScreen } from '../screens/consultation/ExpertSlotsScreen';
+import { ExpertApplicationScreen } from '../screens/consultation/ExpertApplicationScreen';
+import { PaymentResultScreen } from '../screens/consultation/PaymentResultScreen';
+import { WalletScreen } from '../screens/wallet/WalletScreen';
 import { useAuthStore } from '../stores/useAuthStore';
 import { theme } from '../constants/theme';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
+
+const tabScreenOptions = {
+  animation: 'none' as const,
+};
+
+const linking = {
+  prefixes: ['taxkeep://', 'fe://', 'exp://'],
+  config: {
+    screens: {
+      PaymentResult: 'payments/vnpay-return',
+      BookingDetail: 'bookings/:bookingId',
+    },
+  },
+};
 
 export const RootNavigator: React.FC = () => {
   const { isAuthenticated, isLoading, checkAuth } = useAuthStore();
@@ -35,7 +78,14 @@ export const RootNavigator: React.FC = () => {
   }
 
   return (
-    <NavigationContainer>
+    <NavigationContainer
+      linking={linking}
+      onStateChange={() => {
+        if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
+          document.activeElement.blur();
+        }
+      }}
+    >
       <Stack.Navigator
         initialRouteName={isAuthenticated ? 'Home' : 'Login'}
         screenOptions={{
@@ -47,14 +97,43 @@ export const RootNavigator: React.FC = () => {
         <Stack.Screen name="Login" component={LoginScreen} />
         <Stack.Screen name="Register" component={RegisterScreen} />
         <Stack.Screen name="VerifyPending" component={VerifyPendingScreen} />
-        <Stack.Screen name="Home" component={HomeScreen} />
-        <Stack.Screen name="Profile" component={ProfileScreen} />
+        <Stack.Screen name="Home" component={HomeScreen} options={tabScreenOptions} />
+        <Stack.Screen name="Profile" component={ProfileScreen} options={tabScreenOptions} />
         <Stack.Screen name="EditProfile" component={EditProfileScreen} />
-        <Stack.Screen name="IncomeSourceList" component={IncomeSourceListScreen} />
+        <Stack.Screen name="IncomeSourceList" component={IncomeSourceListScreen} options={tabScreenOptions} />
+        <Stack.Screen name="IncomeMonthForm" component={IncomeMonthFormScreen} />
+        <Stack.Screen name="WithholdingVoucher" component={WithholdingVoucherScreen} />
         <Stack.Screen name="ChangePassword" component={ChangePasswordScreen} />
         <Stack.Screen name="LawConditions" component={LawConditionsScreen} />
         <Stack.Screen name="TaxRegistration" component={TaxRegistrationScreen} />
         <Stack.Screen name="ProofDocuments" component={ProofDocumentsScreen} />
+        <Stack.Screen name="DependentSaved" component={DependentSavedScreen} />
+        <Stack.Screen name="DependentList" component={DependentListScreen} options={tabScreenOptions} />
+        <Stack.Screen name="ScanIdentity" component={ScanIdentityScreen} />
+        <Stack.Screen name="ExpenseList" component={ExpenseListScreen} />
+        <Stack.Screen name="ExpenseUpload" component={ExpenseUploadScreen} />
+        <Stack.Screen name="ExpenseReview" component={ExpenseReviewScreen} />
+        <Stack.Screen name="TaxChat" component={TaxChatScreen} />
+        <Stack.Screen name="TaxChatHistory" component={TaxChatHistoryScreen} />
+        <Stack.Screen name="SettlementStart" component={SettlementStartScreen} />
+        <Stack.Screen name="SettlementPreview" component={SettlementPreviewScreen} />
+        <Stack.Screen name="SettlementSuccess" component={SettlementSuccessScreen} />
+        <Stack.Screen name="SettlementList" component={SettlementListScreen} />
+        <Stack.Screen name="SettlementDetail" component={SettlementDetailScreen} />
+        <Stack.Screen name="SettlementExportForm" component={SettlementExportFormScreen} />
+        <Stack.Screen name="SettlementPdfViewer" component={SettlementPdfViewerScreen} />
+        <Stack.Screen name="SettlementZipReady" component={SettlementZipReadyScreen} />
+        <Stack.Screen name="SettlementDownloadExpired" component={SettlementDownloadExpiredScreen} />
+        <Stack.Screen name="ExpertList" component={ExpertListScreen} />
+        <Stack.Screen name="ExpertDetail" component={ExpertDetailScreen} />
+        <Stack.Screen name="BookingCreate" component={BookingCreateScreen} />
+        <Stack.Screen name="MyBookings" component={MyBookingsScreen} />
+        <Stack.Screen name="BookingDetail" component={BookingDetailScreen} />
+        <Stack.Screen name="ExpertBookings" component={ExpertBookingsScreen} />
+        <Stack.Screen name="ExpertSlots" component={ExpertSlotsScreen} />
+        <Stack.Screen name="ExpertApplication" component={ExpertApplicationScreen} />
+        <Stack.Screen name="PaymentResult" component={PaymentResultScreen} />
+        <Stack.Screen name="Wallet" component={WalletScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

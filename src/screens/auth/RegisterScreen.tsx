@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -10,7 +10,7 @@ import {
   Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { useForm, Controller, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Ionicons } from '@expo/vector-icons';
@@ -21,11 +21,13 @@ import { PasswordStrengthBar } from '../../components/common/PasswordStrengthBar
 import { HeaderMotif } from '../../components/common/HeaderMotif';
 import { TermsCheckbox } from '../../components/auth/TermsCheckbox';
 import { theme } from '../../constants/theme';
-import { RootNavigationProp } from '../../navigation/types';
+import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { authApi } from '../../api/authApi';
+import { applyRegisterOcrResult } from './applyRegisterOcrResult';
 
 export const RegisterScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
+  const route = useRoute<RouteProp<RootStackParamList, 'Register'>>();
   const [loading, setLoading] = useState(false);
 
   const {
@@ -54,6 +56,24 @@ export const RegisterScreen: React.FC = () => {
   // Watch mật khẩu để cập nhật thanh đo độ mạnh realtime
   const passwordValue = useWatch({ control, name: 'password' });
   const agreeTermsValue = useWatch({ control, name: 'agreeTerms' });
+
+  useEffect(() => {
+    const result = route.params?.ocrResult;
+    if (!result) return;
+
+    const plan = applyRegisterOcrResult(result);
+    setValue('fullName', plan.fields.fullName, { shouldValidate: true, shouldDirty: true });
+    setValue('citizenId', plan.fields.citizenId, { shouldValidate: true, shouldDirty: true });
+    setValue('dateOfBirth', plan.fields.dateOfBirth, { shouldValidate: true, shouldDirty: true });
+    setValue('address', plan.fields.address, { shouldValidate: true, shouldDirty: true });
+
+    if (plan.citizenIdError) {
+      setError('citizenId', { type: 'server', message: plan.citizenIdError });
+    }
+
+    navigation.setParams({ ocrResult: undefined });
+    Alert.alert(plan.alertTitle, plan.alertMessage);
+  }, [route.params?.ocrResult]);
 
   // Xử lý nút Back / Chuyển sang Đăng nhập: Hỏi xác nhận nếu đã nhập liệu (Mục 10 Docs)
   const handleLeavePage = (destination: () => void) => {
@@ -155,22 +175,10 @@ export const RegisterScreen: React.FC = () => {
             activeOpacity={0.85}
             style={styles.ocrQuickCard}
             onPress={() =>
-              Alert.alert(
-                'Quét Căn cước công dân (1.1.T4)',
-                'Chức năng Camera OCR sẽ tự động đọc Họ tên, Số CCCD, Ngày sinh và Địa chỉ từ ảnh giấy tờ để điền vào biểu mẫu này.',
-                [
-                  { text: 'Đóng', style: 'cancel' },
-                  {
-                    text: 'Điền thử dữ liệu mẫu',
-                    onPress: () => {
-                      setValue('fullName', 'Nguyễn Văn An', { shouldValidate: true, shouldDirty: true });
-                      setValue('citizenId', '079201001234', { shouldValidate: true, shouldDirty: true });
-                      setValue('dateOfBirth', '1995-05-12', { shouldValidate: true, shouldDirty: true });
-                      setValue('address', '123 Lê Lợi, Phường Bến Nghé, Quận 1, TP.HCM', { shouldValidate: true, shouldDirty: true });
-                    },
-                  },
-                ]
-              )
+              navigation.navigate('ScanIdentity', {
+                source: 'register',
+                hasExistingData: isDirty,
+              })
             }
           >
             <View style={styles.ocrIconCircle}>

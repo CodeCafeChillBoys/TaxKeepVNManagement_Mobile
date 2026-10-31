@@ -1,20 +1,37 @@
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { OcrDependentFill, OcrFormFill, ScanIdentitySource } from '../types/ocr';
 
 export type RootStackParamList = {
   Login: undefined;
-  Register: undefined;
+  Register: { ocrResult?: OcrFormFill } | undefined;
   VerifyPending: { email: string };
   Home: undefined;
   Profile: undefined;
-  EditProfile: { autoFocusTaxId?: boolean } | undefined;
-  TaxRegistration: undefined;
+  EditProfile: { autoFocusTaxId?: boolean; ocrResult?: OcrFormFill } | undefined;
+  ScanIdentity: {
+    source: ScanIdentitySource;
+    hasExistingData?: boolean;
+    /** CCCD khóa trên hồ sơ — so khớp khi source=editProfile */
+    lockedCitizenId?: string;
+  };
+  TaxRegistration: { ocrDependentFill?: OcrDependentFill } | undefined;
+  DependentSaved: {
+    fullName: string;
+    relationship: string;
+    groupCode: string;
+    groupId?: number;
+    effectiveFromMonth: string;
+  };
   ProofDocuments:
     | {
         groupIndex?: number;
         dependentId?: string;
+        /** Checklist từ PATCH /group — ưu tiên hơn LAW_GROUP_SPECS local */
+        requiredDocuments?: string[];
         dependentData?: {
           fullName: string;
-          citizenId: string;
+          citizenId?: string;
+          birthCertNumber?: string;
           dateOfBirth: string;
           relationship: string;
           effectiveFromMonth: string;
@@ -24,9 +41,85 @@ export type RootStackParamList = {
         };
       }
     | undefined;
-  IncomeSourceList: undefined;
+  IncomeSourceList: { view?: 'yearly' | 'monthly' } | undefined;
+  /** Thêm / sửa thu nhập 1 tháng (bảng incomes, có OCR phiếu lương) */
+  IncomeMonthForm: {
+    year: number;
+    item?: import('../types/income').IncomeMonthItem;
+    /** Danh sách hiện có để cảnh báo trùng tổ chức + tháng (BE chưa chặn) */
+    groups?: import('../types/income').IncomeCompanyGroup[];
+  };
+  /** Tải chứng từ khấu trừ thuế TNCN → đối chiếu với thu nhập theo tháng → lưu */
+  WithholdingVoucher: { year?: number } | undefined;
   ChangePassword: undefined;
   LawConditions: undefined;
+  DependentList: undefined;
+  ExpenseList: undefined;
+  ExpenseUpload: { targetYear?: number; periodId?: string } | undefined;
+  ExpenseReview: {
+    ocrResult: import('../types/expense').ExpenseOcrResult;
+    periodId?: string;
+    isReadOnly?: boolean;
+    crossCheckResult?: import('../api/incomeSourceApi').IncomeSourceCrossCheckResult | null;
+  };
+  /** Chat tư vấn thuế AI. Không sessionId = phiên mới; nonce để nạp lại khi mở từ Lịch sử */
+  TaxChat: { sessionId?: string; nonce?: number } | undefined;
+  TaxChatHistory: undefined;
+  SettlementStart: undefined;
+  SettlementPreview: {
+    taxYear: number;
+    cutoffDate?: string;
+    charityDeduction?: number;
+  };
+  SettlementSuccess: {
+    dossierId: string;
+    taxYear: number;
+    cutoffDate: string;
+    refundAmount: number;
+    dueAmount: number;
+    summaryMessage: string;
+  };
+  SettlementList: undefined;
+  SettlementDetail: { id: string };
+  SettlementExportForm: {
+    dossierId: string;
+    taxYear?: number;
+    refundAmount?: number;
+  };
+  SettlementPdfViewer: {
+    dossierId: string;
+    form: import('../types/taxSettlement').TaxSettlementExportPdfRequest;
+  };
+  SettlementZipReady: {
+    dossierId: string;
+    form: import('../types/taxSettlement').TaxSettlementExportZipRequest;
+    refundAmount?: number;
+    package?: import('../types/taxSettlement').TaxSettlementPackageZipResponse;
+  };
+  SettlementDownloadExpired: {
+    dossierId: string;
+    refundAmount?: number;
+  };
+  ExpertList: undefined;
+  ExpertDetail: { expertProfileId: string };
+  BookingCreate: { expertProfileId: string; initialSlotId?: string; specializationId?: number };
+  MyBookings: { initialStatus?: string } | undefined;
+  BookingDetail: { bookingId: string; isExpertView?: boolean; autoPay?: boolean };
+  ExpertBookings: { initialTab?: 'pending' | 'all' } | undefined;
+  ExpertSlots: undefined;
+  ExpertApplication: undefined;
+  PaymentResult:
+    | {
+        bookingId?: string;
+        isSuccess?: boolean;
+        vnp_ResponseCode?: string;
+        vnp_TxnRef?: string;
+        message?: string;
+        vnpParams?: Record<string, string>;
+        [key: string]: any;
+      }
+    | undefined;
+  Wallet: { walletType?: 'EXPERT' | 'USER' } | undefined;
 };
 
 export type RootNavigationProp = NativeStackNavigationProp<RootStackParamList>;

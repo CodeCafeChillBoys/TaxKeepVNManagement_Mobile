@@ -14,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
+import { HomeHeaderButton } from '../../components/navigation/HomeHeaderButton';
 import { authApi } from '../../api/authApi';
 import { PasswordStrengthBar } from '../../components/common/PasswordStrengthBar';
 import { RootNavigationProp } from '../../navigation/types';
@@ -125,7 +126,7 @@ export const ChangePasswordScreen: React.FC = () => {
         <Text style={styles.headerTitle} testID="changePasswordHeaderTitle">
           ĐỔI MẬT KHẨU
         </Text>
-        <View style={{ width: 40 }} />
+        <View style={styles.homeSlot}><HomeHeaderButton /></View>
       </View>
 
       <ScrollView
@@ -308,6 +309,8 @@ export const ChangePasswordScreen: React.FC = () => {
 };
 
 const styles = StyleSheet.create({
+  // Ô phải header: nút về Trang chủ, giữ độ rộng cũ để tiêu đề vẫn ở giữa
+  homeSlot: { width: 40, alignItems: 'flex-end', justifyContent: 'center' },
   safeArea: {
     flex: 1,
     backgroundColor: theme.colors.background,

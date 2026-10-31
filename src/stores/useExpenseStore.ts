@@ -1,0 +1,567 @@
+import { create } from 'zustand';
+import { storageHelper } from '../api/apiClient';
+import { ExpenseOcrResult, TaxPeriodItem, TaxDocumentTypeItem } from '../types/expense';
+import { expenseApi, mapDocumentReviewToOcrResult } from '../api/expenseApi';
+
+// Tạo khóa lưu trữ riêng biệt cho từng tài khoản người dùng, tránh lộ hóa đơn giữa các user
+export const getExpenseStorageKey = (userId?: string | null): string => {
+  if (userId && typeof userId === 'string' && userId.trim()) {
+    return `taxkeep_expense_store_u_${userId.trim()}`;
+  }
+  return 'taxkeep_expense_store_guest';
+};
+
+// Danh mục loại chứng từ được tải trực tiếp từ DB của admin qua API /tax-document-types
+export const DEFAULT_DOCUMENT_TYPES: TaxDocumentTypeItem[] = [];
+
+interface ExpenseState {
+  currentUserId: string | null;
+  selectedYear: number | null;
+  availableYears: number[];
+  periods: Record<number, TaxPeriodItem>;
+  documents: Record<number, ExpenseOcrResult[]>;
+  documentTypes: TaxDocumentTypeItem[];
+  isDocumentTypesLoading: boolean;
+  systemConfigs: Record<string, string>;
+  isSystemConfigsLoading: boolean;
+  isLoading: boolean;
+  error: string | null;
+
+  // Actions
+  switchUser: (userId?: string | null) => Promise<void>;
+  setSelectedYear: (year: number | null) => void;
+  addYear: (year: number) => void;
+  removeYear: (year: number) => void;
+  syncPeriods: (periods: TaxPeriodItem[]) => Promise<void>;
+  initPeriodForYear: (year: number, userId?: string) => Promise<TaxPeriodItem | null>;
+  submitPeriodForYear: (year: number) => Promise<TaxPeriodItem>;
+  fetchDocumentTypes: (isTaxEligible?: boolean) => Promise<TaxDocumentTypeItem[]>;
+  fetchSystemConfigs: () => Promise<Record<string, string>>;
+  getThresholdForCategory: (categoryCode?: string | null) => number;
+  getCrucialFieldsForCategory: (categoryCode?: string | null) => string[];
+  addOrUpdateDocument: (year: number, document: ExpenseOcrResult) => Promise<void>;
+  confirmDocument: (
+    year: number,
+    documentId: string,
+    updatedFields?: Partial<ExpenseOcrResult>
+  ) => Promise<void>;
+  removeDocument: (year: number, documentId: string) => Promise<void>;
+  clearAllExpenses: () => Promise<void>;
+  saveToStorage: () => Promise<void>;
+  loadFromStorage: (explicitUserId?: string | null) => Promise<void>;
+}
+
+export const useExpenseStore = create<ExpenseState>((set, get) => ({
+  currentUserId: null,
+  selectedYear: null,
+  availableYears: [],
+  periods: {},
+  documents: {},
+  documentTypes: [],
+  isDocumentTypesLoading: false,
+  systemConfigs: {},
+  isSystemConfigsLoading: false,
+  isLoading: false,
+  error: null,
+
+  switchUser: async (userId?: string | null) => {
+    const nextUserId = userId || null;
+    set({
+      currentUserId: nextUserId,
+      selectedYear: null,
+      availableYears: [],
+      periods: {},
+      documents: {},
+    });
+    await get().loadFromStorage(nextUserId);
+  },
+
+  setSelectedYear: (year: number | null) => {
+    set({ selectedYear: year });
+  },
+
+  addYear: (year: number) => {
+    const { availableYears, documents } = get();
+    if (!availableYears.includes(year)) {
+      const updatedYears = [year, ...availableYears].sort((a, b) => b - a);
+      const updatedDocs = { ...documents, [year]: documents[year] || [] };
+      set({ availableYears: updatedYears, selectedYear: year, documents: updatedDocs });
+      get().saveToStorage();
+    } else {
+      set({ selectedYear: year });
+    }
+  },
+
+  removeYear: (year: number) => {
+    const { availableYears, selectedYear, documents, periods } = get();
+    const updatedYears = availableYears.filter((y) => y !== year);
+    const nextSelectedYear =
+      selectedYear === year
+        ? (updatedYears.length > 0 ? updatedYears[0] : null)
+        : selectedYear;
+
+    const updatedDocs = { ...documents };
+    delete updatedDocs[year];
+    const updatedPeriods = { ...periods };
+    delete updatedPeriods[year];
+
+    set({
+      availableYears: updatedYears,
+      selectedYear: nextSelectedYear,
+      documents: updatedDocs,
+      periods: updatedPeriods,
+    });
+    get().saveToStorage();
+  },
+
+  syncPeriods: async (serverPeriods: TaxPeriodItem[]) => {
+    const years = serverPeriods.map((period) => period.taxYear).filter(Boolean).sort((a, b) => b - a);
+    const currentState = get();
+    const documents = years.reduce<Record<number, ExpenseOcrResult[]>>((result, year) => {
+      result[year] = currentState.documents[year] || [];
+      return result;
+    }, {});
+    const periods = serverPeriods.reduce<Record<number, TaxPeriodItem>>((result, period) => {
+      result[period.taxYear] = period;
+      return result;
+    }, {});
+
+    set({
+      availableYears: years,
+      selectedYear: currentState.selectedYear && years.includes(currentState.selectedYear)
+        ? currentState.selectedYear
+        : years[0] || null,
+      documents,
+      periods,
+    });
+    await get().saveToStorage();
+  },
+
+  initPeriodForYear: async (year: number, userId?: string) => {
+    set({ isLoading: true, error: null });
+    try {
+      if (userId && get().currentUserId !== userId) {
+        set({ currentUserId: userId });
+      }
+
+      const period = await expenseApi.initOrGetPeriod(year, userId);
+
+      // Tải danh sách chứng từ từ server cho kỳ tính thuế này
+      let serverDocs: ExpenseOcrResult[] | null = null;
+      try {
+        if (period?.periodId) {
+          const docsPaged = await expenseApi.getDocumentsByPeriod(period.periodId, { size: 100 });
+          const docList = Array.isArray(docsPaged) ? docsPaged : (docsPaged as any)?.items || [];
+          
+          // Luôn ánh xạ khi API trả về mảng (kể cả mảng rỗng [] khi đã xóa hết trong DB)
+          if (Array.isArray(docList)) {
+            serverDocs = docList.map((doc: any) => {
+              const cachedDoc = get().documents[year]?.find(
+                (existingDoc) => existingDoc.documentId === doc.id
+              );
+              const mapped = mapDocumentReviewToOcrResult(doc, year, get().documentTypes);
+              if (cachedDoc?.originalFileUri) {
+                mapped.originalFileUri = cachedDoc.originalFileUri;
+              }
+              if (doc.status) {
+                mapped.status = doc.status;
+              }
+              return mapped;
+            });
+          }
+        }
+      } catch (fetchErr: any) {
+        if (fetchErr?.response?.status === 404 || fetchErr?.message?.includes('Tax period not found')) {
+          // Kỳ tính thuế đã bị xóa trên máy chủ DB!
+          get().removeYear(year);
+          set({ isLoading: false });
+          return {
+            periodId: '',
+            taxYear: year,
+            status: 'DRAFT',
+            createdAt: new Date().toISOString(),
+          };
+        }
+        console.warn(`Không thể tải documents từ server cho kỳ ${period?.periodId}:`, fetchErr);
+      }
+
+      set((state) => {
+        const updatedPeriods = { ...state.periods, [year]: period };
+        const updatedYears = state.availableYears.includes(year)
+          ? state.availableYears
+          : [year, ...state.availableYears].sort((a, b) => b - a);
+
+        let finalDocs = state.documents[year] || [];
+        if (serverDocs !== null) {
+          // Server là nguồn dữ liệu chuẩn xác nhất:
+          // Nếu đã xóa chứng từ trong DB, serverDocs sẽ là [] -> xóa ngay khỏi UI
+          finalDocs = serverDocs;
+        }
+
+        return {
+          periods: updatedPeriods,
+          documents: {
+            ...state.documents,
+            [year]: finalDocs,
+          },
+          availableYears: updatedYears,
+          selectedYear: state.selectedYear || year,
+          isLoading: false,
+        };
+      });
+
+      get().saveToStorage();
+      return period;
+    } catch (err: any) {
+      const isSubmitted =
+        err?.response?.status === 403 ||
+        err?.message?.toLowerCase().includes('submitted') ||
+        err?.message?.toLowerCase().includes('locked');
+
+      if (isSubmitted) {
+        const existingPeriod = get().periods[year];
+        const submittedPeriod: TaxPeriodItem = {
+          periodId: existingPeriod?.periodId || `period-${year}-submitted`,
+          taxYear: year,
+          status: 'SUBMITTED',
+          createdAt: existingPeriod?.createdAt || new Date().toISOString(),
+        };
+
+        set((state) => ({
+          periods: { ...state.periods, [year]: submittedPeriod },
+          isLoading: false,
+        }));
+        get().saveToStorage();
+        return submittedPeriod;
+      }
+
+      if (err?.response?.status === 401) {
+        // Phiên đăng nhập hết hạn hoặc chưa đăng nhập, không log warning hệ thống
+        set({ isLoading: false });
+        return null;
+      }
+
+      if (err?.response?.status === 404) {
+        // Kỳ tính thuế không tồn tại hoặc đã bị xóa trong DB
+        get().removeYear(year);
+      }
+
+      console.warn(`Lỗi khi khởi tạo TaxPeriod cho năm ${year}:`, err);
+      set({
+        isLoading: false,
+        error: `Chưa tạo được hồ sơ quyết toán năm ${year}. Kiểm tra kết nối mạng rồi thử lại.`,
+      });
+      return null;
+    }
+  },
+
+  submitPeriodForYear: async (year: number) => {
+    const period = get().periods[year];
+    if (!period?.periodId) {
+      throw new Error('Chưa có kỳ tính thuế để nộp.');
+    }
+
+    const submittedPeriod = await expenseApi.submitTaxPeriod(period.periodId);
+    set((state) => ({
+      periods: { ...state.periods, [year]: submittedPeriod },
+    }));
+    await get().saveToStorage();
+    return submittedPeriod;
+  },
+
+  fetchDocumentTypes: async (isTaxEligible?: boolean) => {
+    set({ isDocumentTypesLoading: true });
+    try {
+      const types = await expenseApi.getTaxDocumentTypes(isTaxEligible);
+      if (Array.isArray(types) && types.length > 0) {
+        set({ documentTypes: types, isDocumentTypesLoading: false });
+        get().saveToStorage();
+        return types;
+      }
+      set({ isDocumentTypesLoading: false });
+      return get().documentTypes;
+    } catch {
+      set({ isDocumentTypesLoading: false });
+      return get().documentTypes;
+    }
+  },
+
+  fetchSystemConfigs: async () => {
+    set({ isSystemConfigsLoading: true });
+    try {
+      const list = await expenseApi.getSystemConfigs(true);
+      if (Array.isArray(list) && list.length > 0) {
+        const configMap: Record<string, string> = {};
+        for (const item of list) {
+          if (item && item.config_key) {
+            configMap[item.config_key] = item.config_value;
+          }
+        }
+        set({ systemConfigs: configMap, isSystemConfigsLoading: false });
+        get().saveToStorage();
+        return configMap;
+      }
+      set({ isSystemConfigsLoading: false });
+      return get().systemConfigs;
+    } catch (err) {
+      console.warn('Lỗi khi tải cấu hình hệ thống từ admin:', err);
+      set({ isSystemConfigsLoading: false });
+      return get().systemConfigs;
+    }
+  },
+
+  getThresholdForCategory: (categoryCode?: string | null) => {
+    const configs = get().systemConfigs;
+    // Tầng 1: Kiểm tra ngưỡng riêng theo danh mục (vd: THRESHOLD_MEDICAL_EXPENSE_INVOICE) do Admin cấu hình
+    if (categoryCode && typeof categoryCode === 'string') {
+      const specificKey = `THRESHOLD_${categoryCode.trim().toUpperCase()}`;
+      const specificVal = configs[specificKey];
+      if (specificVal !== undefined && specificVal !== null && specificVal !== '') {
+        const num = parseFloat(String(specificVal).replace(',', '.'));
+        if (!isNaN(num) && num >= 0 && num <= 1) {
+          return num;
+        }
+      }
+    }
+
+    // Tầng 2: Nếu danh mục chưa được cấu hình riêng, lấy Độ chính xác nhận diện tối thiểu chung (AI_CONFIDENCE_THRESHOLD)
+    const generalVal = configs['AI_CONFIDENCE_THRESHOLD'];
+    if (generalVal !== undefined && generalVal !== null && generalVal !== '') {
+      const num = parseFloat(String(generalVal).replace(',', '.'));
+      if (!isNaN(num) && num >= 0 && num <= 1) {
+        return num;
+      }
+    }
+
+    // Tầng 3: Fallback mặc định an toàn (0.80)
+    return 0.8;
+  },
+
+  getCrucialFieldsForCategory: (categoryCode?: string | null) => {
+    const configs = get().systemConfigs;
+    // Tầng 1: Kiểm tra trường cốt lõi theo danh mục CRUCIAL_FIELDS_{categoryCode}
+    if (categoryCode && typeof categoryCode === 'string') {
+      const specificKey = `CRUCIAL_FIELDS_${categoryCode.trim().toUpperCase()}`;
+      const specificVal = configs[specificKey];
+      if (specificVal && typeof specificVal === 'string' && specificVal.trim()) {
+        return specificVal.split(',').map((s) => s.trim()).filter(Boolean);
+      }
+    }
+
+    // Tầng 2: Kiểm tra trường cốt lõi chung toàn hệ thống CRUCIAL_EXTRACTION_FIELDS
+    const generalVal = configs['CRUCIAL_EXTRACTION_FIELDS'];
+    if (generalVal && typeof generalVal === 'string' && generalVal.trim()) {
+      return generalVal.split(',').map((s) => s.trim()).filter(Boolean);
+    }
+
+    // Tầng 3: Danh sách mặc định
+    return ['total_amount', 'seller_tax_code', 'buyer_id_card', 'invoice_number'];
+  },
+
+  addOrUpdateDocument: async (year: number, document: ExpenseOcrResult) => {
+    const numYear = Number(year);
+    set((state) => {
+      const currentList = state.documents[numYear] || [];
+      const docId = document.documentId || `doc-${Date.now()}`;
+      const docToSave = { ...document, documentId: docId, extractedYear: numYear };
+
+      const existingIndex = currentList.findIndex((d) => d.documentId === docId);
+      let updatedList: ExpenseOcrResult[];
+
+      if (existingIndex >= 0) {
+        updatedList = [...currentList];
+        updatedList[existingIndex] = { ...updatedList[existingIndex], ...docToSave };
+      } else {
+        updatedList = [docToSave, ...currentList];
+      }
+
+      const updatedYears = state.availableYears.includes(numYear)
+        ? state.availableYears
+        : [numYear, ...state.availableYears].sort((a, b) => b - a);
+
+      return {
+        availableYears: updatedYears,
+        selectedYear: numYear,
+        documents: {
+          ...state.documents,
+          [numYear]: updatedList,
+        },
+      };
+    });
+
+    await get().saveToStorage();
+  },
+
+  confirmDocument: async (
+    year: number,
+    documentId: string,
+    updatedFields?: Partial<ExpenseOcrResult>
+  ) => {
+    set((state) => {
+      const currentList = state.documents[year] || [];
+      const updatedList = currentList.map((doc) => {
+        if (doc.documentId === documentId) {
+          return {
+            ...doc,
+            ...updatedFields,
+            status: 'CONFIRMED' as const,
+          };
+        }
+        return doc;
+      });
+
+      return {
+        documents: {
+          ...state.documents,
+          [year]: updatedList,
+        },
+      };
+    });
+
+    await get().saveToStorage();
+  },
+
+  removeDocument: async (year: number, documentId: string) => {
+    const periodId = get().periods[year]?.periodId;
+    if (periodId) {
+      try {
+        await expenseApi.deleteDocument(periodId, documentId);
+      } catch (error: any) {
+        if (error?.response?.status !== 404) {
+          throw error;
+        }
+      }
+    }
+
+    set((state) => {
+      const currentList = state.documents[year] || [];
+      const updatedList = currentList.filter((doc) => doc.documentId !== documentId);
+      return {
+        documents: {
+          ...state.documents,
+          [year]: updatedList,
+        },
+      };
+    });
+
+    await get().saveToStorage();
+  },
+
+  clearAllExpenses: async () => {
+    const targetUserId = get().currentUserId;
+    set({
+      documents: {},
+      availableYears: [],
+      selectedYear: null,
+      periods: {},
+      documentTypes: DEFAULT_DOCUMENT_TYPES,
+      currentUserId: null,
+    });
+    try {
+      if (targetUserId) {
+        await storageHelper.removeItem(getExpenseStorageKey(targetUserId));
+      }
+      await storageHelper.removeItem('taxkeep_expense_store_guest');
+      await storageHelper.removeItem('taxkeep_expense_store_v6');
+      await storageHelper.removeItem('taxkeep_expense_store_v5');
+      await storageHelper.removeItem('taxkeep_expense_store_v4');
+      await storageHelper.removeItem('taxkeep_expense_store_v3');
+      await storageHelper.removeItem('taxkeep_expense_store_v2');
+      await storageHelper.removeItem('taxkeep_expense_store_v1');
+    } catch (e) {
+      console.warn('Lỗi clear storage:', e);
+    }
+  },
+
+  saveToStorage: async () => {
+    try {
+      const { currentUserId, availableYears, periods, documents, selectedYear, documentTypes, systemConfigs } = get();
+      let targetUserId = currentUserId;
+      if (!targetUserId) {
+        try {
+          const { useAuthStore } = await import('./useAuthStore');
+          targetUserId = useAuthStore.getState().user?.id || null;
+        } catch {}
+      }
+      const key = getExpenseStorageKey(targetUserId);
+      const payload = JSON.stringify({
+        availableYears,
+        periods,
+        documents,
+        selectedYear,
+        documentTypes,
+        systemConfigs,
+      });
+      await storageHelper.setItem(key, payload);
+    } catch (e) {
+      console.warn('Lỗi lưu useExpenseStore vào storage:', e);
+    }
+  },
+
+  loadFromStorage: async (explicitUserId?: string | null) => {
+    try {
+      // Dọn dẹp triệt để các key cache cũ dùng chung không theo userId
+      try {
+        await storageHelper.removeItem('taxkeep_expense_store_v6');
+        await storageHelper.removeItem('taxkeep_expense_store_v5');
+        await storageHelper.removeItem('taxkeep_expense_store_v4');
+      } catch {}
+
+      let targetUserId = explicitUserId !== undefined ? explicitUserId : get().currentUserId;
+      if (!targetUserId) {
+        try {
+          const { useAuthStore } = await import('./useAuthStore');
+          targetUserId = useAuthStore.getState().user?.id || null;
+        } catch {}
+      }
+
+      // Nếu chuyển user khác, reset trắng state trước khi nạp dữ liệu của user mới
+      if (targetUserId !== get().currentUserId) {
+        set({
+          currentUserId: targetUserId || null,
+          availableYears: [],
+          selectedYear: null,
+          periods: {},
+          documents: {},
+        });
+      }
+
+      const key = getExpenseStorageKey(targetUserId);
+      const dataStr = await storageHelper.getItem(key);
+      if (dataStr) {
+        const parsed = JSON.parse(dataStr);
+        const loadedYears = Array.isArray(parsed.availableYears) ? parsed.availableYears : [];
+        const nextSelected =
+          parsed.selectedYear !== undefined &&
+          parsed.selectedYear !== null &&
+          loadedYears.includes(parsed.selectedYear)
+            ? parsed.selectedYear
+            : loadedYears.length > 0
+            ? loadedYears[0]
+            : null;
+
+        set({
+          availableYears: loadedYears,
+          periods: parsed.periods || {},
+          documents: parsed.documents || {},
+          selectedYear: nextSelected,
+          documentTypes:
+            Array.isArray(parsed.documentTypes) && parsed.documentTypes.length > 0
+              ? parsed.documentTypes
+              : DEFAULT_DOCUMENT_TYPES,
+          systemConfigs: parsed.systemConfigs || {},
+        });
+      } else {
+        set({
+          availableYears: [],
+          selectedYear: null,
+          periods: {},
+          documents: {},
+          documentTypes: DEFAULT_DOCUMENT_TYPES,
+        });
+      }
+    } catch (e) {
+      console.warn('Lỗi tải useExpenseStore từ storage:', e);
+    }
+  },
+}));

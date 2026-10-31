@@ -1,0 +1,371 @@
+# Thu nhập theo tháng + OCR phiếu lương — Expo Go
+# Chạy:
+#   maestro test .maestro/flows/income_monthly.yaml \
+#     -e TEST_USER_ID=... -e TEST_USER_PASSWORD=...
+# Ảnh: .maestro/screenshots/income-monthly/
+# OCR cần AI service (develop + Gemini). Nếu AI không chạy: bỏ qua bước OCR trong báo cáo.
+appId: host.exp.exponent
+name: income_monthly
+tags:
+  - income
+  - monthly
+  - ocr
+---
+- launchApp:
+    appId: host.exp.exponent
+    clearState: false
+    permissions:
+      all: allow
+- openLink: exp://10.0.2.2:8081
+- extendedWaitUntil:
+    visible: ".*Đăng nhập.*|.*Xin chào.*|.*Trang chủ.*|.*Thu nhập.*|.*CCCD.*"
+    timeout: 120000
+
+# Đăng nhập nếu cần (không ghi cứng tài khoản)
+- runFlow:
+    when:
+      visible: ".*Đăng nhập.*|.*CCCD.*|.*mật khẩu.*"
+    commands:
+      - tapOn:
+          text: ".*CCCD.*|.*căn cước.*|.*Email.*"
+          optional: true
+      - eraseText
+      - inputText: ${TEST_USER_ID}
+      - tapOn:
+          text: ".*mật khẩu.*|.*Mật khẩu.*"
+          optional: true
+      - eraseText
+      - inputText: ${TEST_USER_PASSWORD}
+      - tapOn: "Đăng nhập"
+      - extendedWaitUntil:
+          visible: "OK|Xin chào|Trang chủ|Thu nhập"
+          timeout: 30000
+      - runFlow:
+          when:
+            visible: "OK"
+          commands:
+            - tapOn: "OK"
+
+# Vào tab Thu nhập
+- tapOn:
+    id: "mainTab_IncomeSourceList"
+- extendedWaitUntil:
+    visible:
+      id: "incomeView_yearly"
+    timeout: 20000
+- assertVisible:
+    id: "incomeView_monthly"
+- takeScreenshot: screenshots/income-monthly/01-toggle
+
+# Theo tháng · năm 2024 trống
+- tapOn:
+    id: "incomeView_monthly"
+- extendedWaitUntil:
+    visible:
+      id: "monthlyIncomeScroll"
+    timeout: 15000
+- tapOn:
+    id: "monthlyYear_2024"
+- extendedWaitUntil:
+    visible: ".*Chưa có thu nhập tháng nào.*"
+    timeout: 15000
+- takeScreenshot: screenshots/income-monthly/02-empty-2024
+- tapOn:
+    id: "monthlyYear_2026"
+- waitForAnimationToEnd
+
+# Thêm tháng · validation
+- tapOn:
+    id: "addMonthlyIncomeBtn"
+- extendedWaitUntil:
+    visible:
+      id: "incomeFormScroll"
+    timeout: 15000
+- tapOn:
+    id: "saveMonthlyIncomeBtn"
+- extendedWaitUntil:
+    visible:
+      id: "incomeFormError"
+    timeout: 8000
+- takeScreenshot: screenshots/income-monthly/03-validation
+
+# Điền tay
+- tapOn:
+    id: "incomeInput_organizationName"
+- eraseText
+- inputText: "Cong ty Test Thu Nhap"
+- tapOn:
+    id: "incomeInput_taxIdNumber"
+- eraseText
+- inputText: "0101248141"
+- tapOn:
+    id: "incomeInput_month"
+- eraseText
+- inputText: "1"
+- tapOn:
+    id: "incomeInput_year"
+- eraseText
+- inputText: "2026"
+- tapOn:
+    id: "incomeInput_totalTaxableIncome"
+- eraseText
+- inputText: "30000000"
+- tapOn:
+    id: "incomeInput_insuranceDeducted"
+- eraseText
+- inputText: "3150000"
+- tapOn:
+    id: "incomeInput_taxAlreadyDeducted"
+- eraseText
+- inputText: "1000000"
+- tapOn: "Quét phiếu lương"
+- scrollUntilVisible:
+    element:
+      id: "saveMonthlyIncomeBtn"
+    direction: DOWN
+    timeout: 15000
+    visibilityPercentage: 50
+- assertVisible: ".*30\\.000\\.000.*"
+- takeScreenshot: screenshots/income-monthly/04-form-filled
+- tapOn:
+    id: "saveMonthlyIncomeBtn"
+- extendedWaitUntil:
+    visible:
+      id: "monthlyIncomeScroll"
+    timeout: 20000
+
+# Danh sách sau tạo
+- assertVisible: ".*Cong ty Test Thu Nhap.*"
+- assertVisible: ".*30\\.000\\.000.*"
+- assertVisible: ".*1 tháng.*"
+- takeScreenshot: screenshots/income-monthly/05-list-after-create
+- tapOn: ".*Cong ty Test Thu Nhap.*"
+- extendedWaitUntil:
+    visible: ".*T1.*"
+    timeout: 8000
+- takeScreenshot: screenshots/income-monthly/06-expanded
+
+# Trùng tháng
+- tapOn:
+    id: "addMonthlyIncomeBtn"
+- extendedWaitUntil:
+    visible:
+      id: "incomeFormScroll"
+    timeout: 15000
+- tapOn:
+    id: "incomeInput_organizationName"
+- eraseText
+- inputText: "Cong ty Test Thu Nhap"
+- tapOn:
+    id: "incomeInput_taxIdNumber"
+- eraseText
+- inputText: "0101248141"
+- tapOn:
+    id: "incomeInput_month"
+- eraseText
+- inputText: "1"
+- tapOn:
+    id: "incomeInput_year"
+- eraseText
+- inputText: "2026"
+- tapOn:
+    id: "incomeInput_totalTaxableIncome"
+- eraseText
+- inputText: "30000000"
+- tapOn:
+    id: "incomeInput_insuranceDeducted"
+- eraseText
+- inputText: "3150000"
+- tapOn: "Quét phiếu lương"
+- scrollUntilVisible:
+    element:
+      id: "duplicateMonthWarning"
+    direction: DOWN
+    timeout: 12000
+    visibilityPercentage: 40
+- takeScreenshot: screenshots/income-monthly/07-duplicate-warning
+- tapOn:
+    id: "saveMonthlyIncomeBtn"
+- extendedWaitUntil:
+    visible: ".*Có thể bị trùng.*"
+    timeout: 8000
+- takeScreenshot: screenshots/income-monthly/08-duplicate-alert
+- tapOn: "Xem lại"
+- waitForAnimationToEnd
+- tapOn:
+    id: "incomeFormBack"
+- extendedWaitUntil:
+    visible:
+      id: "monthlyIncomeScroll"
+    timeout: 15000
+
+# Sửa T1 → 32.000.000
+- tapOn: ".*Cong ty Test Thu Nhap.*"
+- extendedWaitUntil:
+    visible: ".*T1.*"
+    timeout: 8000
+- tapOn: ".*T1.*"
+- extendedWaitUntil:
+    visible:
+      id: "incomeFormScroll"
+    timeout: 15000
+- tapOn:
+    id: "incomeInput_totalTaxableIncome"
+- eraseText
+- inputText: "32000000"
+- tapOn: "Quét phiếu lương"
+- scrollUntilVisible:
+    element:
+      id: "saveMonthlyIncomeBtn"
+    direction: DOWN
+    timeout: 10000
+    visibilityPercentage: 50
+- tapOn:
+    id: "saveMonthlyIncomeBtn"
+- extendedWaitUntil:
+    visible:
+      id: "monthlyIncomeScroll"
+    timeout: 20000
+- assertVisible: ".*32\\.000\\.000.*"
+- takeScreenshot: screenshots/income-monthly/09-after-edit
+
+# ── OCR (cần AI). addMedia đẩy ảnh vào thư viện trước khi chọn.
+- addMedia:
+    - "../assets/income-monthly/payslip.jpg"
+    - "../assets/income-monthly/not-payslip.jpg"
+
+# OCR thành công
+- tapOn:
+    id: "addMonthlyIncomeBtn"
+- extendedWaitUntil:
+    visible:
+      id: "scanPayslipLibrary"
+    timeout: 15000
+- tapOn:
+    id: "scanPayslipLibrary"
+# Chọn ảnh phiếu lương trong picker hệ thống (nhãn có thể khác theo emulator)
+- extendedWaitUntil:
+    visible: ".*Photos.*|.*Gallery.*|.*Thư viện.*|.*Recent.*|.*Pictures.*|.*payslip.*"
+    timeout: 15000
+    optional: true
+- tapOn:
+    text: ".*payslip.*|.*Phieu.*|.*DEMO.*"
+    optional: true
+- runFlow:
+    when:
+      visible: ".*Đang đọc phiếu lương.*"
+    commands:
+      - takeScreenshot: screenshots/income-monthly/10-ocr-loading
+- extendedWaitUntil:
+    visible:
+      id: "payslipOcrResult"
+    timeout: 90000
+    optional: true
+- runFlow:
+    when:
+      visible:
+        id: "payslipOcrResult"
+    commands:
+      - takeScreenshot: screenshots/income-monthly/11-ocr-result
+      - runFlow:
+          when:
+            visible:
+              id: "payslipAttachment"
+          commands:
+            - tapOn:
+                id: "payslipAttachment"
+            - waitForAnimationToEnd:
+                timeout: 3000
+            - back
+      - tapOn:
+          id: "saveMonthlyIncomeBtn"
+      - extendedWaitUntil:
+          visible:
+            id: "monthlyIncomeScroll"
+          timeout: 20000
+      - takeScreenshot: screenshots/income-monthly/12-list-after-ocr
+
+# OCR lỗi (ảnh không phải phiếu)
+- runFlow:
+    when:
+      visible:
+        id: "addMonthlyIncomeBtn"
+    commands:
+      - tapOn:
+          id: "addMonthlyIncomeBtn"
+      - extendedWaitUntil:
+          visible:
+            id: "scanPayslipLibrary"
+          timeout: 15000
+      - tapOn:
+          id: "scanPayslipLibrary"
+      - tapOn:
+          text: ".*not-payslip.*|.*Canh dong.*|.*landscape.*"
+          optional: true
+      - extendedWaitUntil:
+          visible:
+            id: "incomeFormError"
+          timeout: 90000
+          optional: true
+      - runFlow:
+          when:
+            visible:
+              id: "incomeFormError"
+          commands:
+            - takeScreenshot: screenshots/income-monthly/13-ocr-error
+      - tapOn:
+          id: "incomeFormBack"
+          optional: true
+
+# Xóa dữ liệu test
+- extendedWaitUntil:
+    visible:
+      id: "monthlyIncomeScroll"
+    timeout: 20000
+- tapOn:
+    id: "monthlyYear_2026"
+- waitForAnimationToEnd
+- runFlow:
+    when:
+      visible: ".*Cong ty Test Thu Nhap.*"
+    commands:
+      - tapOn: ".*Cong ty Test Thu Nhap.*"
+      - tapOn: ".*T1.*"
+      - extendedWaitUntil:
+          visible:
+            id: "deleteMonthlyIncomeBtn"
+          timeout: 10000
+      - tapOn:
+          id: "deleteMonthlyIncomeBtn"
+      - tapOn: "Xóa"
+      - extendedWaitUntil:
+          visible:
+            id: "monthlyIncomeScroll"
+          timeout: 20000
+
+# Xóa thêm tháng OCR nếu còn (tổ chức từ phiếu)
+- runFlow:
+    when:
+      visible: ".*DEMO PAYSLIP.*|.*0312345678.*"
+    commands:
+      - tapOn: ".*DEMO PAYSLIP.*|.*0312345678.*"
+      - tapOn: ".*T.*"
+      - tapOn:
+          id: "deleteMonthlyIncomeBtn"
+      - tapOn: "Xóa"
+      - extendedWaitUntil:
+          visible:
+            id: "monthlyIncomeScroll"
+          timeout: 20000
+
+- takeScreenshot: screenshots/income-monthly/14-after-delete
+
+# Theo năm vẫn hoạt động
+- tapOn:
+    id: "incomeView_yearly"
+- extendedWaitUntil:
+    visible:
+      id: "incomeSummaryCard"
+    timeout: 15000
+- assertVisible: ".*nơi chi trả.*"
+- takeScreenshot: screenshots/income-monthly/15-yearly-still-works

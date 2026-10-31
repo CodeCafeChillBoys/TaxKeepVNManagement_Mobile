@@ -1,0 +1,30 @@
+# TC5 – Upload hoá đơn chi phí (ghi nhận kết quả)
+appId: host.exp.exponent
+name: withholding_r2_tc5_expense
+---
+- tapOn:
+    id: mainTab_Home
+- waitForAnimationToEnd:
+    timeout: 3000
+- tapOn:
+    id: homeExpenseListCard
+- waitForAnimationToEnd:
+    timeout: 4000
+- tapOn: "Tải lên hóa đơn đầu tiên"
+- waitForAnimationToEnd:
+    timeout: 4000
+- tapOn: "Thư viện"
+- waitForAnimationToEnd:
+    timeout: 5000
+# Chọn ảnh bất kỳ trong picker
+- tapOn:
+    point: "16%,32%"
+- waitForAnimationToEnd:
+    timeout: 4000
+- scrollUntilVisible:
+    element: "Đọc thông tin & Lưu hóa đơn"
+    direction: DOWN
+    timeout: 8000
+- tapOn: "Đọc thông tin & Lưu hóa đơn"
+- waitForAnimationToEnd:
+    timeout: 8000

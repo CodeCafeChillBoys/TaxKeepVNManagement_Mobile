@@ -14,9 +14,14 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
+import { HomeHeaderButton } from '../../components/navigation/HomeHeaderButton';
 import { profileApi, UserProfileResponse } from '../../api/profileApi';
 import { RootStackParamList, RootNavigationProp } from '../../navigation/types';
 import { useAuthStore } from '../../stores/useAuthStore';
+import {
+  applyEditProfileOcrResult,
+  buildEditProfileScanParams,
+} from './applyEditProfileOcrResult';
 
 type EditProfileRouteProp = RouteProp<RootStackParamList, 'EditProfile'>;
 
@@ -44,6 +49,18 @@ export const EditProfileScreen: React.FC = () => {
   useEffect(() => {
     fetchProfile();
   }, []);
+
+  useEffect(() => {
+    const result = route.params?.ocrResult;
+    if (!result) return;
+    const plan = applyEditProfileOcrResult(result);
+    setFullName(plan.fields.fullName);
+    setDateOfBirth(plan.fields.dateOfBirth);
+    setAddress(plan.fields.address);
+    // Không setCitizenId — CCCD khóa
+    navigation.setParams({ ocrResult: undefined });
+    Alert.alert(plan.alertTitle, plan.alertMessage);
+  }, [route.params?.ocrResult]);
 
   const fetchProfile = async () => {
     try {
@@ -194,7 +211,7 @@ export const EditProfileScreen: React.FC = () => {
             <Ionicons name="close" size={24} color={theme.colors.textPrimary} />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>CHỈNH SỬA HỒ SƠ</Text>
-          <View style={{ width: 40 }} />
+          <View style={styles.homeSlot}><HomeHeaderButton /></View>
         </View>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={theme.colors.primary} />
@@ -219,7 +236,7 @@ export const EditProfileScreen: React.FC = () => {
           <Ionicons name="close" size={24} color={theme.colors.textPrimary} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>CHỈNH SỬA HỒ SƠ</Text>
-        <View style={{ width: 40 }} />
+        <View style={styles.homeSlot}><HomeHeaderButton /></View>
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
@@ -227,21 +244,7 @@ export const EditProfileScreen: React.FC = () => {
         <TouchableOpacity
           style={styles.scanCccdBtn}
           onPress={() =>
-            Alert.alert(
-              'Quét Căn cước công dân (Task 1.1.T4)',
-              'Hệ thống AI/OCR sẽ tự động nhận diện Họ tên, Ngày sinh và Địa chỉ từ ảnh chụp căn cước để cập nhật vào biểu mẫu.',
-              [
-                { text: 'Đóng', style: 'cancel' },
-                {
-                  text: 'Điền thử dữ liệu OCR',
-                  onPress: () => {
-                    setFullName('Nguyễn Văn An');
-                    setDateOfBirth('1990-05-12');
-                    setAddress('123 Lê Lợi, P. Bến Nghé, Quận 1, TP.HCM');
-                  },
-                },
-              ]
-            )
+            navigation.navigate('ScanIdentity', buildEditProfileScanParams(citizenId))
           }
         >
           <Ionicons name="scan" size={20} color={theme.colors.primary} />
@@ -478,6 +481,8 @@ export const EditProfileScreen: React.FC = () => {
 };
 
 const styles = StyleSheet.create({
+  // Ô phải header: nút về Trang chủ, giữ độ rộng cũ để tiêu đề vẫn ở giữa
+  homeSlot: { width: 40, alignItems: 'flex-end', justifyContent: 'center' },
   safeArea: {
     flex: 1,
     backgroundColor: theme.colors.background,

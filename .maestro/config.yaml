@@ -1,0 +1,14 @@
+# Maestro workspace — TaxKeep FE (Expo Go)
+# Chạy: maestro test Mobile/FE/.maestro
+
+appId: host.exp.exponent
+
+# Flow 03 đã gỡ — thêm lại thư mục flow khi xây lại quyết toán
+flows:
+  - "flows/*"
+  - "!common/**"
+
+excludeTags:
+  - common
+
+testOutputDir: screenshots

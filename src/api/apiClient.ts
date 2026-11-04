@@ -2,6 +2,7 @@ import axios from 'axios';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 import { config, getLocalApiBaseUrl } from '../constants/config';
+import { emitQuotaExceeded, quotaErrorFrom } from '../utils/subscriptionQuota';
 
 // Hỗ trợ lưu token an toàn: trên thiết bị dùng SecureStore, trên Web dùng localStorage
 export const storageHelper = {
@@ -103,6 +104,10 @@ apiClient.interceptors.response.use(
         useAuthStore.setState({ token: null, user: null, isAuthenticated: false });
       } catch {}
     }
+    // Vượt hạn mức gói: mở hộp thoại "Nâng cấp gói" dùng chung, màn gọi API vẫn nhận lỗi như cũ
+    const quotaError = quotaErrorFrom(error);
+    if (quotaError) emitQuotaExceeded(quotaError);
+
     if (error.response?.status === 400) {
       console.warn(
         `[API 400] ${error.config?.method?.toUpperCase()} ${error.config?.baseURL || ''}${error.config?.url || ''}`,

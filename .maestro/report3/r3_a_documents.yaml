@@ -1,0 +1,78 @@
+# Report 3 — Figure 3-8 (phần chứng từ khấu trừ), 3-10, 3-11. Tài khoản người nộp thuế.
+appId: host.exp.exponent
+name: r3_a_documents
+tags:
+  - report3
+---
+- runFlow:
+    file: _login.yaml
+    env:
+      LOGIN_ID: ${TAXPAYER_ID}
+      LOGIN_PW: ${TAXPAYER_PW}
+
+# ===== Figure 3-8 (b): Tax Withholding Voucher =====
+- tapOn:
+    id: mainTab_IncomeSourceList
+- extendedWaitUntil:
+    visible:
+      id: uploadWithholdingVoucherBtn
+    timeout: 20000
+- tapOn:
+    id: uploadWithholdingVoucherBtn
+- extendedWaitUntil:
+    visible:
+      id: voucherScroll
+    timeout: 20000
+- waitForAnimationToEnd
+- takeScreenshot: screenshots/report3/3-08b-withholding-voucher
+- back
+
+# ===== Figure 3-10 (a): Invoices & Documents =====
+- tapOn:
+    id: mainTab_Home
+- scrollUntilVisible:
+    element:
+      id: homeExpenseListCard
+    direction: DOWN
+    timeout: 10000
+- tapOn:
+    id: homeExpenseListCard
+- extendedWaitUntil:
+    visible: "HÓA ĐƠN CHỨNG TỪ"
+    timeout: 20000
+- extendedWaitUntil:
+    notVisible: ".*Refreshing.*|.*Đang tải.*"
+    timeout: 30000
+- assertNotVisible:
+    id: expensePeriodError
+# Danh sách phải có ít nhất một hóa đơn (thẻ "HĐ <số>"), không chụp trạng thái rỗng
+- assertVisible: "HĐ .*"
+- takeScreenshot: screenshots/report3/3-10a-expense-list
+
+# ===== Figure 3-10 (b): Upload Invoices & Documents =====
+- scrollUntilVisible:
+    element: "Tải lên hóa đơn & chứng từ.*"
+    direction: DOWN
+    timeout: 10000
+- tapOn: "Tải lên hóa đơn & chứng từ.*"
+- extendedWaitUntil:
+    visible: "TẢI LÊN HÓA ĐƠN & CHỨNG TỪ"
+    timeout: 20000
+- waitForAnimationToEnd
+- takeScreenshot: screenshots/report3/3-10b-expense-upload
+- back
+
+# ===== Figure 3-11: Invoice Review (hóa đơn đang "Chờ soát xét") =====
+- extendedWaitUntil:
+    visible: "HÓA ĐƠN CHỨNG TỪ"
+    timeout: 20000
+- tapOn: "Chờ soát xét.*"
+- waitForAnimationToEnd
+- tapOn:
+    text: "HĐ .*"
+    index: 0
+- extendedWaitUntil:
+    visible: "SOÁT XÉT HÓA ĐƠN"
+    timeout: 30000
+- waitForAnimationToEnd
+- takeScreenshot: screenshots/report3/3-11-invoice-review

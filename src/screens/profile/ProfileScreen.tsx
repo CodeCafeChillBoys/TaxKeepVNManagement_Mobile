@@ -225,6 +225,11 @@ export const ProfileScreen: React.FC = () => {
 
         <Text style={styles.sectionTitle}>Liên kết</Text>
         <LinkRow
+          label="Gói của tôi"
+          onPress={() => navigation.navigate('SubscriptionMy')}
+          testID="quickLinkSubscriptionMy"
+        />
+        <LinkRow
           label="Đổi mật khẩu"
           onPress={() => navigation.navigate('ChangePassword')}
           testID="quickLinkChangePassword"

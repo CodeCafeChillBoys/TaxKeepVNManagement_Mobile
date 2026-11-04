@@ -1,0 +1,48 @@
+# Report 3 — Figure 3-13: AI Tax Q&A và Chat History. Tài khoản người nộp thuế. Cần AI Service đang chạy.
+appId: host.exp.exponent
+name: r3_b_chat
+tags:
+  - report3
+---
+- runFlow:
+    file: _login.yaml
+    env:
+      LOGIN_ID: ${TAXPAYER_ID}
+      LOGIN_PW: ${TAXPAYER_PW}
+
+- tapOn:
+    id: homeTaxChatFab
+- extendedWaitUntil:
+    visible:
+      id: chatInput
+    timeout: 20000
+- tapOn:
+    id: chatInput
+# inputText không gõ được dấu tiếng Việt trên Android, nên dán qua clipboard
+- setClipboard: "Mức giảm trừ cho mỗi người phụ thuộc năm 2026 là bao nhiêu?"
+- pasteText
+- tapOn:
+    id: chatSendBtn
+- extendedWaitUntil:
+    visible:
+      id: chatAiMessage
+    timeout: 90000
+- extendedWaitUntil:
+    notVisible:
+      id: chatTyping
+    timeout: 90000
+- assertNotVisible:
+    id: chatErrorText
+- waitForAnimationToEnd
+- takeScreenshot: screenshots/report3/3-13a-tax-chat
+
+- tapOn:
+    id: chatHistoryBtn
+- extendedWaitUntil:
+    visible:
+      id: chatSessionList
+    timeout: 20000
+- assertNotVisible:
+    id: chatHistoryEmpty
+- waitForAnimationToEnd
+- takeScreenshot: screenshots/report3/3-13b-chat-history

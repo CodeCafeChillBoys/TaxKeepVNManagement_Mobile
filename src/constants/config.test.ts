@@ -56,6 +56,12 @@ describe('config auto-detection tests', () => {
     expect(getLocalApiBaseUrl()).toBe('https://api.taxkeep.vn');
   });
 
+  it('honors http deploy gateway URL from env over auto-detection', () => {
+    mockConstants.expoConfig = { hostUri: '192.168.1.200:8081' };
+    process.env.EXPO_PUBLIC_API_URL = 'http://13.236.166.3:5000';
+    expect(getLocalApiBaseUrl()).toBe('http://13.236.166.3:5000');
+  });
+
   it('falls back to DEV_LAN_HOST when no host can be detected', () => {
     delete mockConstants.expoConfig;
     delete mockConstants.manifest;

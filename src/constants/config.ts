@@ -60,6 +60,12 @@ export const DEV_LAN_HOST = '192.168.110.124';
  * - Fallback: DEV_LAN_HOST hoặc 10.0.2.2 (Android emulator)
  */
 export function getLocalApiBaseUrl(): string {
+  const fromEnv = process.env.EXPO_PUBLIC_API_URL?.trim() || process.env.EXPO_PUBLIC_API_BASE_URL?.trim();
+  // URL cố định từ .env (deploy / ngrok / https) luôn thắng — cả web lẫn native
+  if (fromEnv && /^https?:\/\//i.test(fromEnv)) {
+    return fromEnv.replace(/\/+$/, '');
+  }
+
   if (Platform.OS === 'web') {
     if (typeof window !== 'undefined' && window.location) {
       const hostname = window.location.hostname;
@@ -73,12 +79,6 @@ export function getLocalApiBaseUrl(): string {
     return `http://localhost:${API_PORT}`;
   }
 
-  const fromEnv = process.env.EXPO_PUBLIC_API_URL?.trim() || process.env.EXPO_PUBLIC_API_BASE_URL?.trim();
-  // Nếu có URL cố định dạng domain https (ngrok, tunnel, server production), ưu tiên dùng
-  if (fromEnv && fromEnv.startsWith('https://')) {
-    return fromEnv.replace(/\/+$/, '');
-  }
-
   // TỰ ĐỘNG nhận diện IP từ Metro Bundler (không cần cấu hình thủ công)
   const autoHost = getAutoDetectedHost();
   if (autoHost) {
@@ -86,11 +86,6 @@ export function getLocalApiBaseUrl(): string {
       return `http://10.0.2.2:${API_PORT}`;
     }
     return `http://${autoHost}:${API_PORT}`;
-  }
-
-  // Nếu không detect được từ Metro thì kiểm tra env http://...
-  if (fromEnv) {
-    return fromEnv.replace(/\/+$/, '');
   }
 
   // Máy thật Android / iOS fallback

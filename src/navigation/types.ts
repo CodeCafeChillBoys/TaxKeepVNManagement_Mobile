@@ -120,6 +120,18 @@ export type RootStackParamList = {
       }
     | undefined;
   Wallet: { walletType?: 'EXPERT' | 'USER' } | undefined;
+  SubscriptionPlans: undefined;
+  /** Gói của tôi: hạn mức đã dùng, hủy gói */
+  SubscriptionMy: undefined;
+  SubscriptionHistory: undefined;
+  /** VNPay trả về sau khi mua gói (web: tham số nằm trên URL) */
+  SubscriptionPaymentResult: Record<string, string> | undefined;
+  SubscriptionCheckout: {
+    plan: import('../types/subscription').SubscriptionPlan;
+    cycle: import('../types/subscription').BillingCycle;
+    /** Tên gói đang dùng — cảnh báo gói cũ kết thúc ngay khi mua gói mới */
+    currentPlanName?: string;
+  };
 };
 
 export type RootNavigationProp = NativeStackNavigationProp<RootStackParamList>;

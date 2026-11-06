@@ -182,7 +182,9 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
             createdAt: new Date().toISOString(),
           };
         }
-        console.warn(`Không thể tải documents từ server cho kỳ ${period?.periodId}:`, fetchErr);
+        if (__DEV__) {
+          console.warn(`Không thể tải documents từ server cho kỳ ${period?.periodId}:`, fetchErr);
+        }
       }
 
       set((state) => {
@@ -246,7 +248,9 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
         get().removeYear(year);
       }
 
-      console.warn(`Lỗi khi khởi tạo TaxPeriod cho năm ${year}:`, err);
+      if (__DEV__) {
+        console.warn(`Lỗi khi khởi tạo TaxPeriod cho năm ${year}:`, err);
+      }
       set({
         isLoading: false,
         error: `Chưa tạo được hồ sơ quyết toán năm ${year}. Kiểm tra kết nối mạng rồi thử lại.`,
@@ -304,7 +308,9 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
       set({ isSystemConfigsLoading: false });
       return get().systemConfigs;
     } catch (err) {
-      console.warn('Lỗi khi tải cấu hình hệ thống từ admin:', err);
+      if (__DEV__) {
+        console.warn('Lỗi khi tải cấu hình hệ thống từ admin:', err);
+      }
       set({ isSystemConfigsLoading: false });
       return get().systemConfigs;
     }
@@ -469,7 +475,9 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
       await storageHelper.removeItem('taxkeep_expense_store_v2');
       await storageHelper.removeItem('taxkeep_expense_store_v1');
     } catch (e) {
-      console.warn('Lỗi clear storage:', e);
+      if (__DEV__) {
+        console.warn('Lỗi clear storage:', e);
+      }
     }
   },
 
@@ -494,7 +502,9 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
       });
       await storageHelper.setItem(key, payload);
     } catch (e) {
-      console.warn('Lỗi lưu useExpenseStore vào storage:', e);
+      if (__DEV__) {
+        console.warn('Lỗi lưu useExpenseStore vào storage:', e);
+      }
     }
   },
 
@@ -561,7 +571,9 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
         });
       }
     } catch (e) {
-      console.warn('Lỗi tải useExpenseStore từ storage:', e);
+      if (__DEV__) {
+        console.warn('Lỗi tải useExpenseStore từ storage:', e);
+      }
     }
   },
 }));

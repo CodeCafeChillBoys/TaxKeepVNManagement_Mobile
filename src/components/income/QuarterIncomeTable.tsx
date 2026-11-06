@@ -20,9 +20,9 @@ const money = (n: number) => Number(n || 0).toLocaleString('vi-VN');
  * Bảng thu nhập theo quý của 1 nơi chi trả (tham khảo bản Lovable "Chi tiết Nguồn Thu Nhập"):
  * mỗi dòng 1 quý = tổng 3 tháng, dòng Tổng cộng cuối bảng; bấm quý để xem từng tháng.
  */
-export function QuarterIncomeTable({ months, year, onPressMonth, testIDPrefix = 'quarter' }: Props) {
+export const QuarterIncomeTable = React.memo(function QuarterIncomeTable({ months, year, onPressMonth, testIDPrefix = 'quarter' }: Props) {
   const [openQuarter, setOpenQuarter] = useState<number | null>(null);
-  const { quarters, total } = groupMonthsByQuarter(months, year);
+  const { quarters, total } = React.useMemo(() => groupMonthsByQuarter(months, year), [months, year]);
 
   if (quarters.length === 0) return null;
 
@@ -102,7 +102,7 @@ export function QuarterIncomeTable({ months, year, onPressMonth, testIDPrefix = 
       <Text style={styles.unit}>Đơn vị: đồng · bấm vào quý để xem từng tháng</Text>
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   table: { borderTopWidth: 1, borderTopColor: theme.colors.border },

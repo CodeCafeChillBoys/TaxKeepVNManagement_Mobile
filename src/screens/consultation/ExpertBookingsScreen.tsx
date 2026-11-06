@@ -134,12 +134,16 @@ export const ExpertBookingsScreen: React.FC = () => {
     return () => sub.remove();
   }, [handleBack]);
 
+  const hasActivePending = activeTab === 'PENDING' && pendingBookings.length > 0;
+
   useEffect(() => {
+    if (!hasActivePending) return;
+    setCurrentTimeMs(Date.now());
     const timer = setInterval(() => {
       setCurrentTimeMs(Date.now());
     }, 1000);
     return () => clearInterval(timer);
-  }, []);
+  }, [hasActivePending]);
 
   const fetchData = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);

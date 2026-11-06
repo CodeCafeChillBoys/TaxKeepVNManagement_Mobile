@@ -44,27 +44,45 @@ export interface ExpenseGroup {
 /**
  * Nhãn hiển thị thân thiện theo trạng thái chứng từ (không dùng thuật ngữ IT)
  */
-export function getStatusLabel(status: string): string {
-  switch (status) {
-    case 'CONFIRMED':    return '✓ Đã duyệt';
-    case 'EXTRACTED':   return '⚡ Chờ soát xét';
-    case 'UPLOADED':    return '⏳ Đang xử lý';
-    case 'FAILED':      return '⚠ Cần kiểm tra lại';
-    case 'REJECTED':    return '✕ Bị từ chối';
-    default:            return status;
+export function getStatusLabel(status?: string | null): string {
+  switch ((status || '').trim().toUpperCase()) {
+    case 'CONFIRMED':
+      return '✓ Đã duyệt';
+    case 'EXTRACTED':
+      return '⚡ Chờ soát xét';
+    case 'UPLOADED':
+    case 'PROCESSING':
+    case 'PENDING':
+      return '⏳ Đang xử lý';
+    case 'FAILED':
+      return '⚠ Cần kiểm tra lại';
+    case 'REJECTED':
+      return '✕ Bị từ chối';
+    case 'ALL':
+      return 'Tất cả trạng thái';
+    default:
+      return 'Chờ kiểm tra';
   }
 }
 
 /**
  * Màu badge tương ứng với trạng thái (không dùng thuật ngữ IT)
  */
-export function getStatusBadgeVariant(status: string): BadgeVariant {
-  switch (status) {
-    case 'CONFIRMED':  return 'success';
-    case 'EXTRACTED':  return 'warning';
-    case 'UPLOADED':   return 'outline';
-    case 'FAILED':     return 'destructive';
-    default:           return 'secondary';
+export function getStatusBadgeVariant(status?: string | null): BadgeVariant {
+  switch ((status || '').trim().toUpperCase()) {
+    case 'CONFIRMED':
+      return 'success';
+    case 'EXTRACTED':
+      return 'warning';
+    case 'UPLOADED':
+    case 'PROCESSING':
+    case 'PENDING':
+      return 'outline';
+    case 'FAILED':
+    case 'REJECTED':
+      return 'destructive';
+    default:
+      return 'secondary';
   }
 }
 

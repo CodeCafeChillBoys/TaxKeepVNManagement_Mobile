@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -52,6 +52,14 @@ export const ExpenseUploadScreen: React.FC = () => {
 
   const activePeriod = periods[targetYear];
   const isPeriodSubmitted = activePeriod?.status === 'SUBMITTED';
+
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     fetchDocumentTypes();
@@ -145,7 +153,6 @@ export const ExpenseUploadScreen: React.FC = () => {
         mediaTypes: ['images'],
         quality: 0.8,
         allowsEditing: false,
-        base64: true,
       });
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const asset = result.assets[0];
@@ -154,7 +161,6 @@ export const ExpenseUploadScreen: React.FC = () => {
           name: asset.fileName || `chung_tu_chup_${Date.now()}.jpg`,
           type: 'image/jpeg',
           size: asset.fileSize,
-          base64: asset.base64 || undefined,
         };
 
         if (validateFile(newFile)) {
@@ -191,7 +197,6 @@ export const ExpenseUploadScreen: React.FC = () => {
         mediaTypes: ['images'],
         quality: 0.85,
         allowsMultipleSelection: false,
-        base64: true,
       });
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const asset = result.assets[0];
@@ -200,7 +205,6 @@ export const ExpenseUploadScreen: React.FC = () => {
           name: asset.fileName || `chung_tu_${Date.now()}.jpg`,
           type: 'image/jpeg',
           size: asset.fileSize,
-          base64: asset.base64 || undefined,
         };
 
         if (validateFile(newFile)) {
@@ -329,8 +333,10 @@ export const ExpenseUploadScreen: React.FC = () => {
       const maxAttempts = 42;
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         await new Promise((res) => setTimeout(res, 1500));
+        if (!isMountedRef.current) return;
         try {
           const docDetail = await expenseApi.getDocumentById(activePeriodId!, docId);
+          if (!isMountedRef.current) return;
           const validationErrors = Array.isArray(docDetail.validationErrors)
             ? docDetail.validationErrors
             : [];
@@ -381,6 +387,7 @@ export const ExpenseUploadScreen: React.FC = () => {
             } catch {
               // Dọn document lỗi là best-effort
             }
+            if (!isMountedRef.current) return;
             setProcessing(false);
             setSelectedFile(null);
             setCurrentStep(1);
@@ -405,6 +412,7 @@ export const ExpenseUploadScreen: React.FC = () => {
             } catch {
               // Dọn document lỗi là best-effort
             }
+            if (!isMountedRef.current) return;
             setProcessing(false);
             setSelectedFile(null);
             setCurrentStep(1);
@@ -419,10 +427,13 @@ export const ExpenseUploadScreen: React.FC = () => {
             return;
           }
         } catch (_) {}
+        if (!isMountedRef.current) return;
         const pct = 60 + Math.round((attempt / maxAttempts) * 35);
         setProcessingProgress(pct);
         setProcessingStage('Đang kiểm tra và trích xuất dữ liệu hóa đơn...');
       }
+
+      if (!isMountedRef.current) return;
 
       if (extractedDoc && extractedDoc.status === 'EXTRACTED') {
         const ocrResult = mapDocumentReviewToOcrResult(extractedDoc, targetYear, documentTypes, systemConfigs);
@@ -459,11 +470,14 @@ export const ExpenseUploadScreen: React.FC = () => {
                 certificateInsuranceDeducted: certInsurance,
               });
             } catch (checkErr: any) {
-              console.warn('[AutoCrossCheck on Upload] warn:', checkErr?.message);
+              if (__DEV__) {
+                console.warn('[AutoCrossCheck on Upload] warn:', checkErr?.message);
+              }
             }
           }
         }
 
+        if (!isMountedRef.current) return;
         ocrResult.crossCheckResult = autoCrossCheckResult;
 
         setProcessingProgress(100);
@@ -483,6 +497,7 @@ export const ExpenseUploadScreen: React.FC = () => {
           crossCheckResult: autoCrossCheckResult,
         });
       } else {
+        if (!isMountedRef.current) return;
         setProcessingProgress(100);
         setProcessing(false);
         // Hết thời gian chờ
@@ -498,7 +513,10 @@ export const ExpenseUploadScreen: React.FC = () => {
         );
       }
     } catch (err: any) {
-      console.error('[ExpenseUpload Error]:', err?.code, err?.message, err?.response?.status, err?.response?.data);
+      if (__DEV__) {
+        console.error('[ExpenseUpload Error]:', err?.code, err?.message, err?.response?.status, err?.response?.data);
+      }
+      if (!isMountedRef.current) return;
       setProcessing(false);
       setCurrentStep(selectedFile ? 2 : 1);
       const parsed = parseBackendError(err);

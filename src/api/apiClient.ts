@@ -108,7 +108,7 @@ apiClient.interceptors.response.use(
     const quotaError = quotaErrorFrom(error);
     if (quotaError) emitQuotaExceeded(quotaError);
 
-    if (error.response?.status === 400) {
+    if (__DEV__ && error.response?.status === 400) {
       console.warn(
         `[API 400] ${error.config?.method?.toUpperCase()} ${error.config?.baseURL || ''}${error.config?.url || ''}`,
         error.response?.data

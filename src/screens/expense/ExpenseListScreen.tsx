@@ -1,28 +1,36 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
+  SectionList,
+  FlatList,
   TouchableOpacity,
   RefreshControl,
-  Alert,
   Modal,
   TextInput,
   Platform,
+  KeyboardAvoidingView,
+  SectionListData,
+  SectionListRenderItemInfo,
+  ListRenderItemInfo,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
+import { useShallow } from 'zustand/react/shallow';
 import { theme } from '../../constants/theme';
 import { HeaderMotif } from '../../components/common/HeaderMotif';
 import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { RootNavigationProp } from '../../navigation/types';
 import { ExpenseOcrResult } from '../../types/expense';
 import { expenseApi, mapDocumentReviewToOcrResult } from '../../api/expenseApi';
-import { formatCurrencyVND } from './expenseValidationUtils';
+import { formatCurrencyVND, parseBackendError } from './expenseValidationUtils';
+import { sanitizeUiMessage } from '../../utils/friendlyError';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { useExpenseStore } from '../../stores/useExpenseStore';
+import { useDebounce } from '../../hooks/useDebounce';
 import {
   groupExpensesByAiClassification,
   calculateExpenseMetrics,
@@ -47,9 +55,215 @@ import { Dialog } from '../../components/common/Dialog';
 
 type StatusFilter = 'ALL' | 'CONFIRMED' | 'EXTRACTED';
 
+interface ExpenseSection {
+  group: ExpenseGroup;
+  data: ExpenseOcrResult[];
+}
+
+interface CategoryOptionItem {
+  code: string;
+  name: string;
+  description: string;
+  icon: string;
+  isTaxEligible: boolean;
+  categoryGroup?: string;
+  count: number;
+}
+
+interface ExpenseSectionHeaderProps {
+  group: ExpenseGroup;
+}
+
+const ExpenseSectionHeader = React.memo<ExpenseSectionHeaderProps>(({ group }) => (
+  <View style={styles.groupHeader}>
+    <View style={[styles.groupIconCircle, { backgroundColor: `${group.color}20` }]}>
+      <Ionicons name={group.icon as any} size={16} color={group.color} />
+    </View>
+    <View style={styles.groupTitleWrap}>
+      <Text style={styles.groupName} numberOfLines={1}>{group.shortName}</Text>
+      <Text style={styles.groupSubtitle}>{group.items.length} chứng từ</Text>
+    </View>
+    <View style={styles.groupRightAmountWrap}>
+      <Text
+        style={styles.groupAmount}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.75}
+      >
+        {formatCurrencyVND(group.totalAmount)}
+      </Text>
+      {group.confirmedCount > 0 && (
+        <Text style={styles.groupConfirmedHint}>{group.confirmedCount} đã duyệt</Text>
+      )}
+    </View>
+  </View>
+));
+
+interface ExpenseDocCardRowProps {
+  doc: ExpenseOcrResult;
+  onViewDetail: (doc: ExpenseOcrResult) => void;
+  onDeleteDoc: (doc: ExpenseOcrResult) => void;
+}
+
+const ExpenseDocCardRow = React.memo<ExpenseDocCardRowProps>(({ doc, onViewDetail, onDeleteDoc }) => {
+  const statusVariant = getStatusBadgeVariant(doc.status);
+  const statusText = getStatusLabel(doc.status);
+  const isConfirmed = doc.status === 'CONFIRMED';
+  const isWithholdingDoc = isWithholdingDocType(doc.docTypeCode, doc.docTypeName);
+
+  return (
+    <Card style={styles.docCard}>
+      <TouchableOpacity activeOpacity={0.7} onPress={() => onViewDetail(doc)}>
+        <View style={styles.docCardBody}>
+          {/* Dòng 1: Trạng thái + Nhóm + Độ chính xác */}
+          <View style={styles.docCardTopRow}>
+            <Badge variant={statusVariant} style={styles.docStatusBadge}>{statusText}</Badge>
+            <View style={styles.docRightMeta}>
+              {doc.isNotReimbursed && !isWithholdingDoc && (
+                <Ionicons name="shield-checkmark-outline" size={13} color="#0F766E" />
+              )}
+              {doc.overallConfidence ? (
+                <Text style={styles.confidenceText}>
+                  {(doc.overallConfidence * 100).toFixed(0)}% rõ nét
+                </Text>
+              ) : null}
+            </View>
+          </View>
+
+          {/* Dòng 2: Tên đơn vị - thông tin chính */}
+          <Text style={styles.docSellerName} numberOfLines={2}>
+            {doc.sellerName || (isWithholdingDoc ? 'Tổ chức chi trả thu nhập' : 'Chưa có tên đơn vị phát hành')}
+          </Text>
+
+          {/* Dòng 3: Metadata */}
+          <View style={styles.docMetaRow}>
+            {doc.invoiceNumber ? (
+              <View style={styles.docMetaItem}>
+                <Ionicons name="receipt-outline" size={12} color="#94A3B8" />
+                <Text style={styles.docMetaText}>
+                  {isWithholdingDoc ? `CT ${doc.invoiceNumber}` : `HĐ ${doc.invoiceNumber}`}
+                </Text>
+              </View>
+            ) : null}
+            {doc.invoiceDate ? (
+              <View style={styles.docMetaItem}>
+                <Ionicons name="calendar-outline" size={12} color="#94A3B8" />
+                <Text style={styles.docMetaText}>{doc.invoiceDate}</Text>
+              </View>
+            ) : null}
+            {isWithholdingDoc && (doc.incomeYear || doc.extractedYear) ? (
+              <View style={styles.docMetaItem}>
+                <Ionicons name="calendar-number-outline" size={12} color="#94A3B8" />
+                <Text style={styles.docMetaText}>Kỳ {doc.incomeYear || doc.extractedYear}</Text>
+              </View>
+            ) : doc.items && doc.items.length > 0 ? (
+              <View style={styles.docMetaItem}>
+                <Ionicons name="list-outline" size={12} color="#94A3B8" />
+                <Text style={styles.docMetaText}>{doc.items.length} dòng</Text>
+              </View>
+            ) : null}
+          </View>
+
+          {/* Dòng 4: Số tiền + Actions */}
+          <View style={styles.docCardFooterRow}>
+            <View style={styles.docAmountCol}>
+              <Text style={styles.docAmountLabel} numberOfLines={1}>
+                {isWithholdingDoc
+                  ? 'Thuế đã khấu trừ'
+                  : isConfirmed
+                  ? 'Đã xác nhận'
+                  : 'Số tiền'}
+              </Text>
+              <Text
+                style={[styles.docAmount, isConfirmed && { color: '#16A34A' }]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.75}
+              >
+                {isWithholdingDoc
+                  ? formatCurrencyVND(doc.taxWithheld || 0)
+                  : formatCurrencyVND(doc.totalAmount || 0)}
+              </Text>
+              {isWithholdingDoc && doc.totalIncome ? (
+                <Text
+                  style={styles.docIncomeSubText}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.8}
+                >
+                  Thu nhập: {formatCurrencyVND(doc.totalIncome)}
+                </Text>
+              ) : null}
+            </View>
+            <View style={styles.docActions}>
+              {doc.status !== 'CONFIRMED' && (
+                <TouchableOpacity
+                  onPress={() => onDeleteDoc(doc)}
+                  style={styles.docDeleteBtn}
+                  hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                >
+                  <Ionicons name="trash-outline" size={15} color="#EF4444" />
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity
+                style={styles.docDetailBtn}
+                onPress={() => onViewDetail(doc)}
+              >
+                <Text style={styles.docDetailBtnText}>
+                  {isConfirmed ? 'Xem' : 'Soát xét'}
+                </Text>
+                <Ionicons name="chevron-forward" size={13} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </TouchableOpacity>
+    </Card>
+  );
+});
+
+interface CategoryOptionRowProps {
+  cat: CategoryOptionItem;
+  isSelected: boolean;
+  onSelect: (code: string) => void;
+}
+
+const CategoryOptionRow = React.memo<CategoryOptionRowProps>(({ cat, isSelected, onSelect }) => (
+  <TouchableOpacity
+    style={[
+      styles.pickerCategoryRow,
+      isSelected && styles.pickerCategoryRowActive,
+    ]}
+    onPress={() => onSelect(cat.code)}
+    activeOpacity={0.7}
+  >
+    <View style={styles.pickerCategoryLeft}>
+      <View style={[styles.catIconWrap, { backgroundColor: '#FEF2F2' }]}>
+        <Ionicons name={cat.icon as any} size={16} color="#8B1E1E" />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={[styles.pickerCategoryName, isSelected && styles.pickerCategoryNameActive]} numberOfLines={1}>
+          {cat.name}
+        </Text>
+        {cat.description ? (
+          <Text style={styles.pickerCategorySub} numberOfLines={1}>
+            {cat.description}
+          </Text>
+        ) : null}
+      </View>
+    </View>
+    <View style={[styles.pickerCountBadge, isSelected && styles.pickerCountBadgeActive]}>
+      <Text style={[styles.pickerCountText, isSelected && styles.pickerCountTextActive]}>
+        {cat.count} HĐ
+      </Text>
+    </View>
+  </TouchableOpacity>
+));
+
 export const ExpenseListScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
-  const { user } = useAuthStore();
+  const insets = useSafeAreaInsets();
+  const userId = useAuthStore((s) => s.user?.id);
   const { toast } = useToast();
 
   const {
@@ -58,7 +272,6 @@ export const ExpenseListScreen: React.FC = () => {
     documents,
     periods,
     documentTypes,
-    isDocumentTypesLoading,
     error: periodError,
     setSelectedYear,
     addYear,
@@ -69,18 +282,46 @@ export const ExpenseListScreen: React.FC = () => {
     loadFromStorage,
     addOrUpdateDocument,
     fetchDocumentTypes,
-  } = useExpenseStore();
+  } = useExpenseStore(
+    useShallow((s) => ({
+      selectedYear: s.selectedYear,
+      availableYears: s.availableYears,
+      documents: s.documents,
+      periods: s.periods,
+      documentTypes: s.documentTypes,
+      error: s.error,
+      setSelectedYear: s.setSelectedYear,
+      addYear: s.addYear,
+      removeYear: s.removeYear,
+      initPeriodForYear: s.initPeriodForYear,
+      submitPeriodForYear: s.submitPeriodForYear,
+      removeDocument: s.removeDocument,
+      loadFromStorage: s.loadFromStorage,
+      addOrUpdateDocument: s.addOrUpdateDocument,
+      fetchDocumentTypes: s.fetchDocumentTypes,
+    }))
+  );
+
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [selectedMonth, setSelectedMonth] = useState<number | 'ALL'>('ALL');
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
-  
+  const debouncedSearchQuery = useDebounce(searchQuery, 300);
+
   // Modals
   const [showMonthDropdown, setShowMonthDropdown] = useState<boolean>(false);
   const [showCategoryDropdown, setShowCategoryDropdown] = useState<boolean>(false);
   const [categorySearchQuery, setCategorySearchQuery] = useState<string>('');
+  const debouncedCategorySearchQuery = useDebounce(categorySearchQuery, 250);
   const [showAddYearModal, setShowAddYearModal] = useState<boolean>(false);
   const [newYearInput, setNewYearInput] = useState<string>('');
 
@@ -88,76 +329,87 @@ export const ExpenseListScreen: React.FC = () => {
   const [deleteYearTarget, setDeleteYearTarget] = useState<number | null>(null);
   const [showSubmitPeriodConfirm, setShowSubmitPeriodConfirm] = useState<boolean>(false);
   const [deleteDocTarget, setDeleteDocTarget] = useState<{ id: string; name?: string } | null>(null);
+  const [processingDocTarget, setProcessingDocTarget] = useState<ExpenseOcrResult | null>(null);
+  const [checkingProcessingDoc, setCheckingProcessingDoc] = useState<boolean>(false);
+
+  const hasOpenPickerModal = showMonthDropdown || showCategoryDropdown || showAddYearModal;
+
+  const syncExpenseData = useCallback(
+    async (isAlive: () => boolean) => {
+      const [, , taxPeriodsRes] = await Promise.allSettled([
+        loadFromStorage(userId),
+        fetchDocumentTypes(),
+        userId ? expenseApi.getTaxPeriods() : Promise.resolve(null),
+      ]);
+
+      if (!isAlive() || !userId) return;
+
+      if (taxPeriodsRes.status === 'fulfilled' && Array.isArray(taxPeriodsRes.value)) {
+        try {
+          await useExpenseStore.getState().syncPeriods(taxPeriodsRes.value);
+        } catch {
+          // Tiếp tục dùng dữ liệu cục bộ nếu chưa đồng bộ được danh sách kỳ thuế
+        }
+      }
+
+      if (!isAlive()) return;
+
+      const state = useExpenseStore.getState();
+      // Chỉ đồng bộ khi người dùng thực sự có năm kê khai trong danh sách
+      if (state.availableYears && state.availableYears.length > 0) {
+        const activeYear =
+          state.selectedYear && state.availableYears.includes(state.selectedYear)
+            ? state.selectedYear
+            : state.availableYears[0];
+        if (state.selectedYear !== activeYear) {
+          setSelectedYear(activeYear);
+        }
+        try {
+          await initPeriodForYear(activeYear, userId);
+        } catch {}
+      } else {
+        // Người dùng chưa có năm nào (hoặc đã xóa hết trong DB):
+        // Không tự ý khởi tạo năm dưới DB, giữ selectedYear là null để hiển thị màn hình trống
+        if (state.selectedYear !== null) {
+          setSelectedYear(null);
+        }
+      }
+    },
+    [userId, loadFromStorage, fetchDocumentTypes, setSelectedYear, initPeriodForYear]
+  );
 
   useFocusEffect(
     useCallback(() => {
-      const syncData = async () => {
-        await loadFromStorage(user?.id);
-        await fetchDocumentTypes();
-        if (!user?.id) return;
-        try {
-          await useExpenseStore.getState().syncPeriods(await expenseApi.getTaxPeriods());
-        } catch {
-          // BE chưa hỗ trợ GET thì tiếp tục dùng dữ liệu local và POST theo từng năm.
-        }
-        const state = useExpenseStore.getState();
-        // Chỉ đồng bộ khi người dùng thực sự có năm kê khai trong danh sách
-        if (state.availableYears && state.availableYears.length > 0) {
-          const activeYear =
-            state.selectedYear && state.availableYears.includes(state.selectedYear)
-              ? state.selectedYear
-              : state.availableYears[0];
-          if (state.selectedYear !== activeYear) {
-            setSelectedYear(activeYear);
-          }
-          try {
-            await initPeriodForYear(activeYear, user?.id);
-          } catch {}
-        } else {
-          // Người dùng chưa có năm nào (hoặc đã xóa hết trong DB):
-          // Không tự ý khởi tạo năm dưới DB, giữ selectedYear là null để hiển thị màn hình trống
-          if (state.selectedYear !== null) {
-            setSelectedYear(null);
-          }
-        }
+      let alive = true;
+      syncExpenseData(() => alive && isMountedRef.current);
+      return () => {
+        alive = false;
       };
-      syncData();
-    }, [user?.id])
+    }, [syncExpenseData])
   );
 
-  const onRefresh = async () => {
+  const onRefresh = useCallback(async () => {
+    if (!isMountedRef.current) return;
     setRefreshing(true);
-    await loadFromStorage(user?.id);
-    await fetchDocumentTypes();
-    if (!user?.id) {
-      setRefreshing(false);
-      return;
-    }
     try {
-      await useExpenseStore.getState().syncPeriods(await expenseApi.getTaxPeriods());
-    } catch {
-      // BE chưa hỗ trợ GET thì tiếp tục dùng dữ liệu local và POST theo từng năm.
+      await syncExpenseData(() => isMountedRef.current);
+    } finally {
+      if (isMountedRef.current) {
+        setRefreshing(false);
+      }
     }
-    const state = useExpenseStore.getState();
-    if (state.availableYears && state.availableYears.length > 0) {
-      const activeYear =
-        state.selectedYear && state.availableYears.includes(state.selectedYear)
-          ? state.selectedYear
-          : state.availableYears[0];
-      try {
-        await initPeriodForYear(activeYear, user?.id);
-      } catch {}
-    }
-    setRefreshing(false);
-  };
+  }, [syncExpenseData]);
 
   const currentPeriod = selectedYear ? periods[selectedYear] : undefined;
-  const allCurrentExpenses: ExpenseOcrResult[] = selectedYear ? documents[selectedYear] || [] : [];
+  const allCurrentExpenses: ExpenseOcrResult[] = useMemo(
+    () => (selectedYear ? documents[selectedYear] || [] : []),
+    [selectedYear, documents]
+  );
 
-  const metrics = calculateExpenseMetrics(allCurrentExpenses);
+  const metrics = useMemo(() => calculateExpenseMetrics(allCurrentExpenses), [allCurrentExpenses]);
 
   // Danh mục chi phí được phép giảm trừ thuế TNCN
-  const categoryOptions = useMemo(() => {
+  const categoryOptions = useMemo<CategoryOptionItem[]>(() => {
     const counts: Record<string, number> = {};
     allCurrentExpenses.forEach((doc) => {
       const code = (doc.docTypeCode || '').toUpperCase();
@@ -181,12 +433,12 @@ export const ExpenseListScreen: React.FC = () => {
 
   // Lọc danh mục trong modal chọn theo tìm kiếm
   const filteredCategoryOptions = useMemo(() => {
-    if (!categorySearchQuery.trim()) return categoryOptions;
-    const q = categorySearchQuery.trim().toLowerCase();
+    if (!debouncedCategorySearchQuery.trim()) return categoryOptions;
+    const q = debouncedCategorySearchQuery.trim().toLowerCase();
     return categoryOptions.filter(
       (c) => c.name.toLowerCase().includes(q) || c.code.toLowerCase().includes(q)
     );
-  }, [categoryOptions, categorySearchQuery]);
+  }, [categoryOptions, debouncedCategorySearchQuery]);
 
   // Thống kê số lượng hóa đơn theo từng tháng
   const monthCounts = useMemo(() => {
@@ -221,31 +473,34 @@ export const ExpenseListScreen: React.FC = () => {
   const selectedCategoryLabel = useMemo(() => {
     if (selectedCategory === 'ALL') return 'Tất cả danh mục';
     const found = categoryOptions.find((c) => c.code.toUpperCase() === selectedCategory.toUpperCase());
-    return found ? found.name : selectedCategory;
+    return found ? found.name : 'Danh mục đã chọn';
   }, [selectedCategory, categoryOptions]);
 
   // Lọc đa chiều: Category (DB) + Tháng + Trạng thái + Từ khóa
   const displayExpenses = useMemo(() => {
     let result = allCurrentExpenses;
-    // 1. Lọc theo danh mục từ cấu hình admin DB
     if (selectedCategory !== 'ALL') {
       result = filterExpensesByCategory(result, selectedCategory);
     }
-    // 2. Lọc theo tháng
     if (selectedMonth !== 'ALL') {
       result = filterExpensesByMonth(result, selectedMonth);
     }
-    // 3. Lọc theo trạng thái
     result = filterExpensesByStatus(result, statusFilter);
-    // 4. Tìm kiếm từ khóa
-    result = searchExpenses(result, searchQuery);
+    result = searchExpenses(result, debouncedSearchQuery);
     return result;
-  }, [allCurrentExpenses, selectedCategory, selectedMonth, statusFilter, searchQuery]);
+  }, [allCurrentExpenses, selectedCategory, selectedMonth, statusFilter, debouncedSearchQuery]);
 
   // Gom nhóm hiển thị theo Tổ chi phí
   const displayGroups = useMemo(() => {
     return groupExpensesByAiClassification(displayExpenses, false);
   }, [displayExpenses]);
+
+  const sections = useMemo<ExpenseSection[]>(() => {
+    return displayGroups.map((group) => ({
+      group,
+      data: group.items,
+    }));
+  }, [displayGroups]);
 
   const hasActiveFilters =
     selectedMonth !== 'ALL' ||
@@ -253,47 +508,52 @@ export const ExpenseListScreen: React.FC = () => {
     statusFilter !== 'ALL' ||
     searchQuery.trim().length > 0;
 
-  const handleResetFilters = () => {
+  const handleResetFilters = useCallback(() => {
     setSelectedMonth('ALL');
     setSelectedCategory('ALL');
     setStatusFilter('ALL');
     setSearchQuery('');
-  };
+  }, []);
 
   const handleAddNewYear = async () => {
     const yr = parseInt(newYearInput.trim(), 10);
     const currentYear = new Date().getFullYear();
     if (isNaN(yr) || yr < 2015 || yr > currentYear + 1) {
-      if (Platform.OS === 'web') {
-        window.alert(`Năm không hợp lệ: Vui lòng nhập năm từ 2015 đến ${currentYear + 1}.`);
-      } else {
-        Alert.alert('Năm không hợp lệ', `Vui lòng nhập năm từ 2015 đến ${currentYear + 1}.`);
-      }
+      toast.warning(
+        `Vui lòng nhập năm tính thuế hợp lệ từ 2015 đến ${currentYear + 1}.`,
+        'Năm kê khai chưa hợp lệ'
+      );
       return;
     }
     try {
       addYear(yr);
-      await initPeriodForYear(yr, user?.id);
+      await initPeriodForYear(yr, userId);
+      if (!isMountedRef.current) return;
       setNewYearInput('');
       setShowAddYearModal(false);
     } catch (err: any) {
-      toast.error(
-        err?.response?.data?.message || err?.message || 'Không thể tạo kỳ tính thuế.',
-        'Không thể tạo kỳ'
-      );
+      if (!isMountedRef.current) return;
+      const parsed = parseBackendError(err);
+      toast.error(parsed.message, 'Chưa thể tạo kỳ thuế');
     }
   };
 
-  const handleDeleteYear = (yr: number) => {
-    if (periods[yr]?.status === 'SUBMITTED') {
-      toast.error(
-        `Kỳ tính thuế năm ${yr} đã hoàn tất quyết toán. Không thể xóa kỳ tính thuế đã khóa.`,
-        'Kỳ tính thuế đã khóa'
-      );
-      return;
-    }
-    setDeleteYearTarget(yr);
-  };
+  const handleDeleteYear = useCallback(
+    (yr: number) => {
+      if (periods[yr]?.status === 'SUBMITTED') {
+        toast.error(
+          `Kỳ tính thuế năm ${yr} đã hoàn tất quyết toán. Không thể xóa kỳ tính thuế đã khóa.`,
+          'Kỳ tính thuế đã khóa'
+        );
+        return;
+      }
+      setShowMonthDropdown(false);
+      setShowCategoryDropdown(false);
+      setShowAddYearModal(false);
+      setDeleteYearTarget(yr);
+    },
+    [periods, toast]
+  );
 
   const executeDeleteYear = () => {
     if (deleteYearTarget !== null) {
@@ -303,7 +563,7 @@ export const ExpenseListScreen: React.FC = () => {
     }
   };
 
-  const handleNavigateUpload = () => {
+  const handleNavigateUpload = useCallback(() => {
     if (!selectedYear) {
       setShowAddYearModal(true);
       return;
@@ -319,128 +579,180 @@ export const ExpenseListScreen: React.FC = () => {
       targetYear: selectedYear,
       periodId: currentPeriod?.periodId,
     });
-  };
+  }, [selectedYear, currentPeriod, navigation, toast]);
 
-  const handleSubmitPeriod = () => {
+  const handleSubmitPeriod = useCallback(() => {
     if (!selectedYear || !currentPeriod?.periodId) return;
+    setShowMonthDropdown(false);
+    setShowCategoryDropdown(false);
+    setShowAddYearModal(false);
     setShowSubmitPeriodConfirm(true);
-  };
+  }, [selectedYear, currentPeriod?.periodId]);
 
   const executeSubmitPeriod = async () => {
     setShowSubmitPeriodConfirm(false);
     if (!selectedYear || !currentPeriod?.periodId) return;
     try {
       await submitPeriodForYear(selectedYear);
-      toast.success(`Hồ sơ quyết toán thuế năm ${selectedYear} đã được nộp và khóa thành công.`, 'Nộp hồ sơ thành công');
+      if (!isMountedRef.current) return;
+      toast.success(
+        `Hồ sơ quyết toán thuế năm ${selectedYear} đã được nộp và khóa thành công.`,
+        'Nộp hồ sơ thành công'
+      );
     } catch (err: any) {
-      toast.error(err?.response?.data?.message || err?.message || 'Không thể nộp kỳ tính thuế.', 'Lỗi nộp hồ sơ');
+      if (!isMountedRef.current) return;
+      const parsed = parseBackendError(err);
+      toast.error(parsed.message, 'Chưa thể nộp hồ sơ');
     }
   };
 
-  const handleViewDetail = async (doc: ExpenseOcrResult) => {
+  const handleViewDetail = useCallback(
+    async (doc: ExpenseOcrResult) => {
+      const docId = doc.documentId || doc.id;
+      const periodId = currentPeriod?.periodId || doc.periodId;
+
+      if (doc.status === 'UPLOADED') {
+        setShowMonthDropdown(false);
+        setShowCategoryDropdown(false);
+        setShowAddYearModal(false);
+        setProcessingDocTarget(doc);
+        return;
+      }
+
+      let fullDoc = doc;
+      const isGuid = (val?: string) =>
+        !!val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+      if (isGuid(periodId) && isGuid(docId)) {
+        try {
+          const detail = await expenseApi.getDocumentById(periodId!, docId!);
+          if (!isMountedRef.current) return;
+          fullDoc = mapDocumentReviewToOcrResult(detail, selectedYear || undefined);
+          if (!fullDoc.crossCheckResult && doc.crossCheckResult) {
+            fullDoc.crossCheckResult = doc.crossCheckResult;
+          }
+          addOrUpdateDocument(selectedYear || new Date().getFullYear(), fullDoc);
+        } catch (err: any) {
+          if (!isMountedRef.current) return;
+          if (err?.response?.status === 404) {
+            toast.error(
+              'Hóa đơn này đã bị xóa hoặc không còn tồn tại trong hệ thống.',
+              'Không tìm thấy chứng từ'
+            );
+            if (selectedYear && docId) {
+              await removeDocument(selectedYear, docId);
+            }
+            return;
+          }
+          if (__DEV__) {
+            console.warn('Không thể tải chi tiết, dùng bản cache:', err);
+          }
+        }
+      }
+
+      if (!isMountedRef.current) return;
+      navigation.navigate('ExpenseReview', {
+        ocrResult: fullDoc,
+        periodId,
+        isReadOnly: fullDoc.status === 'CONFIRMED',
+        crossCheckResult: fullDoc.crossCheckResult || null,
+      });
+    },
+    [currentPeriod?.periodId, selectedYear, addOrUpdateDocument, removeDocument, navigation, toast]
+  );
+
+  const handleCheckOrRetryProcessingDoc = async () => {
+    if (!processingDocTarget || checkingProcessingDoc) return;
+    const doc = processingDocTarget;
     const docId = doc.documentId || doc.id;
     const periodId = currentPeriod?.periodId || doc.periodId;
 
-    if (doc.status === 'UPLOADED') {
-      Alert.alert(
-        'Đang xử lý',
-        'Hóa đơn này đang được hệ thống đọc và nhận diện thông tin. Bạn muốn làm gì?',
-        [
-          { text: 'Đóng', style: 'cancel' },
-          {
-            text: 'Kiểm tra lại',
-            onPress: async () => {
-              if (periodId && docId) {
-                try {
-                  const detail = await expenseApi.getDocumentById(periodId, docId);
-                  if (detail.status === 'EXTRACTED') {
-                    const mapped = mapDocumentReviewToOcrResult(detail, selectedYear || undefined);
-                    if (!mapped.crossCheckResult && doc.crossCheckResult) {
-                      mapped.crossCheckResult = doc.crossCheckResult;
-                    }
-                    addOrUpdateDocument(selectedYear || new Date().getFullYear(), mapped);
-                    navigation.navigate('ExpenseReview', {
-                      ocrResult: mapped,
-                      periodId,
-                      isReadOnly: false,
-                      crossCheckResult: mapped.crossCheckResult || null,
-                    });
-                    return;
-                  }
-                  Alert.alert('Thông báo', `Chứng từ vẫn đang được xử lý. Vui lòng thử lại sau.`);
-                } catch (e: any) {
-                  Alert.alert('Lỗi', e?.message || 'Không thể kiểm tra trạng thái.');
-                }
-              }
-            },
-          },
-          {
-            text: 'Đọc lại ngay',
-            onPress: async () => {
-              if (periodId && docId) {
-                try {
-                  await expenseApi.triggerDocumentOcr(periodId, docId);
-                  Alert.alert('Đã gửi yêu cầu', 'Hệ thống đang đọc lại thông tin hóa đơn. Kéo xuống để làm mới sau vài giây.');
-                } catch (err: any) {
-                  Alert.alert('Lỗi', err?.response?.data?.message || err?.message || 'Không thể thực hiện.');
-                }
-              }
-            },
-          },
-        ]
-      );
+    if (!periodId || !docId) {
+      setProcessingDocTarget(null);
+      toast.warning('Chưa tìm thấy thông tin định danh chứng từ để kiểm tra lại.', 'Chưa thể kiểm tra');
       return;
     }
 
-    let fullDoc = doc;
-    const isGuid = (val?: string) => !!val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
-    if (isGuid(periodId) && isGuid(docId)) {
+    setCheckingProcessingDoc(true);
+    try {
+      const detail = await expenseApi.getDocumentById(periodId, docId);
+      if (!isMountedRef.current) return;
+
+      if (detail.status === 'EXTRACTED' || detail.status === 'CONFIRMED') {
+        const mapped = mapDocumentReviewToOcrResult(detail, selectedYear || undefined);
+        if (!mapped.crossCheckResult && doc.crossCheckResult) {
+          mapped.crossCheckResult = doc.crossCheckResult;
+        }
+        await addOrUpdateDocument(selectedYear || new Date().getFullYear(), mapped);
+        if (!isMountedRef.current) return;
+        setProcessingDocTarget(null);
+        toast.success('Đã trích xuất xong thông tin chứng từ.', 'Nhận diện hoàn tất');
+        navigation.navigate('ExpenseReview', {
+          ocrResult: mapped,
+          periodId,
+          isReadOnly: mapped.status === 'CONFIRMED',
+          crossCheckResult: mapped.crossCheckResult || null,
+        });
+        return;
+      }
+
+      // Nếu vẫn đang chờ xử lý hoặc cần đọc lại, gửi yêu cầu nhận diện lại ngay
       try {
-        const detail = await expenseApi.getDocumentById(periodId!, docId!);
-        fullDoc = mapDocumentReviewToOcrResult(detail, selectedYear || undefined);
-        if (!fullDoc.crossCheckResult && doc.crossCheckResult) {
-          fullDoc.crossCheckResult = doc.crossCheckResult;
-        }
-        addOrUpdateDocument(selectedYear || new Date().getFullYear(), fullDoc);
-      } catch (err: any) {
-        if (err?.response?.status === 404) {
-          toast.error('Hóa đơn này đã bị xóa hoặc không còn tồn tại trên máy chủ.', 'Không tìm thấy chứng từ');
-          if (selectedYear && docId) {
-            await removeDocument(selectedYear, docId);
-          }
-          return;
-        }
-        console.warn('Không thể tải chi tiết, dùng bản cache:', err);
+        await expenseApi.triggerDocumentOcr(periodId, docId);
+      } catch {
+        // Nếu tiến trình đang chạy sẵn, giữ thông báo thân thiện bên dưới
+      }
+      if (!isMountedRef.current) return;
+      setProcessingDocTarget(null);
+      toast.info(
+        'Hệ thống đang tiếp tục nhận diện thông tin chứng từ. Kéo xuống làm mới sau vài giây.',
+        'Đang nhận diện chứng từ'
+      );
+    } catch (err: any) {
+      if (!isMountedRef.current) return;
+      setProcessingDocTarget(null);
+      const parsed = parseBackendError(err);
+      toast.error(parsed.message, parsed.title);
+    } finally {
+      if (isMountedRef.current) {
+        setCheckingProcessingDoc(false);
       }
     }
-
-    navigation.navigate('ExpenseReview', {
-      ocrResult: fullDoc,
-      periodId,
-      isReadOnly: fullDoc.status === 'CONFIRMED',
-      crossCheckResult: fullDoc.crossCheckResult || null,
-    });
   };
 
-  const handleDeleteDoc = (docId?: string, status?: ExpenseOcrResult['status']) => {
-    if (!docId || !selectedYear) return;
-    if (currentPeriod?.status === 'SUBMITTED') {
-      toast.error(
-        'Kỳ tính thuế này đã hoàn tất quyết toán. Không thể xóa chứng từ khỏi hồ sơ đã khóa.',
-        'Kỳ tính thuế đã khóa'
-      );
-      return;
-    }
-    if (status === 'CONFIRMED') {
-      toast.error(
-        'Chứng từ đã xác nhận nên không thể xóa khỏi hồ sơ.',
-        'Không thể xóa chứng từ'
-      );
-      return;
-    }
+  const handleDeleteDocPress = useCallback(
+    (doc: ExpenseOcrResult) => {
+      const docId = doc.documentId || doc.id;
+      if (!docId || !selectedYear) return;
+      if (currentPeriod?.status === 'SUBMITTED') {
+        toast.error(
+          'Kỳ tính thuế này đã hoàn tất quyết toán. Không thể xóa chứng từ khỏi hồ sơ đã khóa.',
+          'Kỳ tính thuế đã khóa'
+        );
+        return;
+      }
+      if (doc.status === 'CONFIRMED') {
+        toast.error(
+          'Chứng từ đã xác nhận nên không thể xóa khỏi hồ sơ.',
+          'Không thể xóa chứng từ'
+        );
+        return;
+      }
 
-    setDeleteDocTarget({ id: docId });
-  };
+      const isWithholdingDoc = isWithholdingDocType(doc.docTypeCode, doc.docTypeName);
+      const displayName =
+        doc.sellerName ||
+        doc.originalFilename ||
+        (doc.invoiceNumber
+          ? `${isWithholdingDoc ? 'Chứng từ' : 'Hóa đơn'} số ${doc.invoiceNumber}`
+          : 'Chứng từ chi phí');
+
+      setShowMonthDropdown(false);
+      setShowCategoryDropdown(false);
+      setShowAddYearModal(false);
+      setDeleteDocTarget({ id: docId, name: displayName });
+    },
+    [selectedYear, currentPeriod?.status, toast]
+  );
 
   const executeDeleteDoc = async () => {
     if (!deleteDocTarget || !selectedYear) return;
@@ -448,14 +760,403 @@ export const ExpenseListScreen: React.FC = () => {
     setDeleteDocTarget(null);
     try {
       await removeDocument(selectedYear, docId);
+      if (!isMountedRef.current) return;
       toast.success('Đã xóa chứng từ khỏi hồ sơ thuế thành công.', 'Đã xóa chứng từ');
     } catch (err: any) {
-      toast.error(
-        err?.response?.data?.message || err?.message || 'Không thể xóa chứng từ.',
-        'Xóa chứng từ thất bại'
-      );
+      if (!isMountedRef.current) return;
+      const parsed = parseBackendError(err);
+      toast.error(parsed.message, 'Xóa chứng từ thất bại');
     }
   };
+
+  const processingDocName = useMemo(() => {
+    if (!processingDocTarget) return undefined;
+    const isWithholdingDoc = isWithholdingDocType(
+      processingDocTarget.docTypeCode,
+      processingDocTarget.docTypeName
+    );
+    return (
+      processingDocTarget.sellerName ||
+      processingDocTarget.originalFilename ||
+      (processingDocTarget.invoiceNumber
+        ? `${isWithholdingDoc ? 'Chứng từ' : 'Hóa đơn'} số ${processingDocTarget.invoiceNumber}`
+        : 'Chứng từ đang chờ nhận diện')
+    );
+  }, [processingDocTarget]);
+
+  const docKeyExtractor = useCallback((item: ExpenseOcrResult, index: number) => {
+    return String(item.documentId || item.id || `${item.invoiceNumber || 'doc'}-${index}`);
+  }, []);
+
+  const renderSectionHeader = useCallback(
+    ({ section }: { section: SectionListData<ExpenseOcrResult, ExpenseSection> }) => (
+      <ExpenseSectionHeader group={section.group} />
+    ),
+    []
+  );
+
+  const renderDocItem = useCallback(
+    ({ item }: SectionListRenderItemInfo<ExpenseOcrResult, ExpenseSection>) => (
+      <ExpenseDocCardRow
+        doc={item}
+        onViewDetail={handleViewDetail}
+        onDeleteDoc={handleDeleteDocPress}
+      />
+    ),
+    [handleViewDetail, handleDeleteDocPress]
+  );
+
+  const handleSelectCategoryOption = useCallback((code: string) => {
+    setSelectedCategory(code);
+    setShowCategoryDropdown(false);
+  }, []);
+
+  const categoryKeyExtractor = useCallback((item: CategoryOptionItem) => item.code, []);
+
+  const renderCategoryItem = useCallback(
+    ({ item }: ListRenderItemInfo<CategoryOptionItem>) => (
+      <CategoryOptionRow
+        cat={item}
+        isSelected={selectedCategory.toUpperCase() === item.code.toUpperCase()}
+        onSelect={handleSelectCategoryOption}
+      />
+    ),
+    [selectedCategory, handleSelectCategoryOption]
+  );
+
+  const allCategoriesHeaderElement = useMemo(
+    () => (
+      <TouchableOpacity
+        style={[
+          styles.pickerCategoryRow,
+          selectedCategory === 'ALL' && styles.pickerCategoryRowActive,
+        ]}
+        onPress={() => handleSelectCategoryOption('ALL')}
+        activeOpacity={0.7}
+      >
+        <View style={styles.pickerCategoryLeft}>
+          <View style={[styles.catIconWrap, { backgroundColor: '#F1F5F9' }]}>
+            <Ionicons name="apps-outline" size={16} color="#475569" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.pickerCategoryName, selectedCategory === 'ALL' && styles.pickerCategoryNameActive]}>
+              Tất cả danh mục
+            </Text>
+            <Text style={styles.pickerCategorySub}>Hiển thị mọi hóa đơn chi phí</Text>
+          </View>
+        </View>
+        <View style={[styles.pickerCountBadge, selectedCategory === 'ALL' && styles.pickerCountBadgeActive]}>
+          <Text style={[styles.pickerCountText, selectedCategory === 'ALL' && styles.pickerCountTextActive]}>
+            {allCurrentExpenses.length} HĐ
+          </Text>
+        </View>
+      </TouchableOpacity>
+    ),
+    [selectedCategory, allCurrentExpenses.length, handleSelectCategoryOption]
+  );
+
+  // CRITICAL: JSX element (NEVER an inline component function) so searchQuery TextInput never loses focus!
+  const listHeaderElement = useMemo(
+    () => (
+      <View>
+        {/* BANNER KỲ ĐÃ QUYẾT TOÁN / KHÓA */}
+        {currentPeriod?.status === 'SUBMITTED' && (
+          <View style={styles.periodLockedBanner}>
+            <Ionicons name="lock-closed" size={18} color="#DC2626" />
+            <View style={{ flex: 1, marginLeft: 8 }}>
+              <Text style={styles.periodLockedTitle}>Hồ sơ thuế năm {selectedYear} đã khóa</Text>
+              <Text style={styles.periodLockedDesc}>
+                Kỳ tính thuế này đã hoàn tất quyết toán và nộp cho cơ quan thuế. Chế độ chỉ xem, không thể thêm hoặc xóa chứng từ.
+              </Text>
+            </View>
+          </View>
+        )}
+
+        {/* KPI TỔNG QUAN */}
+        <View style={styles.kpiRow}>
+          <View style={[styles.kpiBox, { borderLeftColor: '#8B1E1E' }]}>
+            <Text
+              style={styles.kpiBoxVal}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.75}
+            >
+              {formatCurrencyVND(metrics.totalConfirmedAmount)}
+            </Text>
+            <Text style={styles.kpiBoxLabel}>Chi phí đã xác nhận</Text>
+          </View>
+          <View style={styles.kpiSmallGrid}>
+            <View style={[styles.kpiSmall, { backgroundColor: '#ECFDF5' }]}>
+              <Text style={[styles.kpiSmallVal, { color: '#16A34A' }]}>{metrics.confirmedDocs}</Text>
+              <Text style={styles.kpiSmallLabel}>Đã duyệt</Text>
+            </View>
+            <View style={[styles.kpiSmall, { backgroundColor: '#FEF3C7' }]}>
+              <Text style={[styles.kpiSmallVal, { color: '#D97706' }]}>{metrics.pendingDocs}</Text>
+              <Text style={styles.kpiSmallLabel}>Chờ soát</Text>
+            </View>
+          </View>
+        </View>
+
+        {/* NÚT TẢI LÊN */}
+        <Button
+          variant="default"
+          size="default"
+          onPress={handleNavigateUpload}
+          style={styles.uploadBtn}
+          icon={<Ionicons name="cloud-upload-outline" size={18} color="#fff" />}
+        >
+          {allCurrentExpenses.length > 0 ? 'Tải lên hóa đơn & chứng từ mới' : 'Tải lên hóa đơn & chứng từ đầu tiên'}
+        </Button>
+
+        {allCurrentExpenses.length > 0 && currentPeriod?.status !== 'SUBMITTED' && (
+          <Button
+            variant="outline"
+            size="default"
+            onPress={handleSubmitPeriod}
+            style={styles.submitPeriodBtn}
+            icon={<Ionicons name="lock-closed-outline" size={18} color={theme.colors.primary} />}
+          >
+            Nộp và khóa kỳ tính thuế
+          </Button>
+        )}
+
+        {/* KHU VỰC TÌM KIẾM & BỘ LỌC ĐA CHIỀU */}
+        {allCurrentExpenses.length > 0 && (
+          <View style={styles.filterSection}>
+            {/* 1. Thanh tìm kiếm */}
+            <View style={styles.searchBar}>
+              <Ionicons name="search-outline" size={16} color="#94A3B8" />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Tìm theo tên cơ sở, số hóa đơn..."
+                placeholderTextColor="#94A3B8"
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                returnKeyType="search"
+              />
+              {searchQuery.length > 0 && (
+                <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Ionicons name="close-circle" size={16} color="#94A3B8" />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* 2. HÀNG 2 DROPDOWN FILTER: THÁNG & DANH MỤC */}
+            <View style={styles.dropdownRow}>
+              {/* Dropdown 1: Tháng */}
+              <TouchableOpacity
+                style={[styles.dropdownBtn, selectedMonth !== 'ALL' && styles.dropdownBtnActive]}
+                onPress={() => setShowMonthDropdown(true)}
+                activeOpacity={0.7}
+              >
+                <View style={styles.dropdownBtnContent}>
+                  <View style={[styles.dropdownIconCircle, selectedMonth !== 'ALL' && styles.dropdownIconCircleActive]}>
+                    <Ionicons
+                      name="calendar-outline"
+                      size={13}
+                      color={selectedMonth !== 'ALL' ? '#8B1E1E' : '#64748B'}
+                    />
+                  </View>
+                  <View style={styles.dropdownTextWrap}>
+                    <Text style={styles.dropdownLabel}>Theo tháng</Text>
+                    <Text
+                      style={[styles.dropdownValue, selectedMonth !== 'ALL' && styles.dropdownValueActive]}
+                      numberOfLines={1}
+                    >
+                      {selectedMonthLabel}
+                    </Text>
+                  </View>
+                </View>
+                <Ionicons
+                  name="chevron-down"
+                  size={14}
+                  color={selectedMonth !== 'ALL' ? '#8B1E1E' : '#94A3B8'}
+                />
+              </TouchableOpacity>
+
+              {/* Dropdown 2: Danh mục */}
+              <TouchableOpacity
+                style={[styles.dropdownBtn, selectedCategory !== 'ALL' && styles.dropdownBtnActive]}
+                onPress={() => {
+                  setCategorySearchQuery('');
+                  setShowCategoryDropdown(true);
+                }}
+                activeOpacity={0.7}
+              >
+                <View style={styles.dropdownBtnContent}>
+                  <View style={[styles.dropdownIconCircle, selectedCategory !== 'ALL' && styles.dropdownIconCircleActive]}>
+                    <Ionicons
+                      name="pricetag-outline"
+                      size={13}
+                      color={selectedCategory !== 'ALL' ? '#8B1E1E' : '#64748B'}
+                    />
+                  </View>
+                  <View style={styles.dropdownTextWrap}>
+                    <Text style={styles.dropdownLabel}>Danh mục</Text>
+                    <Text
+                      style={[styles.dropdownValue, selectedCategory !== 'ALL' && styles.dropdownValueActive]}
+                      numberOfLines={1}
+                    >
+                      {selectedCategoryLabel}
+                    </Text>
+                  </View>
+                </View>
+                <Ionicons
+                  name="chevron-down"
+                  size={14}
+                  color={selectedCategory !== 'ALL' ? '#8B1E1E' : '#94A3B8'}
+                />
+              </TouchableOpacity>
+            </View>
+
+            {/* 3. Pills lọc trạng thái */}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.statusPillsScroll}>
+              <View style={styles.statusPillsRow}>
+                {([
+                  { key: 'ALL', label: 'Tất cả', count: allCurrentExpenses.length },
+                  { key: 'EXTRACTED', label: 'Chờ soát xét', count: metrics.pendingDocs },
+                  { key: 'CONFIRMED', label: 'Đã duyệt', count: metrics.confirmedDocs },
+                ] as { key: StatusFilter; label: string; count: number }[]).map((pill) => (
+                  <TouchableOpacity
+                    key={pill.key}
+                    style={[styles.statusPill, statusFilter === pill.key && styles.statusPillActive]}
+                    onPress={() => setStatusFilter(pill.key)}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.statusPillText, statusFilter === pill.key && styles.statusPillTextActive]}>
+                      {pill.label} {pill.count > 0 ? `(${pill.count})` : ''}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </ScrollView>
+
+            {/* 4. Tag hiển thị bộ lọc đang kích hoạt */}
+            {hasActiveFilters && (
+              <View style={styles.activeFiltersBar}>
+                <Text style={styles.activeFilterLead}>Đang lọc:</Text>
+                {selectedMonth !== 'ALL' && (
+                  <TouchableOpacity
+                    style={styles.filterChip}
+                    onPress={() => setSelectedMonth('ALL')}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="calendar" size={11} color="#8B1E1E" />
+                    <Text style={styles.filterChipText}>{selectedMonthLabel}</Text>
+                    <Ionicons name="close" size={12} color="#8B1E1E" />
+                  </TouchableOpacity>
+                )}
+                {selectedCategory !== 'ALL' && (
+                  <TouchableOpacity
+                    style={styles.filterChip}
+                    onPress={() => setSelectedCategory('ALL')}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="pricetag" size={11} color="#8B1E1E" />
+                    <Text style={styles.filterChipText} numberOfLines={1}>
+                      {selectedCategoryLabel}
+                    </Text>
+                    <Ionicons name="close" size={12} color="#8B1E1E" />
+                  </TouchableOpacity>
+                )}
+                {statusFilter !== 'ALL' && (
+                  <TouchableOpacity
+                    style={styles.filterChip}
+                    onPress={() => setStatusFilter('ALL')}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.filterChipText}>
+                      {getStatusLabel(statusFilter)}
+                    </Text>
+                    <Ionicons name="close" size={12} color="#8B1E1E" />
+                  </TouchableOpacity>
+                )}
+                {searchQuery.trim().length > 0 && (
+                  <TouchableOpacity
+                    style={styles.filterChip}
+                    onPress={() => setSearchQuery('')}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.filterChipText} numberOfLines={1}>"{searchQuery}"</Text>
+                    <Ionicons name="close" size={12} color="#8B1E1E" />
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity onPress={handleResetFilters} style={styles.clearAllBtn} activeOpacity={0.7}>
+                  <Text style={styles.clearAllBtnText}>Đặt lại</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        )}
+      </View>
+    ),
+    [
+      currentPeriod?.status,
+      selectedYear,
+      metrics.totalConfirmedAmount,
+      metrics.confirmedDocs,
+      metrics.pendingDocs,
+      allCurrentExpenses.length,
+      handleNavigateUpload,
+      handleSubmitPeriod,
+      searchQuery,
+      selectedMonth,
+      selectedMonthLabel,
+      selectedCategory,
+      selectedCategoryLabel,
+      statusFilter,
+      hasActiveFilters,
+      handleResetFilters,
+    ]
+  );
+
+  const listEmptyElement = useMemo(
+    () => (
+      <View style={styles.noResultBox}>
+        <Ionicons name="document-text-outline" size={44} color="#CBD5E1" />
+        <Text style={styles.noResultTitle}>
+          {hasActiveFilters ? 'Không tìm thấy hóa đơn phù hợp' : 'Chưa có hóa đơn chi phí'}
+        </Text>
+        <Text style={styles.noResultSub}>
+          {hasActiveFilters
+            ? 'Thử thay đổi bộ lọc tháng, danh mục hoặc từ khóa tìm kiếm.'
+            : 'Tải lên hóa đơn để bắt đầu theo dõi chi phí giảm trừ thuế.'}
+        </Text>
+        {hasActiveFilters ? (
+          <Button
+            variant="outline"
+            size="sm"
+            onPress={handleResetFilters}
+            style={{ marginTop: 12 }}
+            icon={<Ionicons name="refresh-outline" size={14} color={theme.colors.primary} />}
+          >
+            Xóa tất cả bộ lọc
+          </Button>
+        ) : (
+          <Button
+            variant="outline"
+            size="sm"
+            onPress={handleNavigateUpload}
+            style={{ marginTop: 12 }}
+            icon={<Ionicons name="add" size={14} color={theme.colors.primary} />}
+          >
+            Tải lên hóa đơn
+          </Button>
+        )}
+      </View>
+    ),
+    [hasActiveFilters, handleResetFilters, handleNavigateUpload]
+  );
+
+  const listFooterElement = useMemo(
+    () => <View style={{ height: Math.max(insets.bottom, 24) + 16 }} />,
+    [insets.bottom]
+  );
+
+  const cleanPeriodError = useMemo(
+    () => (periodError ? sanitizeUiMessage(periodError, periodError) : null),
+    [periodError]
+  );
 
   // ===================== RENDER =====================
   return (
@@ -466,7 +1167,7 @@ export const ExpenseListScreen: React.FC = () => {
       {/* CHƯA CÓ KỲ NĂM: Màn hình khởi tạo */}
       {availableYears.length === 0 || !selectedYear ? (
         <ScrollView
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[styles.scrollContent, styles.responsiveContainer]}
           showsVerticalScrollIndicator={false}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[theme.colors.primary]} />}
         >
@@ -478,10 +1179,10 @@ export const ExpenseListScreen: React.FC = () => {
             <Text style={styles.emptyStateSubtitle}>
               Tạo kỳ kê khai thuế để bắt đầu lưu trữ và quản lý hóa đơn & chứng từ khấu trừ thuế TNCN.
             </Text>
-            {periodError ? (
+            {cleanPeriodError ? (
               <View style={styles.periodErrorBox} testID="expensePeriodError">
                 <Ionicons name="information-circle-outline" size={18} color="#9A3412" />
-                <Text style={styles.periodErrorText}>{periodError}</Text>
+                <Text style={styles.periodErrorText}>{cleanPeriodError}</Text>
               </View>
             ) : null}
             <Button
@@ -491,10 +1192,13 @@ export const ExpenseListScreen: React.FC = () => {
                 const yr = new Date().getFullYear();
                 try {
                   addYear(yr);
-                  await initPeriodForYear(yr, user?.id);
-                  toast.success(`Đã khởi tạo kỳ quyết toán thuế năm ${yr}.`, 'Thành công');
+                  await initPeriodForYear(yr, userId);
+                  if (!isMountedRef.current) return;
+                  toast.success(`Đã khởi tạo kỳ quyết toán thuế năm ${yr}.`, 'Khởi tạo thành công');
                 } catch (err: any) {
-                  toast.error(err?.message || 'Không thể khởi tạo kỳ tính thuế.', 'Lỗi');
+                  if (!isMountedRef.current) return;
+                  const parsed = parseBackendError(err);
+                  toast.error(parsed.message, 'Chưa thể tạo kỳ thuế');
                 }
               }}
               style={styles.emptyStateCta}
@@ -507,7 +1211,7 @@ export const ExpenseListScreen: React.FC = () => {
       ) : (
         <>
           {/* THANH CHỌN NĂM */}
-          <View style={styles.yearBarContainer}>
+          <View style={[styles.yearBarContainer, styles.responsiveContainer]}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.yearScroll}>
               {availableYears.map((yr) => {
                 const isSelected = yr === selectedYear;
@@ -543,407 +1247,40 @@ export const ExpenseListScreen: React.FC = () => {
             </ScrollView>
           </View>
 
-          <ScrollView
-            contentContainerStyle={styles.scrollContent}
+          <SectionList<ExpenseOcrResult, ExpenseSection>
+            sections={sections}
+            keyExtractor={docKeyExtractor}
+            renderItem={renderDocItem}
+            renderSectionHeader={renderSectionHeader}
+            stickySectionHeadersEnabled={false}
+            ListHeaderComponent={listHeaderElement}
+            ListEmptyComponent={listEmptyElement}
+            ListFooterComponent={listFooterElement}
+            contentContainerStyle={[styles.scrollContent, styles.responsiveContainer]}
             showsVerticalScrollIndicator={false}
-            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[theme.colors.primary]} />}
-          >
-            {/* BANNER KỲ ĐÃ QUYẾT TOÁN / KHÓA */}
-            {currentPeriod?.status === 'SUBMITTED' && (
-              <View style={styles.periodLockedBanner}>
-                <Ionicons name="lock-closed" size={18} color="#DC2626" />
-                <View style={{ flex: 1, marginLeft: 8 }}>
-                  <Text style={styles.periodLockedTitle}>Hồ sơ thuế năm {selectedYear} đã khóa</Text>
-                  <Text style={styles.periodLockedDesc}>
-                    Kỳ tính thuế này đã hoàn tất quyết toán và nộp cho cơ quan thuế. Chế độ chỉ xem, không thể thêm hoặc xóa chứng từ.
-                  </Text>
-                </View>
-              </View>
-            )}
-
-            {/* KPI TỔNG QUAN - Grid 4 ô nhỏ */}
-            <View style={styles.kpiRow}>
-              <View style={[styles.kpiBox, { borderLeftColor: '#8B1E1E' }]}>
-                <Text style={styles.kpiBoxVal}>{formatCurrencyVND(metrics.totalConfirmedAmount)}</Text>
-                <Text style={styles.kpiBoxLabel}>Chi phí đã xác nhận</Text>
-              </View>
-              <View style={styles.kpiSmallGrid}>
-                <View style={[styles.kpiSmall, { backgroundColor: '#ECFDF5' }]}>
-                  <Text style={[styles.kpiSmallVal, { color: '#16A34A' }]}>{metrics.confirmedDocs}</Text>
-                  <Text style={styles.kpiSmallLabel}>Đã duyệt</Text>
-                </View>
-                <View style={[styles.kpiSmall, { backgroundColor: '#FEF3C7' }]}>
-                  <Text style={[styles.kpiSmallVal, { color: '#D97706' }]}>{metrics.pendingDocs}</Text>
-                  <Text style={styles.kpiSmallLabel}>Chờ soát</Text>
-                </View>
-              </View>
-            </View>
-
-            {/* NÚT TẢI LÊN */}
-            <Button
-              variant="default"
-              size="default"
-              onPress={handleNavigateUpload}
-              style={styles.uploadBtn}
-              icon={<Ionicons name="cloud-upload-outline" size={18} color="#fff" />}
-            >
-              {allCurrentExpenses.length > 0 ? 'Tải lên hóa đơn & chứng từ mới' : 'Tải lên hóa đơn & chứng từ đầu tiên'}
-            </Button>
-
-            {allCurrentExpenses.length > 0 && currentPeriod?.status !== 'SUBMITTED' && (
-              <Button
-                variant="outline"
-                size="default"
-                onPress={handleSubmitPeriod}
-                style={styles.submitPeriodBtn}
-                icon={<Ionicons name="lock-closed-outline" size={18} color={theme.colors.primary} />}
-              >
-                Nộp và khóa kỳ tính thuế
-              </Button>
-            )}
-
-            {/* KHU VỰC TÌM KIẾM & BỘ LỌC ĐA CHIỀU */}
-            {allCurrentExpenses.length > 0 && (
-              <View style={styles.filterSection}>
-                {/* 1. Thanh tìm kiếm */}
-                <View style={styles.searchBar}>
-                  <Ionicons name="search-outline" size={16} color="#94A3B8" />
-                  <TextInput
-                    style={styles.searchInput}
-                    placeholder="Tìm theo tên cơ sở, số hóa đơn..."
-                    placeholderTextColor="#94A3B8"
-                    value={searchQuery}
-                    onChangeText={setSearchQuery}
-                    returnKeyType="search"
-                  />
-                  {searchQuery.length > 0 && (
-                    <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                      <Ionicons name="close-circle" size={16} color="#94A3B8" />
-                    </TouchableOpacity>
-                  )}
-                </View>
-
-                {/* 2. HÀNG 2 DROPDOWN FILTER: THÁNG & DANH MỤC TỪ ADMIN (DB) */}
-                <View style={styles.dropdownRow}>
-                  {/* Dropdown 1: Tháng */}
-                  <TouchableOpacity
-                    style={[styles.dropdownBtn, selectedMonth !== 'ALL' && styles.dropdownBtnActive]}
-                    onPress={() => setShowMonthDropdown(true)}
-                    activeOpacity={0.7}
-                  >
-                    <View style={styles.dropdownBtnContent}>
-                      <View style={[styles.dropdownIconCircle, selectedMonth !== 'ALL' && styles.dropdownIconCircleActive]}>
-                        <Ionicons
-                          name="calendar-outline"
-                          size={13}
-                          color={selectedMonth !== 'ALL' ? '#8B1E1E' : '#64748B'}
-                        />
-                      </View>
-                      <View style={styles.dropdownTextWrap}>
-                        <Text style={styles.dropdownLabel}>Theo tháng</Text>
-                        <Text
-                          style={[styles.dropdownValue, selectedMonth !== 'ALL' && styles.dropdownValueActive]}
-                          numberOfLines={1}
-                        >
-                          {selectedMonthLabel}
-                        </Text>
-                      </View>
-                    </View>
-                    <Ionicons
-                      name="chevron-down"
-                      size={14}
-                      color={selectedMonth !== 'ALL' ? '#8B1E1E' : '#94A3B8'}
-                    />
-                  </TouchableOpacity>
-
-                  {/* Dropdown 2: Danh mục từ Admin (DB) */}
-                  <TouchableOpacity
-                    style={[styles.dropdownBtn, selectedCategory !== 'ALL' && styles.dropdownBtnActive]}
-                    onPress={() => {
-                      setCategorySearchQuery('');
-                      setShowCategoryDropdown(true);
-                    }}
-                    activeOpacity={0.7}
-                  >
-                    <View style={styles.dropdownBtnContent}>
-                      <View style={[styles.dropdownIconCircle, selectedCategory !== 'ALL' && styles.dropdownIconCircleActive]}>
-                        <Ionicons
-                          name="pricetag-outline"
-                          size={13}
-                          color={selectedCategory !== 'ALL' ? '#8B1E1E' : '#64748B'}
-                        />
-                      </View>
-                      <View style={styles.dropdownTextWrap}>
-                        <Text style={styles.dropdownLabel}>Danh mục</Text>
-                        <Text
-                          style={[styles.dropdownValue, selectedCategory !== 'ALL' && styles.dropdownValueActive]}
-                          numberOfLines={1}
-                        >
-                          {selectedCategoryLabel}
-                        </Text>
-                      </View>
-                    </View>
-                    <Ionicons
-                      name="chevron-down"
-                      size={14}
-                      color={selectedCategory !== 'ALL' ? '#8B1E1E' : '#94A3B8'}
-                    />
-                  </TouchableOpacity>
-                </View>
-
-                {/* 3. Pills lọc trạng thái */}
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.statusPillsScroll}>
-                  <View style={styles.statusPillsRow}>
-                    {([
-                      { key: 'ALL', label: 'Tất cả', count: allCurrentExpenses.length },
-                      { key: 'EXTRACTED', label: 'Chờ soát xét', count: metrics.pendingDocs },
-                      { key: 'CONFIRMED', label: 'Đã duyệt', count: metrics.confirmedDocs },
-                    ] as { key: StatusFilter; label: string; count: number }[]).map((pill) => (
-                      <TouchableOpacity
-                        key={pill.key}
-                        style={[styles.statusPill, statusFilter === pill.key && styles.statusPillActive]}
-                        onPress={() => setStatusFilter(pill.key)}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={[styles.statusPillText, statusFilter === pill.key && styles.statusPillTextActive]}>
-                          {pill.label} {pill.count > 0 ? `(${pill.count})` : ''}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                </ScrollView>
-
-                {/* 4. Tag hiển thị bộ lọc đang kích hoạt */}
-                {hasActiveFilters && (
-                  <View style={styles.activeFiltersBar}>
-                    <Text style={styles.activeFilterLead}>Đang lọc:</Text>
-                    {selectedMonth !== 'ALL' && (
-                      <TouchableOpacity
-                        style={styles.filterChip}
-                        onPress={() => setSelectedMonth('ALL')}
-                        activeOpacity={0.7}
-                      >
-                        <Ionicons name="calendar" size={11} color="#8B1E1E" />
-                        <Text style={styles.filterChipText}>{selectedMonthLabel}</Text>
-                        <Ionicons name="close" size={12} color="#8B1E1E" />
-                      </TouchableOpacity>
-                    )}
-                    {selectedCategory !== 'ALL' && (
-                      <TouchableOpacity
-                        style={styles.filterChip}
-                        onPress={() => setSelectedCategory('ALL')}
-                        activeOpacity={0.7}
-                      >
-                        <Ionicons name="pricetag" size={11} color="#8B1E1E" />
-                        <Text style={styles.filterChipText} numberOfLines={1}>
-                          {selectedCategoryLabel}
-                        </Text>
-                        <Ionicons name="close" size={12} color="#8B1E1E" />
-                      </TouchableOpacity>
-                    )}
-                    {statusFilter !== 'ALL' && (
-                      <TouchableOpacity
-                        style={styles.filterChip}
-                        onPress={() => setStatusFilter('ALL')}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={styles.filterChipText}>
-                          {getStatusLabel(statusFilter)}
-                        </Text>
-                        <Ionicons name="close" size={12} color="#8B1E1E" />
-                      </TouchableOpacity>
-                    )}
-                    {searchQuery.trim().length > 0 && (
-                      <TouchableOpacity
-                        style={styles.filterChip}
-                        onPress={() => setSearchQuery('')}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={styles.filterChipText}>"{searchQuery}"</Text>
-                        <Ionicons name="close" size={12} color="#8B1E1E" />
-                      </TouchableOpacity>
-                    )}
-                    <TouchableOpacity onPress={handleResetFilters} style={styles.clearAllBtn} activeOpacity={0.7}>
-                      <Text style={styles.clearAllBtnText}>Đặt lại</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
-              </View>
-            )}
-
-            {/* DANH SÁCH CHỨNG TỪ */}
-            <View style={styles.docListContainer}>
-              {displayGroups.length === 0 ? (
-                <View style={styles.noResultBox}>
-                  <Ionicons name="document-text-outline" size={44} color="#CBD5E1" />
-                  <Text style={styles.noResultTitle}>
-                    {hasActiveFilters ? 'Không tìm thấy hóa đơn phù hợp' : 'Chưa có hóa đơn chi phí'}
-                  </Text>
-                  <Text style={styles.noResultSub}>
-                    {hasActiveFilters
-                      ? 'Thử thay đổi bộ lọc tháng, danh mục hoặc từ khóa tìm kiếm.'
-                      : 'Tải lên hóa đơn để bắt đầu theo dõi chi phí giảm trừ thuế.'}
-                  </Text>
-                  {hasActiveFilters ? (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onPress={handleResetFilters}
-                      style={{ marginTop: 12 }}
-                      icon={<Ionicons name="refresh-outline" size={14} color={theme.colors.primary} />}
-                    >
-                      Xóa tất cả bộ lọc
-                    </Button>
-                  ) : (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onPress={handleNavigateUpload}
-                      style={{ marginTop: 12 }}
-                      icon={<Ionicons name="add" size={14} color={theme.colors.primary} />}
-                    >
-                      Tải lên hóa đơn
-                    </Button>
-                  )}
-                </View>
-              ) : (
-                displayGroups.map((group) => (
-                  <View key={group.key} style={styles.groupSection}>
-                    {/* HEADER NHÓM */}
-                    <View style={styles.groupHeader}>
-                      <View style={[styles.groupIconCircle, { backgroundColor: `${group.color}20` }]}>
-                        <Ionicons name={group.icon as any} size={16} color={group.color} />
-                      </View>
-                      <View style={{ flex: 1, marginLeft: 8 }}>
-                        <Text style={styles.groupName}>{group.shortName}</Text>
-                        <Text style={styles.groupSubtitle}>{group.items.length} chứng từ</Text>
-                      </View>
-                      <View style={{ alignItems: 'flex-end' }}>
-                        <Text style={styles.groupAmount}>{formatCurrencyVND(group.totalAmount)}</Text>
-                        {group.confirmedCount > 0 && (
-                          <Text style={styles.groupConfirmedHint}>{group.confirmedCount} đã duyệt</Text>
-                        )}
-                      </View>
-                    </View>
-
-                    {/* DANH SÁCH THẺ CHỨNG TỪ */}
-                    {group.items.map((doc: ExpenseOcrResult, index: number) => {
-                      const statusVariant = getStatusBadgeVariant(doc.status);
-                      const statusText = getStatusLabel(doc.status);
-                      const isConfirmed = doc.status === 'CONFIRMED';
-                      const isWithholdingDoc = isWithholdingDocType(doc.docTypeCode, doc.docTypeName);
-                      return (
-                        <Card key={doc.documentId || index} style={styles.docCard}>
-                          <TouchableOpacity activeOpacity={0.7} onPress={() => handleViewDetail(doc)}>
-                            <View style={styles.docCardBody}>
-                              {/* Dòng 1: Trạng thái + Nhóm + Độ chính xác */}
-                              <View style={styles.docCardTopRow}>
-                                <Badge variant={statusVariant} style={styles.docStatusBadge}>{statusText}</Badge>
-                                <View style={styles.docRightMeta}>
-                                  {doc.isNotReimbursed && !isWithholdingDoc && (
-                                    <Ionicons name="shield-checkmark-outline" size={13} color="#0F766E" />
-                                  )}
-                                  {doc.overallConfidence ? (
-                                    <Text style={styles.confidenceText}>
-                                      {(doc.overallConfidence * 100).toFixed(0)}% chính xác
-                                    </Text>
-                                  ) : null}
-                                </View>
-                              </View>
-
-                              {/* Dòng 2: Tên đơn vị - thông tin chính */}
-                              <Text style={styles.docSellerName} numberOfLines={2}>
-                                {doc.sellerName || (isWithholdingDoc ? 'Tổ chức chi trả thu nhập' : 'Chưa có tên đơn vị phát hành')}
-                              </Text>
-
-                              {/* Dòng 3: Metadata */}
-                              <View style={styles.docMetaRow}>
-                                {doc.invoiceNumber ? (
-                                  <View style={styles.docMetaItem}>
-                                    <Ionicons name="receipt-outline" size={12} color="#94A3B8" />
-                                    <Text style={styles.docMetaText}>
-                                      {isWithholdingDoc ? `CT ${doc.invoiceNumber}` : `HĐ ${doc.invoiceNumber}`}
-                                    </Text>
-                                  </View>
-                                ) : null}
-                                {doc.invoiceDate ? (
-                                  <View style={styles.docMetaItem}>
-                                    <Ionicons name="calendar-outline" size={12} color="#94A3B8" />
-                                    <Text style={styles.docMetaText}>{doc.invoiceDate}</Text>
-                                  </View>
-                                ) : null}
-                                {isWithholdingDoc && (doc.incomeYear || doc.extractedYear) ? (
-                                  <View style={styles.docMetaItem}>
-                                    <Ionicons name="calendar-number-outline" size={12} color="#94A3B8" />
-                                    <Text style={styles.docMetaText}>Kỳ {doc.incomeYear || doc.extractedYear}</Text>
-                                  </View>
-                                ) : doc.items && doc.items.length > 0 ? (
-                                  <View style={styles.docMetaItem}>
-                                    <Ionicons name="list-outline" size={12} color="#94A3B8" />
-                                    <Text style={styles.docMetaText}>{doc.items.length} dòng</Text>
-                                  </View>
-                                ) : null}
-                              </View>
-
-                              {/* Dòng 4: Số tiền + Actions */}
-                              <View style={styles.docCardFooterRow}>
-                                <View>
-                                  <Text style={styles.docAmountLabel}>
-                                    {isWithholdingDoc
-                                      ? 'Thuế đã khấu trừ'
-                                      : isConfirmed
-                                      ? 'Đã xác nhận'
-                                      : 'Số tiền'}
-                                  </Text>
-                                  <Text style={[styles.docAmount, isConfirmed && { color: '#16A34A' }]}>
-                                    {isWithholdingDoc
-                                      ? formatCurrencyVND(doc.taxWithheld || 0)
-                                      : formatCurrencyVND(doc.totalAmount || 0)}
-                                  </Text>
-                                  {isWithholdingDoc && doc.totalIncome ? (
-                                    <Text style={{ fontSize: 10, color: '#64748B', marginTop: 1 }}>
-                                      Thu nhập: {formatCurrencyVND(doc.totalIncome)}
-                                    </Text>
-                                  ) : null}
-                                </View>
-                                <View style={styles.docActions}>
-                                  {doc.status !== 'CONFIRMED' && (
-                                    <TouchableOpacity
-                                      onPress={() => handleDeleteDoc(doc.documentId, doc.status)}
-                                      style={styles.docDeleteBtn}
-                                      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-                                    >
-                                      <Ionicons name="trash-outline" size={15} color="#EF4444" />
-                                    </TouchableOpacity>
-                                  )}
-                                  <TouchableOpacity
-                                    style={styles.docDetailBtn}
-                                    onPress={() => handleViewDetail(doc)}
-                                  >
-                                    <Text style={styles.docDetailBtnText}>
-                                      {isConfirmed ? 'Xem' : 'Soát xét'}
-                                    </Text>
-                                    <Ionicons name="chevron-forward" size={13} color={theme.colors.primary} />
-                                  </TouchableOpacity>
-                                </View>
-                              </View>
-                            </View>
-                          </TouchableOpacity>
-                        </Card>
-                      );
-                    })}
-                  </View>
-                ))
-              )}
-            </View>
-
-            <View style={{ height: 40 }} />
-          </ScrollView>
+            keyboardShouldPersistTaps="handled"
+            initialNumToRender={10}
+            maxToRenderPerBatch={10}
+            windowSize={7}
+            removeClippedSubviews={Platform.OS === 'android'}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                colors={[theme.colors.primary]}
+              />
+            }
+          />
         </>
       )}
 
       {/* MODAL DROPDOWN: CHỌN THÁNG */}
-      <Modal visible={showMonthDropdown} transparent animationType="fade">
+      <Modal
+        visible={showMonthDropdown}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowMonthDropdown(false)}
+      >
         <TouchableOpacity
           style={styles.modalOverlay}
           activeOpacity={1}
@@ -951,7 +1288,7 @@ export const ExpenseListScreen: React.FC = () => {
         >
           <TouchableOpacity activeOpacity={1} style={styles.pickerModalCard}>
             <View style={styles.pickerHeader}>
-              <View>
+              <View style={{ flex: 1, marginRight: 8 }}>
                 <Text style={styles.pickerTitle}>Lọc theo tháng</Text>
                 <Text style={styles.pickerSubtitle}>Năm {selectedYear} • Chọn tháng phát sinh chi phí</Text>
               </View>
@@ -1028,166 +1365,148 @@ export const ExpenseListScreen: React.FC = () => {
         </TouchableOpacity>
       </Modal>
 
-      {/* MODAL DROPDOWN: CHỌN DANH MỤC TỪ ADMIN (DB) */}
-      <Modal visible={showCategoryDropdown} transparent animationType="fade">
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setShowCategoryDropdown(false)}
+      {/* MODAL DROPDOWN: CHỌN DANH MỤC */}
+      <Modal
+        visible={showCategoryDropdown}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowCategoryDropdown(false)}
+      >
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
-          <TouchableOpacity activeOpacity={1} style={styles.pickerModalCardLarge}>
-            <View style={styles.pickerHeader}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.pickerTitle}>Lọc theo danh mục</Text>
-              </View>
-              <TouchableOpacity
-                onPress={() => setShowCategoryDropdown(false)}
-                style={styles.pickerCloseBtn}
-                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              >
-                <Ionicons name="close" size={18} color="#64748B" />
-              </TouchableOpacity>
-            </View>
-
-            {/* Ô tìm kiếm danh mục trong modal */}
-            <View style={styles.categorySearchBox}>
-              <Ionicons name="search" size={15} color="#94A3B8" />
-              <TextInput
-                style={styles.categorySearchInput}
-                placeholder="Tìm danh mục..."
-                placeholderTextColor="#94A3B8"
-                value={categorySearchQuery}
-                onChangeText={setCategorySearchQuery}
-              />
-              {categorySearchQuery.length > 0 && (
-                <TouchableOpacity onPress={() => setCategorySearchQuery('')}>
-                  <Ionicons name="close-circle" size={15} color="#94A3B8" />
+          <TouchableOpacity
+            style={styles.modalOverlay}
+            activeOpacity={1}
+            onPress={() => setShowCategoryDropdown(false)}
+          >
+            <TouchableOpacity activeOpacity={1} style={styles.pickerModalCardLarge}>
+              <View style={styles.pickerHeader}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.pickerTitle}>Lọc theo danh mục</Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => setShowCategoryDropdown(false)}
+                  style={styles.pickerCloseBtn}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Ionicons name="close" size={18} color="#64748B" />
                 </TouchableOpacity>
-              )}
-            </View>
+              </View>
 
-            {/* Danh sách danh mục cuộn */}
-            <ScrollView style={{ maxHeight: 360 }} showsVerticalScrollIndicator={true}>
-              {/* Tùy chọn "Tất cả danh mục" */}
-              <TouchableOpacity
-                style={[
-                  styles.pickerCategoryRow,
-                  selectedCategory === 'ALL' && styles.pickerCategoryRowActive,
-                ]}
-                onPress={() => {
-                  setSelectedCategory('ALL');
-                  setShowCategoryDropdown(false);
-                }}
-                activeOpacity={0.7}
-              >
-                <View style={styles.pickerCategoryLeft}>
-                  <View style={[styles.catIconWrap, { backgroundColor: '#F1F5F9' }]}>
-                    <Ionicons name="apps-outline" size={16} color="#475569" />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.pickerCategoryName, selectedCategory === 'ALL' && styles.pickerCategoryNameActive]}>
-                      Tất cả danh mục
-                    </Text>
-                    <Text style={styles.pickerCategorySub}>Hiển thị mọi hóa đơn chi phí</Text>
-                  </View>
-                </View>
-                <View style={[styles.pickerCountBadge, selectedCategory === 'ALL' && styles.pickerCountBadgeActive]}>
-                  <Text style={[styles.pickerCountText, selectedCategory === 'ALL' && styles.pickerCountTextActive]}>
-                    {allCurrentExpenses.length} HĐ
-                  </Text>
-                </View>
-              </TouchableOpacity>
-
-              {filteredCategoryOptions.map((cat) => {
-                const isSelected = selectedCategory.toUpperCase() === cat.code.toUpperCase();
-                return (
-                  <TouchableOpacity
-                    key={cat.code}
-                    style={[
-                      styles.pickerCategoryRow,
-                      isSelected && styles.pickerCategoryRowActive,
-                    ]}
-                    onPress={() => {
-                      setSelectedCategory(cat.code);
-                      setShowCategoryDropdown(false);
-                    }}
-                    activeOpacity={0.7}
-                  >
-                    <View style={styles.pickerCategoryLeft}>
-                      <View style={[styles.catIconWrap, { backgroundColor: '#FEF2F2' }]}>
-                        <Ionicons name={cat.icon as any} size={16} color="#8B1E1E" />
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={[styles.pickerCategoryName, isSelected && styles.pickerCategoryNameActive]} numberOfLines={1}>
-                          {cat.name}
-                        </Text>
-                        {cat.description ? (
-                          <Text style={styles.pickerCategorySub} numberOfLines={1}>
-                            {cat.description}
-                          </Text>
-                        ) : null}
-                      </View>
-                    </View>
-                    <View style={[styles.pickerCountBadge, isSelected && styles.pickerCountBadgeActive]}>
-                      <Text style={[styles.pickerCountText, isSelected && styles.pickerCountTextActive]}>
-                        {cat.count} HĐ
-                      </Text>
-                    </View>
+              {/* Ô tìm kiếm danh mục trong modal */}
+              <View style={styles.categorySearchBox}>
+                <Ionicons name="search" size={15} color="#94A3B8" />
+                <TextInput
+                  style={styles.categorySearchInput}
+                  placeholder="Tìm tên danh mục..."
+                  placeholderTextColor="#94A3B8"
+                  value={categorySearchQuery}
+                  onChangeText={setCategorySearchQuery}
+                />
+                {categorySearchQuery.length > 0 && (
+                  <TouchableOpacity onPress={() => setCategorySearchQuery('')}>
+                    <Ionicons name="close-circle" size={15} color="#94A3B8" />
                   </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
+                )}
+              </View>
 
-            <View style={styles.pickerFooter}>
-              <Ionicons name="information-circle-outline" size={13} color="#94A3B8" />
-              <Text style={styles.pickerFooterText}>
-                {`${filteredCategoryOptions.length} danh mục giảm trừ thuế khả dụng`}
-              </Text>
-            </View>
+              {/* Danh sách danh mục ảo hóa FlatList */}
+              <FlatList<CategoryOptionItem>
+                data={filteredCategoryOptions}
+                keyExtractor={categoryKeyExtractor}
+                renderItem={renderCategoryItem}
+                ListHeaderComponent={allCategoriesHeaderElement}
+                style={{ maxHeight: 360 }}
+                showsVerticalScrollIndicator={true}
+                keyboardShouldPersistTaps="handled"
+                initialNumToRender={10}
+                maxToRenderPerBatch={10}
+                windowSize={7}
+              />
+
+              <View style={styles.pickerFooter}>
+                <Ionicons name="information-circle-outline" size={13} color="#94A3B8" />
+                <Text style={styles.pickerFooterText}>
+                  {`${filteredCategoryOptions.length} danh mục giảm trừ thuế khả dụng`}
+                </Text>
+              </View>
+            </TouchableOpacity>
           </TouchableOpacity>
-        </TouchableOpacity>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* MODAL THÊM KỲ THUẾ MỚI */}
-      <Modal visible={showAddYearModal} transparent animationType="fade">
-        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowAddYearModal(false)}>
-          <TouchableOpacity activeOpacity={1} style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Tạo kỳ kê khai thuế mới</Text>
-            <Text style={styles.modalDesc}>
-              Nhập năm tính thuế để bắt đầu quản lý hóa đơn chi phí giảm trừ thuế TNCN.
-            </Text>
-            <TextInput
-              placeholder={`Năm quyết toán (VD: ${new Date().getFullYear()})`}
-              placeholderTextColor="#94A3B8"
-              keyboardType="numeric"
-              maxLength={4}
-              value={newYearInput}
-              onChangeText={setNewYearInput}
-              style={styles.modalInput}
-              autoFocus
-            />
-            <View style={styles.modalBtnRow}>
-              <TouchableOpacity
-                style={styles.modalBtnCancel}
-                onPress={() => { setNewYearInput(''); setShowAddYearModal(false); }}
-              >
-                <Text style={styles.modalBtnCancelText}>Hủy</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.modalBtnConfirm} onPress={handleAddNewYear}>
-                <Text style={styles.modalBtnConfirmText}>Tạo kỳ</Text>
-              </TouchableOpacity>
-            </View>
+      <Modal
+        visible={showAddYearModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowAddYearModal(false)}
+      >
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowAddYearModal(false)}>
+            <TouchableOpacity activeOpacity={1} style={styles.modalCard}>
+              <Text style={styles.modalTitle}>Tạo kỳ kê khai thuế mới</Text>
+              <Text style={styles.modalDesc}>
+                Nhập năm tính thuế để bắt đầu quản lý hóa đơn chi phí giảm trừ thuế TNCN.
+              </Text>
+              <TextInput
+                placeholder={`VD: ${new Date().getFullYear()}`}
+                placeholderTextColor="#94A3B8"
+                keyboardType="numeric"
+                maxLength={4}
+                value={newYearInput}
+                onChangeText={setNewYearInput}
+                style={styles.modalInput}
+                autoFocus
+              />
+              <View style={styles.modalBtnRow}>
+                <TouchableOpacity
+                  style={styles.modalBtnCancel}
+                  onPress={() => { setNewYearInput(''); setShowAddYearModal(false); }}
+                >
+                  <Text style={styles.modalBtnCancelText}>Đóng</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.modalBtnConfirm} onPress={handleAddNewYear}>
+                  <Text style={styles.modalBtnConfirmText}>Tạo kỳ</Text>
+                </TouchableOpacity>
+              </View>
+            </TouchableOpacity>
           </TouchableOpacity>
-        </TouchableOpacity>
+        </KeyboardAvoidingView>
       </Modal>
+
+      {/* DIALOG CHỨNG TỪ ĐANG ĐƯỢC XỬ LÝ / NHẬN DIỆN */}
+      <Dialog
+        visible={processingDocTarget !== null && !hasOpenPickerModal}
+        title="Chứng từ đang được nhận diện"
+        message="Hệ thống đang tự động trích xuất thông tin trên chứng từ. Bạn có thể kiểm tra kết quả hoặc yêu cầu nhận diện lại."
+        detailLabel="Chứng từ"
+        detail={processingDocName}
+        primaryLabel={checkingProcessingDoc ? 'Đang kiểm tra...' : 'Kiểm tra & đọc lại'}
+        secondaryLabel="Đóng"
+        onPrimary={handleCheckOrRetryProcessingDoc}
+        onSecondary={() => {
+          if (!checkingProcessingDoc) setProcessingDocTarget(null);
+        }}
+        onRequestClose={() => {
+          if (!checkingProcessingDoc) setProcessingDocTarget(null);
+        }}
+      />
 
       {/* DIALOG XÁC NHẬN XÓA CHỨNG TỪ */}
       <Dialog
-        visible={deleteDocTarget !== null}
-        title="Xóa chứng từ"
-        message="Xóa chứng từ này khỏi hồ sơ thuế?"
-        primaryLabel="Xóa"
-        secondaryLabel="Hủy"
+        visible={deleteDocTarget !== null && !hasOpenPickerModal}
+        title="Xác nhận xóa chứng từ này"
+        message="Chứng từ sẽ bị xóa khỏi hồ sơ quyết toán thuế và không thể khôi phục."
+        detailLabel="Chứng từ"
+        detail={deleteDocTarget?.name}
+        primaryLabel="Xóa chứng từ"
+        secondaryLabel="Giữ lại"
         destructive={true}
         onPrimary={executeDeleteDoc}
         onSecondary={() => setDeleteDocTarget(null)}
@@ -1196,12 +1515,13 @@ export const ExpenseListScreen: React.FC = () => {
 
       {/* DIALOG XÁC NHẬN NỘP VÀ KHÓA KỲ TÍNH THUẾ */}
       <Dialog
-        visible={showSubmitPeriodConfirm}
-        title={`Nộp hồ sơ thuế năm ${selectedYear}`}
-        message="Sau khi nộp, hồ sơ sẽ được khóa và không thể chỉnh sửa."
-        detail={`${(documents[selectedYear || 0] || []).length} chứng từ`}
+        visible={showSubmitPeriodConfirm && !hasOpenPickerModal}
+        title={`Nộp và khóa kỳ thuế ${selectedYear}`}
+        message="Sau khi nộp, hồ sơ quyết toán năm này sẽ được khóa và không thể chỉnh sửa."
+        detailLabel="Quy mô hồ sơ"
+        detail={`${allCurrentExpenses.length} chứng từ • ${formatCurrencyVND(metrics.totalConfirmedAmount)}`}
         primaryLabel="Nộp hồ sơ"
-        secondaryLabel="Hủy"
+        secondaryLabel="Đóng"
         onPrimary={executeSubmitPeriod}
         onSecondary={() => setShowSubmitPeriodConfirm(false)}
         onRequestClose={() => setShowSubmitPeriodConfirm(false)}
@@ -1209,11 +1529,17 @@ export const ExpenseListScreen: React.FC = () => {
 
       {/* DIALOG XÁC NHẬN XÓA NĂM KÊ KHAI */}
       <Dialog
-        visible={deleteYearTarget !== null}
-        title={`Xóa kỳ thuế năm ${deleteYearTarget}`}
-        message="Xóa kỳ thuế này và toàn bộ chứng từ liên quan?"
-        primaryLabel="Xóa"
-        secondaryLabel="Hủy"
+        visible={deleteYearTarget !== null && !hasOpenPickerModal}
+        title={`Xóa kỳ tính thuế năm ${deleteYearTarget}`}
+        message="Danh sách theo dõi của kỳ tính thuế này sẽ bị gỡ khỏi thiết bị."
+        detailLabel="Kỳ kê khai"
+        detail={
+          deleteYearTarget !== null
+            ? `Năm ${deleteYearTarget} (${(documents[deleteYearTarget] || []).length} chứng từ)`
+            : undefined
+        }
+        primaryLabel="Xóa kỳ thuế"
+        secondaryLabel="Giữ lại"
         destructive={true}
         onPrimary={executeDeleteYear}
         onSecondary={() => setDeleteYearTarget(null)}
@@ -1224,6 +1550,11 @@ export const ExpenseListScreen: React.FC = () => {
 };
 
 const styles = StyleSheet.create({
+  responsiveContainer: {
+    width: '100%',
+    maxWidth: 720,
+    alignSelf: 'center',
+  },
   periodLockedBanner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1353,6 +1684,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#0F172A',
     lineHeight: 26,
+    flexShrink: 1,
   },
   kpiBoxLabel: {
     fontSize: 11,
@@ -1541,17 +1873,12 @@ const styles = StyleSheet.create({
     color: '#8B1E1E',
     textDecorationLine: 'underline',
   },
-  // --- Document List ---
-  docListContainer: {
-    gap: 16,
-  },
-  groupSection: {
-    gap: 8,
-  },
+  // --- Document List Sections ---
   groupHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 6,
+    paddingTop: 12,
+    paddingBottom: 8,
   },
   groupIconCircle: {
     width: 32,
@@ -1559,6 +1886,11 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  groupTitleWrap: {
+    flex: 1,
+    marginLeft: 8,
+    marginRight: 8,
   },
   groupName: {
     fontSize: 13,
@@ -1569,10 +1901,16 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: '#94A3B8',
   },
+  groupRightAmountWrap: {
+    alignItems: 'flex-end',
+    flexShrink: 1,
+    maxWidth: '48%',
+  },
   groupAmount: {
     fontSize: 13,
     fontWeight: '800',
     color: '#0F172A',
+    flexShrink: 1,
   },
   groupConfirmedHint: {
     fontSize: 10,
@@ -1586,6 +1924,7 @@ const styles = StyleSheet.create({
     padding: 14,
     borderWidth: 1,
     borderColor: '#E2E8F0',
+    marginBottom: 8,
   },
   docCardBody: {
     gap: 4,
@@ -1638,6 +1977,11 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     borderTopWidth: 1,
     borderTopColor: '#F1F5F9',
+    gap: 8,
+  },
+  docAmountCol: {
+    flex: 1,
+    flexShrink: 1,
   },
   docAmountLabel: {
     fontSize: 10,
@@ -1649,11 +1993,19 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#0F172A',
     marginTop: 1,
+    flexShrink: 1,
+  },
+  docIncomeSubText: {
+    fontSize: 10,
+    color: '#64748B',
+    marginTop: 1,
+    flexShrink: 1,
   },
   docActions: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+    flexShrink: 0,
   },
   docDeleteBtn: {
     width: 32,
@@ -1682,7 +2034,7 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 32,
+    paddingHorizontal: 24,
     paddingTop: 80,
   },
   emptyStateIconCircle: {
@@ -1753,7 +2105,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(15, 23, 42, 0.5)',
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
   },
   pickerModalCard: {
     width: '100%',
@@ -1820,11 +2172,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
+    flex: 1,
+    marginRight: 8,
   },
   pickerOptionText: {
     fontSize: 13,
     fontWeight: '600',
     color: '#334155',
+    flexShrink: 1,
   },
   pickerOptionTextActive: {
     color: '#8B1E1E',
@@ -1835,6 +2190,7 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderRadius: 12,
     backgroundColor: '#E2E8F0',
+    flexShrink: 0,
   },
   pickerCountBadgeActive: {
     backgroundColor: '#8B1E1E',
@@ -1949,28 +2305,9 @@ const styles = StyleSheet.create({
   pickerCategoryNameActive: {
     color: '#8B1E1E',
   },
-  categorySubRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginTop: 2,
-  },
   pickerCategorySub: {
     fontSize: 11,
     color: '#64748B',
-  },
-  taxEligiblePill: {
-    backgroundColor: '#ECFDF5',
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#A7F3D0',
-  },
-  taxEligiblePillText: {
-    fontSize: 9,
-    fontWeight: '700',
-    color: '#059669',
   },
   pickerFooter: {
     flexDirection: 'row',

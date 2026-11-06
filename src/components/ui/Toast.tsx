@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { fonts } from '../../constants/fonts';
 
 export type ToastVariant = 'default' | 'destructive' | 'success' | 'warning' | 'info';
 
@@ -64,15 +65,15 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setToasts((prev) => [...prev.slice(-2), newItem]); // Max 2 toasts stacked
   }, []);
 
-  const error = useCallback((description: string, title: string = 'Đã có lỗi xảy ra') => {
+  const error = useCallback((description: string, title: string = 'Chưa thể thực hiện') => {
     show({ description, title, variant: 'destructive', duration: 4500 });
   }, [show]);
 
-  const success = useCallback((description: string, title: string = 'Thành công') => {
+  const success = useCallback((description: string, title: string = 'Thực hiện thành công') => {
     show({ description, title, variant: 'success', duration: 3500 });
   }, [show]);
 
-  const warning = useCallback((description: string, title: string = 'Lưu ý') => {
+  const warning = useCallback((description: string, title: string = 'Lưu ý kiểm tra') => {
     show({ description, title, variant: 'warning', duration: 4000 });
   }, [show]);
 
@@ -80,22 +81,32 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     show({ description, title, variant: 'info', duration: 3500 });
   }, [show]);
 
-  const toastMethods = { show, error, success, warning, info, dismiss };
-  globalToastRef = toastMethods;
+  const toastMethods = useMemo(
+    () => ({ show, error, success, warning, info, dismiss }),
+    [show, error, success, warning, info, dismiss]
+  );
+
+  useEffect(() => {
+    globalToastRef = toastMethods;
+  }, [toastMethods]);
+
+  const contextValue = useMemo(() => ({ toast: toastMethods }), [toastMethods]);
 
   return (
-    <ToastContext.Provider value={{ toast: toastMethods }}>
+    <ToastContext.Provider value={contextValue}>
       {children}
-      <View
-        style={[
-          styles.container,
-          { top: Math.max(insets.top, 12) + 6, pointerEvents: 'box-none' as any },
-        ]}
-      >
-        {toasts.map((t) => (
-          <ToastCard key={t.id} item={t} onDismiss={() => dismiss(t.id)} />
-        ))}
-      </View>
+      {toasts.length > 0 ? (
+        <View
+          style={[
+            styles.container,
+            { top: Math.max(insets.top, 12) + 6, pointerEvents: 'box-none' as any },
+          ]}
+        >
+          {toasts.map((t) => (
+            <ToastCard key={t.id} item={t} onDismiss={dismiss} />
+          ))}
+        </View>
+      ) : null}
     </ToastContext.Provider>
   );
 };
@@ -108,151 +119,155 @@ export const useToast = () => {
   return ctx;
 };
 
-// Internal Shadcn Toast Component
-const ToastCard: React.FC<{ item: ToastInternalItem; onDismiss: () => void }> = ({ item, onDismiss }) => {
-  const opacity = useRef(new Animated.Value(0)).current;
-  const translateY = useRef(new Animated.Value(-16)).current;
+const VARIANT_CONFIGS = {
+  destructive: {
+    icon: 'alert-circle' as const,
+    iconColor: '#DC2626',
+    bg: '#FEF2F2',
+    border: '#FECACA',
+    titleColor: '#991B1B',
+    descColor: '#7F1D1D',
+  },
+  success: {
+    icon: 'checkmark-circle' as const,
+    iconColor: '#16A34A',
+    bg: '#F0FDF4',
+    border: '#BBF7D0',
+    titleColor: '#166534',
+    descColor: '#14532D',
+  },
+  warning: {
+    icon: 'warning' as const,
+    iconColor: '#D97706',
+    bg: '#FFFBEB',
+    border: '#FDE68A',
+    titleColor: '#92400E',
+    descColor: '#78350F',
+  },
+  info: {
+    icon: 'information-circle' as const,
+    iconColor: '#0284C7',
+    bg: '#F0F9FF',
+    border: '#BAE6FD',
+    titleColor: '#075985',
+    descColor: '#0C4A6E',
+  },
+  default: {
+    icon: 'notifications' as const,
+    iconColor: '#475569',
+    bg: '#FFFFFF',
+    border: '#E2E8F0',
+    titleColor: '#0F172A',
+    descColor: '#334155',
+  },
+} as const;
 
-  useEffect(() => {
-    Animated.parallel([
-      Animated.timing(opacity, {
-        toValue: 1,
-        duration: 220,
-        useNativeDriver: true,
-      }),
-      Animated.spring(translateY, {
-        toValue: 0,
-        friction: 8,
-        tension: 80,
-        useNativeDriver: true,
-      }),
-    ]).start();
+const ToastCard = React.memo<{ item: ToastInternalItem; onDismiss: (id: string) => void }>(
+  ({ item, onDismiss }) => {
+    const opacity = useRef(new Animated.Value(0)).current;
+    const translateY = useRef(new Animated.Value(-16)).current;
+    const isMountedRef = useRef(true);
 
-    const timer = setTimeout(() => {
-      handleClose();
-    }, item.duration || 4000);
+    const handleClose = useCallback(() => {
+      Animated.parallel([
+        Animated.timing(opacity, {
+          toValue: 0,
+          duration: 180,
+          useNativeDriver: true,
+        }),
+        Animated.timing(translateY, {
+          toValue: -14,
+          duration: 180,
+          useNativeDriver: true,
+        }),
+      ]).start(() => {
+        if (isMountedRef.current) {
+          onDismiss(item.id);
+        }
+      });
+    }, [item.id, onDismiss, opacity, translateY]);
 
-    return () => clearTimeout(timer);
-  }, []);
+    useEffect(() => {
+      isMountedRef.current = true;
+      const enterAnim = Animated.parallel([
+        Animated.timing(opacity, {
+          toValue: 1,
+          duration: 220,
+          useNativeDriver: true,
+        }),
+        Animated.spring(translateY, {
+          toValue: 0,
+          friction: 8,
+          tension: 80,
+          useNativeDriver: true,
+        }),
+      ]);
+      enterAnim.start();
 
-  const handleClose = () => {
-    Animated.parallel([
-      Animated.timing(opacity, {
-        toValue: 0,
-        duration: 180,
-        useNativeDriver: true,
-      }),
-      Animated.timing(translateY, {
-        toValue: -14,
-        duration: 180,
-        useNativeDriver: true,
-      }),
-    ]).start(() => {
-      onDismiss();
-    });
-  };
+      const timer = setTimeout(() => {
+        handleClose();
+      }, item.duration || 4000);
 
-  const getVariantConfig = () => {
-    switch (item.variant) {
-      case 'destructive':
-        return {
-          icon: 'alert-circle' as const,
-          iconColor: '#DC2626',
-          bg: '#FEF2F2',
-          border: '#FECACA',
-          titleColor: '#991B1B',
-          descColor: '#7F1D1D',
-        };
-      case 'success':
-        return {
-          icon: 'checkmark-circle' as const,
-          iconColor: '#16A34A',
-          bg: '#F0FDF4',
-          border: '#BBF7D0',
-          titleColor: '#166534',
-          descColor: '#14532D',
-        };
-      case 'warning':
-        return {
-          icon: 'warning' as const,
-          iconColor: '#D97706',
-          bg: '#FFFBEB',
-          border: '#FDE68A',
-          titleColor: '#92400E',
-          descColor: '#78350F',
-        };
-      case 'info':
-        return {
-          icon: 'information-circle' as const,
-          iconColor: '#0284C7',
-          bg: '#F0F9FF',
-          border: '#BAE6FD',
-          titleColor: '#075985',
-          descColor: '#0C4A6E',
-        };
-      case 'default':
-      default:
-        return {
-          icon: 'notifications' as const,
-          iconColor: '#475569',
-          bg: '#FFFFFF',
-          border: '#E2E8F0',
-          titleColor: '#0F172A',
-          descColor: '#334155',
-        };
-    }
-  };
+      return () => {
+        isMountedRef.current = false;
+        clearTimeout(timer);
+        enterAnim.stop();
+      };
+    }, [handleClose, item.duration, opacity, translateY]);
 
-  const config = getVariantConfig();
+    const config = VARIANT_CONFIGS[item.variant || 'default'] || VARIANT_CONFIGS.default;
 
-  return (
-    <Animated.View
-      style={[
-        styles.toastWrapper,
-        {
-          backgroundColor: config.bg,
-          borderColor: config.border,
-          opacity,
-          transform: [{ translateY }],
-        },
-      ]}
-    >
-      <View style={styles.iconCol}>
-        <Ionicons name={config.icon} size={20} color={config.iconColor} />
-      </View>
-      <View style={styles.textCol}>
-        {item.title ? (
-          <Text style={[styles.title, { color: config.titleColor }]}>
-            {item.title}
-          </Text>
-        ) : null}
-        <Text style={[styles.description, { color: config.descColor }]}>
-          {item.description}
-        </Text>
-        {item.actionText && item.onAction ? (
-          <TouchableOpacity
-            style={styles.actionBtn}
-            onPress={() => {
-              item.onAction?.();
-              handleClose();
-            }}
-          >
-            <Text style={[styles.actionBtnText, { color: config.titleColor }]}>
-              {item.actionText}
-            </Text>
-          </TouchableOpacity>
-        ) : null}
-      </View>
-      <TouchableOpacity
-        style={styles.closeBtn}
-        onPress={handleClose}
-        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+    return (
+      <Animated.View
+        style={[
+          styles.toastWrapper,
+          {
+            backgroundColor: config.bg,
+            borderColor: config.border,
+            opacity,
+            transform: [{ translateY }],
+          },
+        ]}
       >
-        <Ionicons name="close" size={16} color={config.iconColor} />
-      </TouchableOpacity>
-    </Animated.View>
-  );
-};
+        <View style={styles.iconCol}>
+          <Ionicons name={config.icon} size={20} color={config.iconColor} />
+        </View>
+        <View style={styles.textCol}>
+          {item.title ? (
+            <Text style={[styles.title, { color: config.titleColor }]}>
+              {item.title}
+            </Text>
+          ) : null}
+          <Text style={[styles.description, { color: config.descColor }]}>
+            {item.description}
+          </Text>
+          {item.actionText && item.onAction ? (
+            <TouchableOpacity
+              style={styles.actionBtn}
+              onPress={() => {
+                item.onAction?.();
+                handleClose();
+              }}
+            >
+              <Text style={[styles.actionBtnText, { color: config.titleColor }]}>
+                {item.actionText}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+        <TouchableOpacity
+          style={styles.closeBtn}
+          onPress={handleClose}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityRole="button"
+          accessibilityLabel="Đóng thông báo"
+        >
+          <Ionicons name="close" size={16} color={config.iconColor} />
+        </TouchableOpacity>
+      </Animated.View>
+    );
+  }
+);
 
 const styles = StyleSheet.create({
   container: {
@@ -288,30 +303,31 @@ const styles = StyleSheet.create({
   },
   textCol: {
     flex: 1,
+    flexShrink: 1,
     paddingRight: 8,
   },
   title: {
-    fontSize: 13,
-    fontWeight: '700',
+    fontFamily: fonts.bodyBold,
+    fontSize: 13.5,
     marginBottom: 2,
     letterSpacing: -0.1,
   },
   description: {
+    fontFamily: fonts.bodyMedium,
     fontSize: 12.5,
     lineHeight: 18,
-    fontWeight: '500',
   },
   actionBtn: {
     marginTop: 6,
     alignSelf: 'flex-start',
-    paddingVertical: 3,
-    paddingHorizontal: 8,
+    paddingVertical: 4,
+    paddingHorizontal: 10,
     borderRadius: 6,
     backgroundColor: 'rgba(0,0,0,0.06)',
   },
   actionBtnText: {
+    fontFamily: fonts.bodyBold,
     fontSize: 12,
-    fontWeight: '700',
   },
   closeBtn: {
     padding: 2,

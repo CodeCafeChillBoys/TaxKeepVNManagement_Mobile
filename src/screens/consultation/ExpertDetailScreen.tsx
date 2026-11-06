@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,19 +7,18 @@ import {
   TouchableOpacity,
   Image,
   ActivityIndicator,
-  FlatList,
   Modal,
   Linking,
   BackHandler,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
 import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
-import { Dialog } from '../../components/common/Dialog';
+import { useToast } from '../../components/ui/Toast';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { consultationApi } from '../../api/consultationApi';
 import { getLocalApiBaseUrl } from '../../constants/config';
@@ -37,11 +36,22 @@ import {
   formatTimeRange,
   isValidAvatarUrl,
 } from '../../types/consultation';
+import { toFriendlyErrorMessage } from '../../utils/friendlyError';
 
 export const ExpertDetailScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
   const route = useRoute<RouteProp<RootStackParamList, 'ExpertDetail'>>();
+  const insets = useSafeAreaInsets();
+  const { toast } = useToast();
   const expertProfileId = route.params.expertProfileId;
+
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   const [expert, setExpert] = useState<ExpertDetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -71,12 +81,6 @@ export const ExpertDetailScreen: React.FC = () => {
   // Certificate viewer modal state
   const [selectedCert, setSelectedCert] = useState<ExpertPublicCertificateDto | null>(null);
   const [certModalVisible, setCertModalVisible] = useState(false);
-  const [dialog, setDialog] = useState<{
-    title: string;
-    message: string;
-    primaryLabel?: string;
-    onPrimary?: () => void;
-  } | null>(null);
 
   const resolveFileUrl = (url?: string | null) => {
     if (!url) return '';
@@ -104,6 +108,7 @@ export const ExpertDetailScreen: React.FC = () => {
   };
 
   const fetchDetail = useCallback(async () => {
+    if (!isMountedRef.current) return;
     setLoading(true);
     setError(null);
     try {
@@ -112,6 +117,7 @@ export const ExpertDetailScreen: React.FC = () => {
         consultationApi.getAvailableSlotsForBooking(expertProfileId, undefined, 14),
         consultationApi.getConsultationFeeConfigs({ isActive: true }).catch(() => []),
       ]);
+      if (!isMountedRef.current) return;
       setExpert(detail);
       setAvailableSlots(slots);
       setReviews(detail.recentReviews || []);
@@ -130,7 +136,7 @@ export const ExpertDetailScreen: React.FC = () => {
         setConfiguredSessionTypes(activeAdminTypes);
       }
 
-      // Auto-select session type that is configured by Admin or has available slots
+      // Auto-select session type that is configured or has available slots
       let initialType: SessionType = activeAdminTypes[0] || 'ONLINE_MEETING';
       const activeFeePkg = (detail.feePackages || []).find((p) =>
         activeAdminTypes.includes(p.sessionType)
@@ -147,9 +153,13 @@ export const ExpertDetailScreen: React.FC = () => {
         setSelectedDate(slotsForType[0].slotDate);
       }
     } catch (err: any) {
-      setError(err?.response?.data?.message || err?.message || 'Không thể tải hồ sơ chuyên gia.');
+      if (isMountedRef.current) {
+        setError(toFriendlyErrorMessage(err, 'Không thể tải hồ sơ chuyên gia.'));
+      }
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+      }
     }
   }, [expertProfileId]);
 
@@ -167,11 +177,20 @@ export const ExpertDetailScreen: React.FC = () => {
         size: 15,
         rating: rating || undefined,
       });
-      setReviews(paged.items);
+      if (isMountedRef.current) {
+        setReviews(paged.items);
+      }
     } catch (e) {
-      console.warn('Filter reviews error:', e);
+      if (__DEV__) {
+        console.warn('Filter reviews error:', e);
+      }
+      if (isMountedRef.current) {
+        toast.error(toFriendlyErrorMessage(e, 'Không thể lọc danh sách nhận xét lúc này.'));
+      }
     } finally {
-      setLoadingReviews(false);
+      if (isMountedRef.current) {
+        setLoadingReviews(false);
+      }
     }
   };
 
@@ -413,7 +432,13 @@ export const ExpertDetailScreen: React.FC = () => {
       </View>
       <GoldDoubleRule />
 
-      <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingBottom: Math.max(insets.bottom, 12) + 88 },
+        ]}
+        keyboardShouldPersistTaps="handled"
+      >
         {/* ── HERO PROFILE CARD ── */}
         <View style={styles.heroCard}>
           <View style={styles.heroTopRow}>
@@ -587,7 +612,7 @@ export const ExpertDetailScreen: React.FC = () => {
                   <Text style={styles.sectionHeaderTitle}>Chứng chỉ hành nghề đã xác minh</Text>
                 </View>
                 <Text style={styles.sectionSubtitle}>
-                  Đã được ban quản trị TaxKeep kiểm tra và xác thực tính hợp pháp
+                  Đã được Bộ phận thẩm định TaxKeep kiểm tra và xác thực tính hợp pháp
                 </Text>
 
                 {expert.verifiedCertificates.map((cert) => (
@@ -656,7 +681,9 @@ export const ExpertDetailScreen: React.FC = () => {
                           </Text>
                         </View>
                       </View>
-                      <Text style={styles.feePrice}>{formatVnd(pkg.fee)}</Text>
+                      <Text style={styles.feePrice} numberOfLines={1} adjustsFontSizeToFit>
+                        {formatVnd(pkg.fee)}
+                      </Text>
                     </View>
                   );
                 })}
@@ -734,7 +761,7 @@ export const ExpertDetailScreen: React.FC = () => {
 
                           <View style={styles.serviceCardRight}>
                             <View style={styles.servicePriceRow}>
-                              <Text style={styles.servicePrice}>
+                              <Text style={styles.servicePrice} numberOfLines={1} adjustsFontSizeToFit>
                                 {srv.feeDisplay}
                               </Text>
                               <Ionicons
@@ -1107,38 +1134,45 @@ export const ExpertDetailScreen: React.FC = () => {
       </ScrollView>
 
       {/* ── STICKY BOTTOM BOOKING ACTION BAR ── */}
-      <View style={styles.bottomBar}>
-        <View style={styles.bottomFeeInfo}>
-          {selectedSlot ? (
-            <>
-              <Text style={styles.bottomSlotLabel}>
-                {formatVietnameseDate(selectedSlot.slotDate)} ({formatTimeRange(selectedSlot.startTime, selectedSlot.endTime)})
-              </Text>
-              <Text style={styles.bottomSlotStatus}>Khung giờ đã chọn</Text>
-            </>
-          ) : (
-            <>
-              <Text style={styles.bottomFeeLabel}>Mức phí tư vấn</Text>
-              <Text style={styles.bottomFeeValue}>
-                {expert.feePackages && expert.feePackages.length > 0
-                  ? `Từ ${formatVnd(Math.min(...expert.feePackages.map((p) => p.fee)))}`
-                  : 'Theo quy định'}
-              </Text>
-            </>
-          )}
-        </View>
+      <View
+        style={[
+          styles.bottomBar,
+          { paddingBottom: Math.max(insets.bottom, 12) },
+        ]}
+      >
+        <View style={styles.bottomBarInner}>
+          <View style={styles.bottomFeeInfo}>
+            {selectedSlot ? (
+              <>
+                <Text style={styles.bottomSlotLabel} numberOfLines={1}>
+                  {formatVietnameseDate(selectedSlot.slotDate)} ({formatTimeRange(selectedSlot.startTime, selectedSlot.endTime)})
+                </Text>
+                <Text style={styles.bottomSlotStatus}>Khung giờ đã chọn</Text>
+              </>
+            ) : (
+              <>
+                <Text style={styles.bottomFeeLabel}>Mức phí tư vấn</Text>
+                <Text style={styles.bottomFeeValue} numberOfLines={1} adjustsFontSizeToFit>
+                  {expert.feePackages && expert.feePackages.length > 0
+                    ? `Từ ${formatVnd(Math.min(...expert.feePackages.map((p) => p.fee)))}`
+                    : 'Theo quy định'}
+                </Text>
+              </>
+            )}
+          </View>
 
-        <TouchableOpacity
-          style={styles.bottomBookBtn}
-          onPress={handleProceedToBooking}
-          accessibilityRole="button"
-          accessibilityLabel="Đặt lịch tư vấn"
-        >
-          <Ionicons name="calendar" size={16} color="#FFFFFF" />
-          <Text style={styles.bottomBookBtnText}>
-            {selectedSlot ? 'Xác nhận đặt lịch này' : 'Đặt lịch tư vấn'}
-          </Text>
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.bottomBookBtn}
+            onPress={handleProceedToBooking}
+            accessibilityRole="button"
+            accessibilityLabel="Đặt lịch tư vấn"
+          >
+            <Ionicons name="calendar" size={16} color="#FFFFFF" />
+            <Text style={styles.bottomBookBtnText} numberOfLines={1}>
+              {selectedSlot ? 'Xác nhận đặt lịch này' : 'Đặt lịch tư vấn'}
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* ── MODAL XEM CHI TIẾT & TỆP CHỨNG CHỈ HÀNH NGHỀ ── */}
@@ -1222,12 +1256,7 @@ export const ExpertDetailScreen: React.FC = () => {
                           const fullUrl = resolveFileUrl(selectedCert.fileUrl);
                           if (fullUrl) {
                             Linking.openURL(fullUrl).catch(() => {
-                              setDialog({
-                                title: 'Thông báo',
-                                message: 'Không thể mở liên kết tệp tin trên thiết bị.',
-                                primaryLabel: 'Đã hiểu',
-                                onPrimary: () => setDialog(null),
-                              });
+                              toast.error('Không thể mở liên kết tệp chứng chỉ trên thiết bị này.');
                             });
                           }
                         }}
@@ -1241,7 +1270,7 @@ export const ExpertDetailScreen: React.FC = () => {
                     <View style={styles.noFileNotice}>
                       <Ionicons name="shield-checkmark-outline" size={26} color="#059669" />
                       <Text style={styles.noFileNoticeText}>
-                        Chứng chỉ đã được ban quản trị TaxKeep kiểm tra trực tiếp và xác thực từ hồ sơ gốc của chuyên gia.
+                        Chứng chỉ đã được Bộ phận thẩm định TaxKeep kiểm tra trực tiếp và xác thực từ hồ sơ gốc của chuyên gia.
                       </Text>
                     </View>
                   )}
@@ -1449,15 +1478,6 @@ export const ExpertDetailScreen: React.FC = () => {
           </View>
         </TouchableOpacity>
       </Modal>
-
-      <Dialog
-        visible={Boolean(dialog)}
-        title={dialog?.title || ''}
-        message={dialog?.message || ''}
-        primaryLabel={dialog?.primaryLabel || 'Đã hiểu'}
-        onPrimary={dialog?.onPrimary || (() => setDialog(null))}
-        onRequestClose={() => setDialog(null)}
-      />
     </SafeAreaView>
   );
 };
@@ -1507,6 +1527,9 @@ const styles = StyleSheet.create({
   scrollContent: {
     padding: 16,
     paddingBottom: 90,
+    maxWidth: 720,
+    width: '100%',
+    alignSelf: 'center',
   },
 
   // Hero Card
@@ -1878,25 +1901,30 @@ const styles = StyleSheet.create({
   certDetailRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    alignItems: 'flex-start',
     paddingVertical: 4,
+    gap: 10,
   },
   certDetailLabel: {
     fontFamily: fonts.body,
     fontSize: 12,
     color: '#666666',
+    flexShrink: 0,
   },
   certDetailValue: {
     fontFamily: fonts.bodySemi,
     fontSize: 12,
     color: '#333333',
-    maxWidth: '65%',
+    flex: 1,
+    flexShrink: 1,
     textAlign: 'right',
   },
   certDetailValueBold: {
     fontFamily: fonts.bodyBold,
     fontSize: 12,
     color: theme.colors.primary,
-    maxWidth: '65%',
+    flex: 1,
+    flexShrink: 1,
     textAlign: 'right',
   },
   certVerifiedBanner: {
@@ -2019,6 +2047,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
+    flex: 1,
+    minWidth: 0,
+    marginRight: 8,
   },
   sessionIconBox: {
     width: 38,
@@ -2026,6 +2057,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     justifyContent: 'center',
     alignItems: 'center',
+    flexShrink: 0,
   },
   sessionName: {
     fontFamily: fonts.bodyBold,
@@ -2043,6 +2075,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: theme.colors.primary,
     fontVariant: ['tabular-nums'],
+    flexShrink: 1,
   },
 
   // Schedule Tab - Service Types List (Full-width vertical cards)
@@ -2221,7 +2254,8 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   slotChip: {
-    width: '48%',
+    flexBasis: '47%',
+    flexGrow: 1,
     backgroundColor: '#FAF7F0',
     borderWidth: 1,
     borderColor: '#E6DECE',
@@ -2448,14 +2482,20 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: theme.colors.border,
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingTop: 12,
+    ...theme.shadows.card,
+  },
+  bottomBarInner: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    ...theme.shadows.card,
+    maxWidth: 720,
+    width: '100%',
+    alignSelf: 'center',
   },
   bottomFeeInfo: {
     flex: 1,
+    minWidth: 0,
     marginRight: 12,
   },
   bottomFeeLabel: {
@@ -2467,6 +2507,8 @@ const styles = StyleSheet.create({
     fontFamily: fonts.serifBold,
     fontSize: 15,
     color: theme.colors.primary,
+    fontVariant: ['tabular-nums'],
+    flexShrink: 1,
   },
   bottomSlotLabel: {
     fontFamily: fonts.bodyBold,
@@ -2486,12 +2528,14 @@ const styles = StyleSheet.create({
     paddingVertical: 11,
     borderRadius: 8,
     gap: 6,
+    flexShrink: 1,
     ...theme.shadows.button,
   },
   bottomBookBtnText: {
     fontFamily: fonts.bodyBold,
     fontSize: 13,
     color: '#FFFFFF',
+    flexShrink: 1,
   },
 
   centerLoading: {

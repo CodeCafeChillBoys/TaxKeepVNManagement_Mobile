@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -6,10 +6,10 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
   Platform,
+  KeyboardAvoidingView,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -25,6 +25,7 @@ import {
   DocumentViewerModal,
   DocumentViewerItem,
 } from '../../components/common/DocumentViewerModal';
+import { useToast } from '../../components/ui/Toast';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import {
   OCR_FIELD_META,
@@ -50,14 +51,27 @@ import {
   DEPENDENT_OCR_TIMEOUT_MESSAGE,
   runDependentOcrExtract,
 } from './scanIdentityDependentExtract';
+import { sanitizeUiMessage } from '../../utils/friendlyError';
 
 type ScreenState = 'source' | 'camera' | 'backOffer' | 'review';
 type ProcessPhase = 'idle' | 'uploading' | 'extracting';
 type ScanIdentityRoute = RouteProp<RootStackParamList, 'ScanIdentity'>;
 
+type ActionDialogConfig = {
+  title: string;
+  message: string;
+  primaryLabel: string;
+  onPrimary: () => void;
+  secondaryLabel?: string;
+  onSecondary?: () => void;
+};
+
 export const ScanIdentityScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
   const route = useRoute<ScanIdentityRoute>();
+  const insets = useSafeAreaInsets();
+  const { toast } = useToast();
+
   const source: ScanIdentitySource = route.params?.source ?? 'register';
   const hasExistingData = route.params?.hasExistingData ?? false;
   const lockedCitizenId = route.params?.lockedCitizenId;
@@ -69,7 +83,7 @@ export const ScanIdentityScreen: React.FC = () => {
   const [backUri, setBackUri] = useState<string | null>(null);
   const [fields, setFields] = useState<OcrExtractedFields>(createEmptyOcrFields);
   const [lowConfidence] = useState<OcrFieldKey[]>([]);
-  const [viewedLowFields, setViewedLowFields] = useState<Set<OcrFieldKey>>(new Set());
+  const [, setViewedLowFields] = useState<Set<OcrFieldKey>>(new Set());
   const [viewerOpen, setViewerOpen] = useState(false);
 
   const [blurryVisible, setBlurryVisible] = useState(false);
@@ -79,6 +93,7 @@ export const ScanIdentityScreen: React.FC = () => {
   const [invalidCitizenIdVisible, setInvalidCitizenIdVisible] = useState(false);
   const [invalidCitizenIdMessage, setInvalidCitizenIdMessage] = useState<string | undefined>();
   const [citizenIdMismatch, setCitizenIdMismatch] = useState(false);
+  const [actionDialog, setActionDialog] = useState<ActionDialogConfig | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
 
@@ -91,79 +106,108 @@ export const ScanIdentityScreen: React.FC = () => {
   const isBusy = processPhase !== 'idle';
   const imageUri = frontUri;
 
-  const skipManual = () => {
+  const skipManual = useCallback(() => {
     navigation.goBack();
-  };
+  }, [navigation]);
 
-  const cancelProcessing = () => {
+  const cancelProcessing = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
     setProcessPhase('idle');
     setScreen('source');
-  };
+  }, []);
 
-  const fieldStatus = (key: OcrFieldKey): OcrFieldStatus => {
-    if (!fields[key]?.trim()) return 'unreadable';
-    if (lowConfidence.includes(key)) return 'check';
-    return 'confident';
-  };
+  const fieldStatus = useCallback(
+    (key: OcrFieldKey): OcrFieldStatus => {
+      if (!fields[key]?.trim()) return 'unreadable';
+      if (lowConfidence.includes(key)) return 'check';
+      return 'confident';
+    },
+    [fields, lowConfidence]
+  );
 
-  const canConfirm = (): boolean => canConfirmOcrReview(fields, source);
+  const canConfirm = useMemo(() => canConfirmOcrReview(fields, source), [fields, source]);
 
-  /** OCR-05 register / OCR-06 editProfile / OCR-07 dependent. */
-  const runExtract = async (front: string, back?: string | null) => {
-    abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
+  const runExtract = useCallback(
+    async (front: string, back?: string | null) => {
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
 
-    setProcessPhase('uploading');
-    setViewedLowFields(new Set());
-    setCitizenIdMismatch(false);
+      setProcessPhase('uploading');
+      setViewedLowFields(new Set());
+      setCitizenIdMismatch(false);
 
-    try {
-      if (source === 'register') {
-        setProcessPhase('extracting');
-        const result = await runRegisterOcrExtract({
-          frontUri: front,
-          backUri: back,
-          signal: controller.signal,
-          extractUserCccd: ocrApi.extractUserCccd,
-        });
-        if (controller.signal.aborted) return;
-        if (result.ok) {
-          setFields(result.fields);
+      try {
+        if (source === 'register') {
+          setProcessPhase('extracting');
+          const result = await runRegisterOcrExtract({
+            frontUri: front,
+            backUri: back,
+            signal: controller.signal,
+            extractUserCccd: ocrApi.extractUserCccd,
+          });
+          if (controller.signal.aborted) return;
+          if (result.ok) {
+            setFields(result.fields);
+            setProcessPhase('idle');
+            setScreen('review');
+            return;
+          }
           setProcessPhase('idle');
-          setScreen('review');
+          if (result.kind === 'blurry') {
+            setBlurryMessage(result.message);
+            setBlurryVisible(true);
+            return;
+          }
+          if (result.kind === 'invalidCitizenId') {
+            setInvalidCitizenIdMessage(result.message);
+            setInvalidCitizenIdVisible(true);
+            return;
+          }
+          setServerErrorVisible(true);
           return;
         }
-        setProcessPhase('idle');
-        if (result.kind === 'blurry') {
-          setBlurryMessage(result.message);
-          setBlurryVisible(true);
-          return;
-        }
-        if (result.kind === 'invalidCitizenId') {
-          setInvalidCitizenIdMessage(result.message);
-          setInvalidCitizenIdVisible(true);
-          return;
-        }
-        setServerErrorVisible(true);
-        return;
-      }
 
-      if (source === 'editProfile') {
-        setProcessPhase('extracting');
-        const result = await runEditProfileOcrExtract({
+        if (source === 'editProfile') {
+          setProcessPhase('extracting');
+          const result = await runEditProfileOcrExtract({
+            frontUri: front,
+            backUri: back,
+            lockedCitizenId,
+            signal: controller.signal,
+            extractDirect: ocrApi.extractDirect,
+          });
+          if (controller.signal.aborted) return;
+          if (result.ok) {
+            setFields(result.fields);
+            setCitizenIdMismatch(result.citizenIdMismatch);
+            setProcessPhase('idle');
+            setScreen('review');
+            return;
+          }
+          setProcessPhase('idle');
+          if (result.kind === 'blurry') {
+            setBlurryMessage(result.message);
+            setBlurryVisible(true);
+            return;
+          }
+          setServerErrorVisible(true);
+          return;
+        }
+
+        const result = await runDependentOcrExtract({
           frontUri: front,
           backUri: back,
-          lockedCitizenId,
           signal: controller.signal,
           extractDirect: ocrApi.extractDirect,
+          onPhase: (phase) => {
+            if (!controller.signal.aborted) setProcessPhase(phase);
+          },
         });
         if (controller.signal.aborted) return;
         if (result.ok) {
           setFields(result.fields);
-          setCitizenIdMismatch(result.citizenIdMismatch);
           setProcessPhase('idle');
           setScreen('review');
           return;
@@ -174,185 +218,189 @@ export const ScanIdentityScreen: React.FC = () => {
           setBlurryVisible(true);
           return;
         }
+        if (result.kind === 'timeout') {
+          setActionDialog({
+            title: 'Quá thời gian đọc giấy tờ',
+            message: sanitizeUiMessage(result.message, DEPENDENT_OCR_TIMEOUT_MESSAGE),
+            secondaryLabel: 'Nhập thủ công',
+            onSecondary: skipManual,
+            primaryLabel: 'Thử lại',
+            onPrimary: () => void runExtract(front, back),
+          });
+          return;
+        }
         setServerErrorVisible(true);
-        return;
-      }
-
-      // dependent: sync direct-extractions (tránh poll RabbitMQ 30s timeout)
-      const result = await runDependentOcrExtract({
-        frontUri: front,
-        backUri: back,
-        signal: controller.signal,
-        extractDirect: ocrApi.extractDirect,
-        onPhase: (phase) => {
-          if (!controller.signal.aborted) setProcessPhase(phase);
-        },
-      });
-      if (controller.signal.aborted) return;
-      if (result.ok) {
-        setFields(result.fields);
+      } catch (error: unknown) {
+        if (controller.signal.aborted) return;
+        const name = error instanceof Error ? error.name : '';
+        if (name === 'AbortError') return;
         setProcessPhase('idle');
-        setScreen('review');
-        return;
+        setServerErrorVisible(true);
+      } finally {
+        if (abortRef.current === controller) {
+          abortRef.current = null;
+        }
       }
-      setProcessPhase('idle');
-      if (result.kind === 'blurry') {
-        setBlurryMessage(result.message);
-        setBlurryVisible(true);
-        return;
-      }
-      if (result.kind === 'timeout') {
-        Alert.alert('Hết thời gian', result.message || DEPENDENT_OCR_TIMEOUT_MESSAGE, [
-          { text: 'Nhập tay', onPress: skipManual },
-          { text: 'Thử lại', onPress: () => void runExtract(front, back) },
-        ]);
-        return;
-      }
-      setServerErrorVisible(true);
-    } catch (error: unknown) {
-      if (controller.signal.aborted) return;
-      const name = error instanceof Error ? error.name : '';
-      if (name === 'AbortError') return;
-      setProcessPhase('idle');
-      setServerErrorVisible(true);
-    } finally {
-      if (abortRef.current === controller) {
-        abortRef.current = null;
-      }
-    }
-  };
+    },
+    [lockedCitizenId, skipManual, source]
+  );
 
-  const acceptFrontAndOfferBack = (uri: string) => {
+  const acceptFrontAndOfferBack = useCallback((uri: string) => {
     setFrontUri(uri);
     setBackUri(null);
     setScreen('backOffer');
-  };
+  }, []);
 
-  const validateAndProcessFront = (asset: ImagePicker.ImagePickerAsset) => {
-    const result = evaluateOcrImageAsset({
-      uri: asset.uri,
-      fileName: asset.fileName,
-      mimeType: asset.mimeType,
-      fileSize: asset.fileSize,
-      width: asset.width,
-      height: asset.height,
-    });
+  const validateAndProcessFront = useCallback(
+    (asset: ImagePicker.ImagePickerAsset) => {
+      const result = evaluateOcrImageAsset({
+        uri: asset.uri,
+        fileName: asset.fileName,
+        mimeType: asset.mimeType,
+        fileSize: asset.fileSize,
+        width: asset.width,
+        height: asset.height,
+      });
 
-    if (!result.ok) {
-      if (result.reason === 'format') {
-        Alert.alert('Định dạng không hỗ trợ', 'Chỉ hỗ trợ ảnh định dạng JPG hoặc PNG.');
-        return;
-      }
-      if (result.reason === 'tooLarge') {
-        Alert.alert('Tệp quá lớn', 'Dung lượng ảnh không được vượt quá 10 MB.');
-        return;
-      }
-      if (result.reason === 'tooSmall') {
-        Alert.alert('Ảnh quá nhỏ', 'Ảnh có độ phân giải quá thấp. Vui lòng chọn ảnh rõ hơn.');
-        return;
-      }
-      setFrontUri(asset.uri);
-      setBlurryVisible(true);
-      return;
-    }
-
-    acceptFrontAndOfferBack(asset.uri);
-  };
-
-  const validateAndProcessBack = (asset: ImagePicker.ImagePickerAsset) => {
-    const result = evaluateOcrImageAsset({
-      uri: asset.uri,
-      fileName: asset.fileName,
-      mimeType: asset.mimeType,
-      fileSize: asset.fileSize,
-      width: asset.width,
-      height: asset.height,
-    });
-
-    if (!result.ok) {
-      if (result.reason === 'blurry') {
+      if (!result.ok) {
+        if (result.reason === 'format') {
+          toast.warning('Vui lòng chọn ảnh định dạng JPG hoặc PNG.', 'Định dạng ảnh chưa hỗ trợ');
+          return;
+        }
+        if (result.reason === 'tooLarge') {
+          toast.warning('Vui lòng chọn ảnh có dung lượng không vượt quá 10 MB.', 'Dung lượng ảnh quá lớn');
+          return;
+        }
+        if (result.reason === 'tooSmall') {
+          toast.warning('Vui lòng chụp gần hơn hoặc chọn ảnh rõ nét hơn.', 'Độ phân giải ảnh quá thấp');
+          return;
+        }
+        setFrontUri(asset.uri);
         setBlurryVisible(true);
         return;
       }
-      Alert.alert('Ảnh mặt sau không hợp lệ', 'Vui lòng chọn JPG/PNG rõ nét hoặc bỏ qua mặt sau.');
-      return;
-    }
 
-    setBackUri(asset.uri);
-    if (frontUri) {
-      void runExtract(frontUri, asset.uri);
-    }
-  };
+      acceptFrontAndOfferBack(asset.uri);
+    },
+    [acceptFrontAndOfferBack, toast]
+  );
 
-  const pickFromLibrary = async (forBack = false) => {
-    try {
-      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!permission.granted) {
-        Alert.alert(
-          'Cần quyền thư viện ảnh',
-          'Vui lòng mở quyền thư viện trong Cài đặt, hoặc nhập tay thông tin.',
-          [
-            { text: 'Nhập tay', onPress: skipManual },
-            { text: 'Đóng', style: 'cancel' },
-          ]
+  const validateAndProcessBack = useCallback(
+    (asset: ImagePicker.ImagePickerAsset) => {
+      const result = evaluateOcrImageAsset({
+        uri: asset.uri,
+        fileName: asset.fileName,
+        mimeType: asset.mimeType,
+        fileSize: asset.fileSize,
+        width: asset.width,
+        height: asset.height,
+      });
+
+      if (!result.ok) {
+        if (result.reason === 'blurry') {
+          setBlurryVisible(true);
+          return;
+        }
+        toast.warning(
+          'Vui lòng chọn ảnh JPG/PNG rõ nét hoặc bỏ qua bước chụp mặt sau.',
+          'Ảnh mặt sau chưa hợp lệ'
         );
         return;
       }
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        quality: 0.85,
-        allowsEditing: false,
-      });
-      if (result.canceled || !result.assets?.[0]) return;
-      if (forBack) validateAndProcessBack(result.assets[0]);
-      else validateAndProcessFront(result.assets[0]);
-    } catch {
-      Alert.alert('Không thể mở thư viện', 'Vui lòng thử lại hoặc nhập tay thông tin.', [
-        { text: 'Nhập tay', onPress: skipManual },
-        { text: 'Đóng', style: 'cancel' },
-      ]);
-    }
-  };
 
-  const captureFromCamera = async (forBack = false) => {
-    if (Platform.OS === 'web') {
-      Alert.alert('Camera không khả dụng', WEB_CAMERA_UNAVAILABLE_MESSAGE, [
-        { text: 'Chọn từ thư viện', onPress: () => void pickFromLibrary(forBack) },
-        { text: 'Nhập tay', onPress: skipManual },
-        { text: 'Đóng', style: 'cancel' },
-      ]);
-      return;
-    }
-    try {
-      const permission = await ImagePicker.requestCameraPermissionsAsync();
-      if (!permission.granted) {
-        Alert.alert(
-          'Cần quyền camera',
-          'Vui lòng mở quyền camera trong Cài đặt, hoặc nhập tay thông tin.',
-          [
-            { text: 'Nhập tay', onPress: skipManual },
-            { text: 'Đóng', style: 'cancel' },
-          ]
-        );
+      setBackUri(asset.uri);
+      if (frontUri) {
+        void runExtract(frontUri, asset.uri);
+      }
+    },
+    [frontUri, runExtract, toast]
+  );
+
+  const pickFromLibrary = useCallback(
+    async (forBack = false) => {
+      try {
+        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!permission.granted) {
+          setActionDialog({
+            title: 'Cần quyền truy cập thư viện ảnh',
+            message: 'Vui lòng cấp quyền thư viện ảnh trong Cài đặt thiết bị, hoặc chuyển sang nhập thủ công.',
+            secondaryLabel: 'Đóng',
+            primaryLabel: 'Nhập thủ công',
+            onPrimary: skipManual,
+          });
+          return;
+        }
+        const result = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ['images'],
+          quality: 0.8,
+          allowsEditing: false,
+          base64: false,
+        });
+        if (result.canceled || !result.assets?.[0]) return;
+        if (forBack) validateAndProcessBack(result.assets[0]);
+        else validateAndProcessFront(result.assets[0]);
+      } catch {
+        setActionDialog({
+          title: 'Không mở được thư viện ảnh',
+          message: 'Không thể truy cập thư viện ảnh lúc này. Bạn có thể thử lại hoặc nhập thủ công.',
+          secondaryLabel: 'Đóng',
+          primaryLabel: 'Nhập thủ công',
+          onPrimary: skipManual,
+        });
+      }
+    },
+    [skipManual, validateAndProcessBack, validateAndProcessFront]
+  );
+
+  const captureFromCamera = useCallback(
+    async (forBack = false) => {
+      if (Platform.OS === 'web') {
+        setActionDialog({
+          title: 'Máy ảnh chưa khả dụng',
+          message: WEB_CAMERA_UNAVAILABLE_MESSAGE,
+          secondaryLabel: 'Nhập thủ công',
+          onSecondary: skipManual,
+          primaryLabel: 'Chọn từ thư viện',
+          onPrimary: () => void pickFromLibrary(forBack),
+        });
         return;
       }
-      const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ['images'],
-        quality: 0.85,
-        allowsEditing: false,
-      });
-      if (result.canceled || !result.assets?.[0]) return;
-      if (forBack) validateAndProcessBack(result.assets[0]);
-      else validateAndProcessFront(result.assets[0]);
-    } catch {
-      Alert.alert('Không thể mở camera', 'Vui lòng thử lại, chọn thư viện, hoặc nhập tay.', [
-        { text: 'Nhập tay', onPress: skipManual },
-        { text: 'Đóng', style: 'cancel' },
-      ]);
-    }
-  };
+      try {
+        const permission = await ImagePicker.requestCameraPermissionsAsync();
+        if (!permission.granted) {
+          setActionDialog({
+            title: 'Cần quyền sử dụng máy ảnh',
+            message: 'Vui lòng cấp quyền máy ảnh trong Cài đặt thiết bị, hoặc chuyển sang nhập thủ công.',
+            secondaryLabel: 'Đóng',
+            primaryLabel: 'Nhập thủ công',
+            onPrimary: skipManual,
+          });
+          return;
+        }
+        const result = await ImagePicker.launchCameraAsync({
+          mediaTypes: ['images'],
+          quality: 0.8,
+          allowsEditing: false,
+          base64: false,
+        });
+        if (result.canceled || !result.assets?.[0]) return;
+        if (forBack) validateAndProcessBack(result.assets[0]);
+        else validateAndProcessFront(result.assets[0]);
+      } catch {
+        setActionDialog({
+          title: 'Không mở được máy ảnh',
+          message: 'Không thể khởi động máy ảnh lúc này. Bạn có thể chọn ảnh từ thư viện hoặc nhập thủ công.',
+          secondaryLabel: 'Nhập thủ công',
+          onSecondary: skipManual,
+          primaryLabel: 'Chọn từ thư viện',
+          onPrimary: () => void pickFromLibrary(forBack),
+        });
+      }
+    },
+    [pickFromLibrary, skipManual, validateAndProcessBack, validateAndProcessFront]
+  );
 
-  const applyAndReturn = () => {
+  const applyAndReturn = useCallback(() => {
     if (source === 'editProfile') {
       const fill = normalizeOcrForForm(fields);
       navigation.navigate({
@@ -377,23 +425,26 @@ export const ScanIdentityScreen: React.FC = () => {
       params: { ocrResult: fill },
       merge: true,
     });
-  };
+  }, [fields, navigation, source]);
 
-  const onPressUseInfo = () => {
+  const onPressUseInfo = useCallback(() => {
     if (hasExistingData) {
       setOverwriteVisible(true);
       return;
     }
     applyAndReturn();
-  };
+  }, [applyAndReturn, hasExistingData]);
 
-  const viewerDoc: DocumentViewerItem = {
-    uri: imageUri ?? undefined,
-    title: 'Ảnh căn cước công dân',
-    fileName: 'cccd-preview.jpg',
-    isReadable: true,
-    mimeType: 'image/jpeg',
-  };
+  const viewerDoc: DocumentViewerItem = useMemo(
+    () => ({
+      uri: imageUri ?? undefined,
+      title: 'Ảnh căn cước công dân',
+      fileName: 'cccd-preview.jpg',
+      isReadable: true,
+      mimeType: 'image/jpeg',
+    }),
+    [imageUri]
+  );
 
   const renderProcessing = () => {
     if (!isBusy) return null;
@@ -405,7 +456,7 @@ export const ScanIdentityScreen: React.FC = () => {
             {processPhase === 'uploading' ? 'Đang tải ảnh lên...' : 'Đang đọc thông tin từ giấy tờ...'}
           </Text>
           <TouchableOpacity style={styles.cancelChip} onPress={cancelProcessing}>
-            <Text style={styles.cancelChipText}>Hủy</Text>
+            <Text style={styles.cancelChipText}>Hủy thao tác</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -416,34 +467,36 @@ export const ScanIdentityScreen: React.FC = () => {
     <SafeAreaView style={styles.safe}>
       <HeaderMotif title="QUÉT CĂN CƯỚC CÔNG DÂN" onBack={skipManual} />
       <ScrollView contentContainerStyle={styles.sourceContent} showsVerticalScrollIndicator={false}>
-        <Text style={styles.lead}>
-          Chụp hoặc chọn ảnh mặt trước căn cước công dân để hệ thống tự điền thông tin.
-        </Text>
+        <View style={styles.contentWrap}>
+          <Text style={styles.lead}>
+            Chụp hoặc chọn ảnh mặt trước căn cước công dân để điền nhanh thông tin hồ sơ.
+          </Text>
 
-        <SourceOptionCard
-          icon="camera-outline"
-          title="Chụp ảnh bằng camera"
-          subtitle="Khung căn giấy tờ, hỗ trợ đèn flash"
-          onPress={() => setScreen('camera')}
-        />
-        <SourceOptionCard
-          icon="images-outline"
-          title="Chọn ảnh từ thiết bị"
-          subtitle="Thư viện ảnh trên điện thoại"
-          onPress={() => void pickFromLibrary(false)}
-        />
+          <SourceOptionCard
+            icon="camera-outline"
+            title="Chụp ảnh bằng máy ảnh"
+            subtitle="Khung căn giấy tờ, hỗ trợ đèn trợ sáng"
+            onPress={() => setScreen('camera')}
+          />
+          <SourceOptionCard
+            icon="images-outline"
+            title="Chọn ảnh từ thiết bị"
+            subtitle="Thư viện ảnh trên điện thoại"
+            onPress={() => void pickFromLibrary(false)}
+          />
 
-        <View style={styles.metaRow}>
-          <Text style={styles.metaText}>Định dạng: JPG, PNG</Text>
-          <Text style={styles.metaDot}>·</Text>
-          <Text style={styles.metaText}>Tối đa: 10 MB</Text>
+          <View style={styles.metaRow}>
+            <Text style={styles.metaText}>Định dạng: JPG, PNG</Text>
+            <Text style={styles.metaDot}>·</Text>
+            <Text style={styles.metaText}>Tối đa: 10 MB</Text>
+          </View>
+
+          <InfoNote text="Ảnh chỉ dùng để đọc thông tin một lần và không lưu lại trên hệ thống." />
+
+          <TouchableOpacity style={styles.skipLink} onPress={skipManual}>
+            <Text style={styles.skipLinkText}>Bỏ qua, tôi sẽ nhập thủ công</Text>
+          </TouchableOpacity>
         </View>
-
-        <InfoNote text="Ảnh chỉ dùng để đọc thông tin và không được lưu lại trên hệ thống." />
-
-        <TouchableOpacity style={styles.skipLink} onPress={skipManual}>
-          <Text style={styles.skipLinkText}>Bỏ qua, tôi sẽ nhập tay</Text>
-        </TouchableOpacity>
       </ScrollView>
       {renderProcessing()}
     </SafeAreaView>
@@ -453,31 +506,33 @@ export const ScanIdentityScreen: React.FC = () => {
     <SafeAreaView style={styles.safe}>
       <HeaderMotif title="THÊM MẶT SAU" onBack={() => setScreen('source')} />
       <ScrollView contentContainerStyle={styles.sourceContent} showsVerticalScrollIndicator={false}>
-        <Text style={styles.lead}>
-          Bạn có thể thêm ảnh mặt sau (không bắt buộc) để đọc đủ thông tin hơn.
-        </Text>
-        {frontUri ? <DocumentPreview uri={frontUri} onPress={() => setViewerOpen(true)} /> : null}
-        <View style={{ height: theme.spacing.md }} />
-        <SourceOptionCard
-          icon="camera-outline"
-          title="Chụp mặt sau"
-          subtitle="Không bắt buộc"
-          onPress={() => void captureFromCamera(true)}
-        />
-        <SourceOptionCard
-          icon="images-outline"
-          title="Chọn ảnh mặt sau từ thiết bị"
-          subtitle="Không bắt buộc"
-          onPress={() => void pickFromLibrary(true)}
-        />
-        <CustomButton
-          title="Bỏ qua, chỉ dùng mặt trước"
-          variant="outline"
-          onPress={() => {
-            if (frontUri) void runExtract(frontUri, null);
-          }}
-          style={{ marginTop: theme.spacing.md }}
-        />
+        <View style={styles.contentWrap}>
+          <Text style={styles.lead}>
+            Bạn có thể bổ sung ảnh mặt sau (không bắt buộc) để đọc đầy đủ ngày cấp và nơi thường trú.
+          </Text>
+          {frontUri ? <DocumentPreview uri={frontUri} onPress={() => setViewerOpen(true)} /> : null}
+          <View style={styles.spacerMd} />
+          <SourceOptionCard
+            icon="camera-outline"
+            title="Chụp mặt sau"
+            subtitle="Không bắt buộc"
+            onPress={() => void captureFromCamera(true)}
+          />
+          <SourceOptionCard
+            icon="images-outline"
+            title="Chọn ảnh mặt sau từ thiết bị"
+            subtitle="Không bắt buộc"
+            onPress={() => void pickFromLibrary(true)}
+          />
+          <CustomButton
+            title="Bỏ qua, chỉ dùng mặt trước"
+            variant="outline"
+            onPress={() => {
+              if (frontUri) void runExtract(frontUri, null);
+            }}
+            style={styles.skipBackBtn}
+          />
+        </View>
       </ScrollView>
       {renderProcessing()}
       <DocumentViewerModal
@@ -495,7 +550,7 @@ export const ScanIdentityScreen: React.FC = () => {
           <TouchableOpacity
             style={styles.closeBtn}
             onPress={() => setScreen('source')}
-            accessibilityLabel="Đóng camera"
+            accessibilityLabel="Đóng máy ảnh"
           >
             <Ionicons name="close" size={22} color="#FFFFFF" />
           </TouchableOpacity>
@@ -509,7 +564,7 @@ export const ScanIdentityScreen: React.FC = () => {
             <View style={[styles.corner, styles.cornerBR]} />
             <Text style={styles.frameHint}>Đặt căn cước nằm trọn{'\n'}trong khung này</Text>
           </View>
-          <Text style={styles.steadyHint}>Giữ máy vững, tránh bóng và lóa</Text>
+          <Text style={styles.steadyHint}>Giữ máy vững, tránh bóng tối và ánh sáng lóa</Text>
         </View>
 
         <View style={styles.cameraBar}>
@@ -541,7 +596,7 @@ export const ScanIdentityScreen: React.FC = () => {
               size={22}
               color={flashOn ? theme.colors.gold : '#FFFFFF'}
             />
-            <Text style={styles.sideLabel}>Đèn flash</Text>
+            <Text style={styles.sideLabel}>Trợ sáng</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -552,90 +607,98 @@ export const ScanIdentityScreen: React.FC = () => {
   const renderReview = () => (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <HeaderMotif title="KIỂM TRA THÔNG TIN" onBack={() => setScreen('source')} />
-      <ScrollView
-        contentContainerStyle={styles.reviewContent}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.keyboardView}
       >
-        <DocumentPreview uri={imageUri} onPress={() => setViewerOpen(true)} />
-        {fields.isAvailable === false ? (
-          <View style={styles.warningBanner}>
-            <Ionicons name="warning-outline" size={18} color={theme.colors.warning} />
-            <Text style={styles.warningBannerText}>
-              {fields.warning?.trim() ||
-                'Số CCCD này đã được đăng ký tài khoản. Bạn vẫn có thể dùng thông tin để điền form.'}
-            </Text>
+        <ScrollView
+          contentContainerStyle={styles.reviewContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={styles.contentWrap}>
+            <DocumentPreview uri={imageUri} onPress={() => setViewerOpen(true)} />
+            {fields.isAvailable === false ? (
+              <View style={styles.warningBanner}>
+                <Ionicons name="warning-outline" size={18} color={theme.colors.warning} />
+                <Text style={styles.warningBannerText}>
+                  {sanitizeUiMessage(
+                    fields.warning,
+                    'Số căn cước công dân này đã được đăng ký tài khoản. Bạn vẫn có thể dùng thông tin để điền biểu mẫu.'
+                  )}
+                </Text>
+              </View>
+            ) : null}
+            {citizenIdMismatch ? (
+              <View style={styles.warningBanner}>
+                <Ionicons name="warning-outline" size={18} color={theme.colors.warning} />
+                <Text style={styles.warningBannerText}>{CCCD_PROFILE_MISMATCH_MESSAGE}</Text>
+              </View>
+            ) : null}
+            <InfoNote
+              tone="review"
+              text="Vui lòng đối chiếu với giấy tờ gốc và chỉnh sửa trực tiếp nếu có sai lệch."
+            />
+
+            <View style={styles.spacerMd} />
+
+            {OCR_FIELD_META.map((meta) => (
+              <OcrField
+                key={meta.key}
+                label={meta.label}
+                value={fields[meta.key] ?? ''}
+                placeholder={meta.placeholder || undefined}
+                status={fieldStatus(meta.key)}
+                unusedHint={!meta.usedInRegister}
+                keyboardType={meta.key === 'citizenId' ? 'numeric' : 'default'}
+                onFocus={() => {
+                  if (lowConfidence.includes(meta.key)) {
+                    setViewedLowFields((prev) => new Set(prev).add(meta.key));
+                  }
+                }}
+                onChangeText={(text) => {
+                  setFields((prev) => ({ ...prev, [meta.key]: text }));
+                  if (lowConfidence.includes(meta.key)) {
+                    setViewedLowFields((prev) => new Set(prev).add(meta.key));
+                  }
+                }}
+              />
+            ))}
+            {source === 'dependent' || fields.documentNumber ? (
+              <OcrField
+                label="Số giấy khai sinh"
+                value={fields.documentNumber ?? ''}
+                status={fields.documentNumber?.trim() ? 'confident' : 'unreadable'}
+                unusedHint={false}
+                onChangeText={(text) => {
+                  setFields((prev) => ({ ...prev, documentNumber: text }));
+                }}
+              />
+            ) : null}
           </View>
-        ) : null}
-        {citizenIdMismatch ? (
-          <View style={styles.warningBanner}>
-            <Ionicons name="warning-outline" size={18} color={theme.colors.warning} />
-            <Text style={styles.warningBannerText}>{CCCD_PROFILE_MISMATCH_MESSAGE}</Text>
-          </View>
-        ) : null}
-        <InfoNote
-          tone="review"
-          text="Vui lòng đối chiếu với giấy tờ gốc và sửa lại nếu có sai sót."
-        />
+        </ScrollView>
 
-        <View style={{ height: theme.spacing.md }} />
-
-        {OCR_FIELD_META.map((meta) => (
-          <OcrField
-            key={meta.key}
-            label={meta.label}
-            value={fields[meta.key] ?? ''}
-            placeholder={meta.placeholder}
-            status={fieldStatus(meta.key)}
-            unusedHint={!meta.usedInRegister}
-            keyboardType={meta.key === 'citizenId' ? 'numeric' : 'default'}
-            onFocus={() => {
-              if (lowConfidence.includes(meta.key)) {
-                setViewedLowFields((prev) => new Set(prev).add(meta.key));
-              }
+        <View style={[styles.stickyCta, { paddingBottom: Math.max(16, insets.bottom + 8) }]}>
+          <CustomButton
+            title="Chụp lại"
+            variant="outline"
+            onPress={() => {
+              setFrontUri(null);
+              setBackUri(null);
+              setCitizenIdMismatch(false);
+              setFields(createEmptyOcrFields());
+              setScreen('source');
             }}
-            onChangeText={(text) => {
-              setFields((prev) => ({ ...prev, [meta.key]: text }));
-              if (lowConfidence.includes(meta.key)) {
-                setViewedLowFields((prev) => new Set(prev).add(meta.key));
-              }
-            }}
+            style={styles.ctaHalf}
           />
-        ))}
-        {source === 'dependent' || fields.documentNumber ? (
-          <OcrField
-            label="Số giấy khai sinh"
-            value={fields.documentNumber ?? ''}
-            placeholder="Nhập số giấy khai sinh"
-            status={fields.documentNumber?.trim() ? 'confident' : 'unreadable'}
-            unusedHint={false}
-            onChangeText={(text) => {
-              setFields((prev) => ({ ...prev, documentNumber: text }));
-            }}
+          <CustomButton
+            title="Dùng thông tin này"
+            onPress={onPressUseInfo}
+            disabled={!canConfirm}
+            style={styles.ctaHalf}
           />
-        ) : null}
-      </ScrollView>
-
-      <View style={styles.stickyCta}>
-        <CustomButton
-          title="Chụp lại"
-          variant="outline"
-          onPress={() => {
-            setFrontUri(null);
-            setBackUri(null);
-            setCitizenIdMismatch(false);
-            setFields(createEmptyOcrFields());
-            setScreen('source');
-          }}
-          style={styles.ctaHalf}
-        />
-        <CustomButton
-          title="Dùng thông tin này"
-          onPress={onPressUseInfo}
-          disabled={!canConfirm()}
-          style={styles.ctaHalf}
-        />
-      </View>
+        </View>
+      </KeyboardAvoidingView>
 
       <DocumentViewerModal
         visible={viewerOpen}
@@ -658,11 +721,11 @@ export const ScanIdentityScreen: React.FC = () => {
 
       <Dialog
         visible={blurryVisible}
-        title="Ảnh chưa đủ rõ"
-        message={
-          blurryMessage?.trim() ||
-          'Ảnh quá mờ hoặc thiếu sáng nên hệ thống không đọc được thông tin. Vui lòng chụp lại ở nơi đủ sáng và đặt giấy tờ phẳng.'
-        }
+        title="Ảnh giấy tờ chưa đủ rõ"
+        message={sanitizeUiMessage(
+          blurryMessage,
+          'Ảnh bị mờ hoặc thiếu sáng nên chưa đọc được thông tin. Vui lòng đặt phẳng giấy tờ ở nơi đủ sáng và chụp lại.'
+        )}
         secondaryLabel="Chọn ảnh khác"
         primaryLabel="Chụp lại"
         onSecondary={() => {
@@ -679,12 +742,12 @@ export const ScanIdentityScreen: React.FC = () => {
 
       <Dialog
         visible={invalidCitizenIdVisible}
-        title="Không đọc được số CCCD"
-        message={
-          invalidCitizenIdMessage?.trim() ||
-          'Không thể nhận diện số CCCD 12 số hợp lệ. Giấy khai sinh không dùng để đăng ký tài khoản. Vui lòng chụp lại CCCD hoặc nhập tay.'
-        }
-        secondaryLabel="Nhập tay"
+        title="Chưa nhận diện được số CCCD"
+        message={sanitizeUiMessage(
+          invalidCitizenIdMessage,
+          'Chưa đọc được dãy 12 chữ số căn cước công dân hợp lệ. Vui lòng chụp lại mặt trước căn cước hoặc nhập thủ công.'
+        )}
+        secondaryLabel="Nhập thủ công"
         primaryLabel="Chụp lại"
         onSecondary={() => {
           setInvalidCitizenIdVisible(false);
@@ -700,10 +763,12 @@ export const ScanIdentityScreen: React.FC = () => {
 
       <Dialog
         visible={overwriteVisible}
-        title="Ghi đè thông tin đã nhập"
-        message="Biểu mẫu đang có dữ liệu. Thông tin từ căn cước sẽ thay thế các trường tương ứng."
-        secondaryLabel="Hủy"
-        primaryLabel="Ghi đè"
+        title="Thay thế thông tin đang nhập?"
+        message="Biểu mẫu đã có dữ liệu trước đó. Thông tin đọc từ căn cước sẽ thay thế các mục tương ứng."
+        detailLabel="Họ và tên nhận diện"
+        detail={fields.fullName || undefined}
+        secondaryLabel="Giữ nguyên"
+        primaryLabel="Thay thế"
         destructive
         onSecondary={() => setOverwriteVisible(false)}
         onPrimary={() => {
@@ -714,9 +779,9 @@ export const ScanIdentityScreen: React.FC = () => {
 
       <Dialog
         visible={serverErrorVisible}
-        title="Không thể đọc thông tin"
-        message="Không thể đọc thông tin từ giấy tờ lúc này. Bạn có thể thử lại hoặc nhập tay."
-        secondaryLabel="Nhập tay"
+        title="Chưa đọc được thông tin giấy tờ"
+        message="Tạm thời chưa trích xuất được dữ liệu từ ảnh vừa chọn. Bạn có thể thử đọc lại hoặc nhập thủ công."
+        secondaryLabel="Nhập thủ công"
         primaryLabel="Thử lại"
         onSecondary={() => {
           setServerErrorVisible(false);
@@ -725,6 +790,28 @@ export const ScanIdentityScreen: React.FC = () => {
         onPrimary={() => {
           setServerErrorVisible(false);
           if (frontUri) void runExtract(frontUri, backUri);
+        }}
+      />
+
+      <Dialog
+        visible={actionDialog !== null}
+        title={actionDialog?.title || ''}
+        message={actionDialog?.message || ''}
+        secondaryLabel={actionDialog?.secondaryLabel}
+        primaryLabel={actionDialog?.primaryLabel || 'Đóng'}
+        onSecondary={
+          actionDialog?.secondaryLabel
+            ? () => {
+                const cb = actionDialog.onSecondary;
+                setActionDialog(null);
+                cb?.();
+              }
+            : undefined
+        }
+        onPrimary={() => {
+          const cb = actionDialog?.onPrimary;
+          setActionDialog(null);
+          cb?.();
         }}
       />
     </>
@@ -736,9 +823,23 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: theme.colors.background,
   },
+  keyboardView: {
+    flex: 1,
+  },
   sourceContent: {
     paddingHorizontal: theme.spacing.md,
     paddingBottom: theme.spacing.xl * 2,
+  },
+  contentWrap: {
+    width: '100%',
+    maxWidth: 560,
+    alignSelf: 'center',
+  },
+  spacerMd: {
+    height: theme.spacing.md,
+  },
+  skipBackBtn: {
+    marginTop: theme.spacing.md,
   },
   lead: {
     ...theme.typography.bodyLarge,
@@ -748,6 +849,7 @@ const styles = StyleSheet.create({
   metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    flexWrap: 'wrap',
     marginTop: 4,
     marginBottom: theme.spacing.md,
   },
@@ -769,6 +871,7 @@ const styles = StyleSheet.create({
     color: theme.colors.primary,
     fontWeight: '700',
     textDecorationLine: 'underline',
+    textAlign: 'center',
   },
   cameraRoot: {
     flex: 1,
@@ -793,10 +896,11 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 28,
+    paddingHorizontal: 24,
   },
   goldFrame: {
     width: '100%',
+    maxWidth: 420,
     aspectRatio: 1.58,
     borderRadius: 6,
     borderWidth: 2,
@@ -819,21 +923,26 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     ...theme.typography.bodyMedium,
     fontWeight: '600',
+    paddingHorizontal: 12,
   },
   steadyHint: {
     marginTop: 16,
     color: 'rgba(255,255,255,0.7)',
     ...theme.typography.bodySmall,
+    textAlign: 'center',
   },
   cameraBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 28,
+    paddingHorizontal: 24,
     paddingBottom: 28,
+    maxWidth: 480,
+    width: '100%',
+    alignSelf: 'center',
   },
   sideBtn: {
-    width: 72,
+    minWidth: 72,
     alignItems: 'center',
   },
   sideLabel: {
@@ -865,6 +974,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.65)',
     alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: 24,
     zIndex: 20,
   },
   processCard: {
@@ -873,7 +983,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 28,
     paddingVertical: 24,
     alignItems: 'center',
-    minWidth: 260,
+    width: '100%',
+    maxWidth: 320,
   },
   processTitle: {
     ...theme.typography.bodyLarge,
@@ -896,7 +1007,7 @@ const styles = StyleSheet.create({
   },
   reviewContent: {
     paddingHorizontal: theme.spacing.md,
-    paddingBottom: 120,
+    paddingBottom: 32,
   },
   warningBanner: {
     flexDirection: 'row',
@@ -918,7 +1029,6 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingHorizontal: theme.spacing.md,
     paddingTop: 12,
-    paddingBottom: 16,
     backgroundColor: theme.colors.background,
     borderTopWidth: 1,
     borderTopColor: theme.colors.border,

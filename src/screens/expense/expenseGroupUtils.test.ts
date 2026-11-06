@@ -5,6 +5,7 @@ import {
   getExpenseMonth,
   filterExpensesByMonth,
   filterExpensesByCategory,
+  getStatusLabel,
 } from './expenseGroupUtils';
 import { ExpenseOcrResult } from '../../types/expense';
 
@@ -173,6 +174,16 @@ describe('expenseGroupUtils', () => {
       expect(filterExpensesByCategory(mockExpenses, 'Học phí đào tạo')).toHaveLength(1);
       expect(filterExpensesByCategory(mockExpenses, 'TO_TU_THIEN')).toHaveLength(1);
       expect(filterExpensesByCategory(mockExpenses, 'NON_EXISTENT')).toHaveLength(0);
+    });
+  });
+
+  describe('getStatusLabel', () => {
+    it('maps known statuses and never leaks raw unknown enum strings', () => {
+      expect(getStatusLabel('CONFIRMED')).toContain('Đã duyệt');
+      expect(getStatusLabel('EXTRACTED')).toContain('Chờ soát xét');
+      expect(getStatusLabel('UPLOADED')).toContain('Đang xử lý');
+      expect(getStatusLabel('RAW_UNKNOWN_BACKEND_STATUS')).toBe('Chờ kiểm tra');
+      expect(getStatusLabel(undefined)).toBe('Chờ kiểm tra');
     });
   });
 });

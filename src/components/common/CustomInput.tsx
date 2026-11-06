@@ -19,7 +19,7 @@ interface CustomInputProps extends TextInputProps {
   containerStyle?: object;
 }
 
-export const CustomInput: React.FC<CustomInputProps> = ({
+export const CustomInput: React.FC<CustomInputProps> = React.memo(({
   label,
   required = false,
   error,
@@ -27,6 +27,8 @@ export const CustomInput: React.FC<CustomInputProps> = ({
   isPassword = false,
   containerStyle,
   style,
+  onFocus,
+  onBlur,
   ...rest
 }) => {
   const [showPassword, setShowPassword] = useState(!isPassword);
@@ -52,15 +54,21 @@ export const CustomInput: React.FC<CustomInputProps> = ({
           style={[styles.input, style]}
           placeholderTextColor={theme.colors.textPlaceholder}
           secureTextEntry={isPassword && !showPassword}
-          onFocus={() => setIsFocused(true)}
-          onBlur={() => setIsFocused(false)}
+          onFocus={(e) => {
+            setIsFocused(true);
+            onFocus?.(e);
+          }}
+          onBlur={(e) => {
+            setIsFocused(false);
+            onBlur?.(e);
+          }}
           {...rest}
         />
 
         {isPassword ? (
           <TouchableOpacity
             style={styles.eyeIcon}
-            onPress={() => setShowPassword(!showPassword)}
+            onPress={() => setShowPassword((prev) => !prev)}
             accessibilityRole="button"
             accessibilityLabel={showPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
           >
@@ -80,7 +88,7 @@ export const CustomInput: React.FC<CustomInputProps> = ({
       ) : null}
     </View>
   );
-};
+});
 
 const styles = StyleSheet.create({
   container: {

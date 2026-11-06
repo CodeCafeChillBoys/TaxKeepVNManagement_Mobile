@@ -50,6 +50,7 @@ import { SUBSCRIPTION_RETURN_PATH } from '../types/subscription';
 import { SubscriptionMyScreen } from '../screens/subscription/SubscriptionMyScreen';
 import { SubscriptionHistoryScreen } from '../screens/subscription/SubscriptionHistoryScreen';
 import { UpgradePrompt } from '../components/subscription/UpgradePrompt';
+import { useShallow } from 'zustand/react/shallow';
 import { useAuthStore } from '../stores/useAuthStore';
 import { theme } from '../constants/theme';
 
@@ -72,11 +73,17 @@ const linking = {
 };
 
 export const RootNavigator: React.FC = () => {
-  const { isAuthenticated, isLoading, checkAuth } = useAuthStore();
+  const { isAuthenticated, isLoading, checkAuth } = useAuthStore(
+    useShallow((s) => ({
+      isAuthenticated: s.isAuthenticated,
+      isLoading: s.isLoading,
+      checkAuth: s.checkAuth,
+    }))
+  );
 
   useEffect(() => {
     checkAuth();
-  }, []);
+  }, [checkAuth]);
 
   if (isLoading) {
     return (

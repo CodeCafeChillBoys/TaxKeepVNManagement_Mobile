@@ -60,12 +60,4 @@ export const subscriptionApi = {
     }
     return res.data.data;
   },
-
-  /**
-   * Hủy gói trả phí: BE kết thúc gói ngay, chuyển về Basic, không hoàn tiền
-   * POST /api/v1/subscription/cancel
-   */
-  async cancel(): Promise<void> {
-    await apiClient.post<ApiResponse<boolean>>('/api/v1/subscription/cancel');
-  },
 };

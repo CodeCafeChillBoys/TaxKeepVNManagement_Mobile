@@ -25,7 +25,7 @@ type Route = RouteProp<RootStackParamList, 'SettlementPreview'>;
 export const SettlementPreviewScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
   const route = useRoute<Route>();
-  const { taxYear, cutoffDate, charityDeduction } = route.params;
+  const { taxYear, cutoffDate } = route.params;
 
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
@@ -37,11 +37,7 @@ export const SettlementPreviewScreen: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await taxSettlementApi.preview({
-        taxYear,
-        cutoffDate,
-        charityDeduction: charityDeduction ?? 0,
-      });
+      const data = await taxSettlementApi.preview({ taxYear, cutoffDate });
       setPreview(data);
     } catch (e: any) {
       const msg =
@@ -54,7 +50,7 @@ export const SettlementPreviewScreen: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [taxYear, cutoffDate, charityDeduction]);
+  }, [taxYear, cutoffDate]);
 
   useFocusEffect(
     useCallback(() => {
@@ -70,7 +66,6 @@ export const SettlementPreviewScreen: React.FC = () => {
       const result = await taxSettlementApi.export({
         taxYear,
         cutoffDate,
-        charityDeduction: charityDeduction ?? 0,
         selectedIncomeSourceIds: selected.length ? selected : null,
       });
       setConfirmOpen(false);
@@ -121,7 +116,7 @@ export const SettlementPreviewScreen: React.FC = () => {
       ) : preview ? (
         <>
           <ScrollView contentContainerStyle={styles.scroll} testID="settlementPreviewScroll">
-            <SettlementResultBlocks preview={preview} />
+            <SettlementResultBlocks preview={preview} onOpenCharityVouchers={() => navigation.navigate('ExpenseList')} />
           </ScrollView>
           <View style={styles.footer}>
             <TouchableOpacity

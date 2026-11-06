@@ -25,16 +25,10 @@ export const SettlementStartScreen: React.FC = () => {
   const [taxYear, setTaxYear] = useState(2026);
   const [showOptional, setShowOptional] = useState(false);
   const [cutoffDate, setCutoffDate] = useState('');
-  const [charityText, setCharityText] = useState('');
 
   const defaultCutoff = useMemo(() => `${taxYear}-12-31`, [taxYear]);
 
   const onPreview = () => {
-    const charity = Number((charityText || '0').replace(/\./g, '').replace(/,/g, ''));
-    if (Number.isNaN(charity) || charity < 0) {
-      Alert.alert('Từ thiện không hợp lệ', 'Nhập số tiền từ thiện ≥ 0.');
-      return;
-    }
     const cutoff = cutoffDate.trim() || undefined;
     if (cutoff && !/^\d{4}-\d{2}-\d{2}$/.test(cutoff)) {
       Alert.alert('Ngày chốt', 'Dùng định dạng YYYY-MM-DD, ví dụ 2026-12-31.');
@@ -43,7 +37,6 @@ export const SettlementStartScreen: React.FC = () => {
     navigation.navigate('SettlementPreview', {
       taxYear,
       cutoffDate: cutoff,
-      charityDeduction: charity,
     });
   };
 
@@ -101,16 +94,9 @@ export const SettlementStartScreen: React.FC = () => {
               placeholderTextColor={theme.colors.textPlaceholder}
               testID="settlementCutoffInput"
             />
-            <Text style={styles.label}>Từ thiện (đ)</Text>
-            <TextInput
-              style={styles.input}
-              value={charityText}
-              onChangeText={setCharityText}
-              keyboardType="numeric"
-              placeholder="0"
-              placeholderTextColor={theme.colors.textPlaceholder}
-              testID="settlementCharityInput"
-            />
+            <Text style={styles.hint}>
+              Từ thiện, nhân đạo, khuyến học được tự động tổng hợp từ chứng từ từ thiện đã xác nhận, không cần nhập.
+            </Text>
           </View>
         ) : null}
 
@@ -165,6 +151,7 @@ const styles = StyleSheet.create({
   optionalToggle: { marginTop: 20, marginBottom: 4 },
   optionalToggleText: { fontFamily: fonts.bodySemi, fontSize: 13, color: theme.colors.primary },
   optionalBox: { marginTop: 4 },
+  hint: { fontFamily: fonts.body, fontSize: 12, lineHeight: 18, color: theme.colors.textSecondary, marginTop: 12 },
   input: {
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,

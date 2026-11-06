@@ -26,6 +26,8 @@ type Props = {
   preview: TaxSettlementPreview;
   /** S6: read-only đã chốt */
   locked?: boolean;
+  /** Mở danh sách chứng từ để xem/thêm chứng từ từ thiện (chỉ màn xem trước) */
+  onOpenCharityVouchers?: () => void;
 };
 
 const SECTIONS = [
@@ -37,7 +39,7 @@ const SECTIONS = [
   { key: 'notes', title: 'Ghi chú thuật ngữ' },
 ] as const;
 
-export function SettlementResultBlocks({ preview, locked }: Props) {
+export function SettlementResultBlocks({ preview, locked, onOpenCharityVouchers }: Props) {
   const [open, setOpen] = useState<string>('summary');
   const hero = heroOutcome(preview);
 
@@ -70,7 +72,9 @@ export function SettlementResultBlocks({ preview, locked }: Props) {
               <Text style={styles.sectionTitle}>{sec.title}</Text>
               <Ionicons name={isOpen ? 'chevron-up' : 'chevron-down'} size={18} color="#999" />
             </TouchableOpacity>
-            {isOpen ? <View style={styles.sectionBody}>{renderSection(sec.key, preview)}</View> : null}
+            {isOpen ? (
+              <View style={styles.sectionBody}>{renderSection(sec.key, preview, onOpenCharityVouchers)}</View>
+            ) : null}
           </View>
         );
       })}
@@ -78,14 +82,14 @@ export function SettlementResultBlocks({ preview, locked }: Props) {
   );
 }
 
-function renderSection(key: string, p: TaxSettlementPreview) {
+function renderSection(key: string, p: TaxSettlementPreview, onOpenCharityVouchers?: () => void) {
   switch (key) {
     case 'income':
       return <IncomeSection p={p} />;
     case 'dependents':
       return <DependentsSection p={p} />;
     case 'deductions':
-      return <DeductionsSection p={p} />;
+      return <DeductionsSection p={p} onOpenCharityVouchers={onOpenCharityVouchers} />;
     case 'brackets':
       return <BracketsSection p={p} />;
     case 'summary':
@@ -279,7 +283,7 @@ function DependentCard({
 
 // ── 03 Giảm trừ ───────────────────────────────────────────────────────────────
 
-function DeductionsSection({ p }: { p: TaxSettlementPreview }) {
+function DeductionsSection({ p, onOpenCharityVouchers }: { p: TaxSettlementPreview; onOpenCharityVouchers?: () => void }) {
   return (
     <>
       <Row label="Bảo hiểm bắt buộc" value={formatVnd(p.totalInsuranceDeduction)} />
@@ -290,19 +294,20 @@ function DeductionsSection({ p }: { p: TaxSettlementPreview }) {
       />
       {/* Chi tiết từng NPT đã có ở mục Người phụ thuộc — ở đây chỉ hiện kết quả */}
       <Row label="Người phụ thuộc" value={formatVnd(p.dependentDeductionAmount)} />
-      {p.charityDeduction > 0 ? (
-        <Row label="Đóng góp từ thiện, nhân đạo" value={formatVnd(p.charityDeduction)} />
-      ) : null}
+      {/* Chỉ tiêu [29]: BE tổng hợp từ chứng từ từ thiện đã xác nhận */}
+      <Row label="Từ thiện, nhân đạo, khuyến học [29]" value={formatVnd(p.charityDeduction ?? 0)} />
       <Row label="Chi phí y tế" value={p.medicalDeduction > 0 ? formatVnd(p.medicalDeduction) : '—'} />
       <Row label="Chi phí giáo dục" value={p.educationDeduction > 0 ? formatVnd(p.educationDeduction) : '—'} />
       <Row label="Tổng giảm trừ" value={formatVnd(p.totalDeductions)} bold />
 
-      {p.charityDeduction > 0 ? (
-        <Note>
-          Từ thiện, nhân đạo: số tiền người nộp thuế khai khi lập quyết toán, cần có chứng từ của tổ chức nhận đóng
-          góp để đối chiếu.
-        </Note>
-      ) : null}
+      <Note>
+        Từ thiện, nhân đạo, khuyến học: được tổng hợp từ các chứng từ từ thiện đã xác nhận.
+        {onOpenCharityVouchers ? (
+          <Text style={styles.noteLink} onPress={onOpenCharityVouchers} accessibilityRole="link">
+            {' '}Xem/Thêm chứng từ
+          </Text>
+        ) : null}
+      </Note>
       <Note>
         Y tế, giáo dục: tính từ biên lai đã được xác nhận, không vượt mức trần năm theo quy định
         {p.taxYear < 2026 ? '. Khoản này chỉ áp dụng từ năm 2026 nên năm này không được trừ.' : '.'}
@@ -549,6 +554,7 @@ const styles = StyleSheet.create({
   },
   noteIcon: { marginTop: 1 },
   noteText: { flex: 1, fontFamily: fonts.body, fontSize: 11, lineHeight: 16, color: '#5A4A22' },
+  noteLink: { fontFamily: fonts.bodySemi, color: theme.colors.primary, textDecorationLine: 'underline' },
   glossLine: { fontFamily: fonts.body, fontSize: 12, lineHeight: 18, color: '#444' },
   glossTerm: { fontFamily: fonts.bodySemi, color: theme.colors.textPrimary },
 });

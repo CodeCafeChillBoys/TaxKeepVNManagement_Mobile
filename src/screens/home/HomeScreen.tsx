@@ -45,6 +45,7 @@ import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop'
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
 import { MainTabBar } from '../../components/navigation/MainTabBar';
 import { humanizeGroupCodes } from '../dependent/dependentGroupUtils';
+import { buildProofDocumentsParams } from '../dependent/proofDocumentsParams';
 import { formatPersonName } from '../../utils/formatPersonName';
 import { consultationApi } from '../../api/consultationApi';
 import type { UpcomingMeetingReminderDto } from '../../types/consultation';
@@ -391,10 +392,8 @@ export const HomeScreen: React.FC = () => {
       return;
     }
     if (item.dependent) {
-      navigation.navigate('ProofDocuments', {
-        dependentId: item.dependent.id,
-        groupIndex: 0,
-      });
+      // Cùng tham số với màn Người phụ thuộc để đòi đúng giấy tờ theo nhóm hiện tại của NPT
+      navigation.navigate('ProofDocuments', buildProofDocumentsParams(item.dependent));
     }
   };
 

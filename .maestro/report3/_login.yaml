@@ -1,0 +1,57 @@
+# Subflow (không chạy riêng): mở TaxKeep trong Expo Go, đăng xuất nếu đang đăng nhập, rồi đăng nhập
+# bằng LOGIN_ID / LOGIN_PW do flow gọi truyền vào qua env.
+appId: host.exp.exponent
+---
+- launchApp:
+    appId: host.exp.exponent
+    clearState: false
+- openLink: exp://10.0.2.2:8081
+- extendedWaitUntil:
+    visible: ".*Đăng nhập.*|.*Trang chủ.*|.*Xin chào.*"
+    timeout: 120000
+
+# Đang ở trong app thì đăng xuất để vào đúng tài khoản
+- runFlow:
+    when:
+      visible:
+        id: mainTabBar
+    commands:
+      - tapOn:
+          id: mainTab_Profile
+      - scrollUntilVisible:
+          element:
+            id: profileLogoutBtn
+          direction: DOWN
+          timeout: 10000
+      - tapOn:
+          id: profileLogoutBtn
+      - tapOn:
+          text: "Đăng xuất"
+          below:
+            text: "Bạn có chắc chắn.*"
+      - extendedWaitUntil:
+          visible: ".*Đăng nhập.*"
+          timeout: 30000
+
+- tapOn:
+    text: ".*CCCD.*|.*căn cước.*"
+- eraseText
+- inputText: ${LOGIN_ID}
+- tapOn:
+    text: ".*[Mm]ật khẩu.*"
+- eraseText
+- inputText: ${LOGIN_PW}
+- hideKeyboard
+- tapOn: "Đăng nhập"
+- extendedWaitUntil:
+    visible: "OK|Trang chủ|Xin chào"
+    timeout: 30000
+- runFlow:
+    when:
+      visible: "OK"
+    commands:
+      - tapOn: "OK"
+- extendedWaitUntil:
+    visible:
+      id: mainTabBar
+    timeout: 30000

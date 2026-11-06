@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { RootStackParamList } from './types';
 import { LoginScreen } from '../screens/auth/LoginScreen';
@@ -43,10 +43,18 @@ import { ExpertSlotsScreen } from '../screens/consultation/ExpertSlotsScreen';
 import { ExpertApplicationScreen } from '../screens/consultation/ExpertApplicationScreen';
 import { PaymentResultScreen } from '../screens/consultation/PaymentResultScreen';
 import { WalletScreen } from '../screens/wallet/WalletScreen';
+import { SubscriptionPlansScreen } from '../screens/subscription/SubscriptionPlansScreen';
+import { SubscriptionCheckoutScreen } from '../screens/subscription/SubscriptionCheckoutScreen';
+import { SubscriptionPaymentResultScreen } from '../screens/subscription/SubscriptionPaymentResultScreen';
+import { SUBSCRIPTION_RETURN_PATH } from '../types/subscription';
+import { SubscriptionMyScreen } from '../screens/subscription/SubscriptionMyScreen';
+import { SubscriptionHistoryScreen } from '../screens/subscription/SubscriptionHistoryScreen';
+import { UpgradePrompt } from '../components/subscription/UpgradePrompt';
 import { useAuthStore } from '../stores/useAuthStore';
 import { theme } from '../constants/theme';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
+const navigationRef = createNavigationContainerRef<RootStackParamList>();
 
 const tabScreenOptions = {
   animation: 'none' as const,
@@ -57,6 +65,7 @@ const linking = {
   config: {
     screens: {
       PaymentResult: 'payments/vnpay-return',
+      SubscriptionPaymentResult: SUBSCRIPTION_RETURN_PATH,
       BookingDetail: 'bookings/:bookingId',
     },
   },
@@ -79,6 +88,7 @@ export const RootNavigator: React.FC = () => {
 
   return (
     <NavigationContainer
+      ref={navigationRef}
       linking={linking}
       onStateChange={() => {
         if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
@@ -134,7 +144,13 @@ export const RootNavigator: React.FC = () => {
         <Stack.Screen name="ExpertApplication" component={ExpertApplicationScreen} />
         <Stack.Screen name="PaymentResult" component={PaymentResultScreen} />
         <Stack.Screen name="Wallet" component={WalletScreen} />
+        <Stack.Screen name="SubscriptionPlans" component={SubscriptionPlansScreen} />
+        <Stack.Screen name="SubscriptionCheckout" component={SubscriptionCheckoutScreen} />
+        <Stack.Screen name="SubscriptionPaymentResult" component={SubscriptionPaymentResultScreen} />
+        <Stack.Screen name="SubscriptionMy" component={SubscriptionMyScreen} />
+        <Stack.Screen name="SubscriptionHistory" component={SubscriptionHistoryScreen} />
       </Stack.Navigator>
+      {isAuthenticated ? <UpgradePrompt navigationRef={navigationRef} /> : null}
     </NavigationContainer>
   );
 };

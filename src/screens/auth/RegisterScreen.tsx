@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -7,7 +7,6 @@ import {
   KeyboardAvoidingView,
   Platform,
   TouchableOpacity,
-  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
@@ -19,16 +18,28 @@ import { CustomInput } from '../../components/common/CustomInput';
 import { CustomButton } from '../../components/common/CustomButton';
 import { PasswordStrengthBar } from '../../components/common/PasswordStrengthBar';
 import { HeaderMotif } from '../../components/common/HeaderMotif';
+import { Dialog } from '../../components/common/Dialog';
 import { TermsCheckbox } from '../../components/auth/TermsCheckbox';
+import { useToast } from '../../components/ui/Toast';
 import { theme } from '../../constants/theme';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { authApi } from '../../api/authApi';
 import { applyRegisterOcrResult } from './applyRegisterOcrResult';
+import { sanitizeUiMessage, toFriendlyError } from '../../utils/friendlyError';
 
 export const RegisterScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
   const route = useRoute<RouteProp<RootStackParamList, 'Register'>>();
+  const { toast } = useToast();
   const [loading, setLoading] = useState(false);
+  const [leaveDestination, setLeaveDestination] = useState<(() => void) | null>(null);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   const {
     control,
@@ -53,7 +64,6 @@ export const RegisterScreen: React.FC = () => {
     },
   });
 
-  // Watch mật khẩu để cập nhật thanh đo độ mạnh realtime
   const passwordValue = useWatch({ control, name: 'password' });
   const agreeTermsValue = useWatch({ control, name: 'agreeTerms' });
 
@@ -68,91 +78,97 @@ export const RegisterScreen: React.FC = () => {
     setValue('address', plan.fields.address, { shouldValidate: true, shouldDirty: true });
 
     if (plan.citizenIdError) {
-      setError('citizenId', { type: 'server', message: plan.citizenIdError });
+      setError('citizenId', {
+        type: 'server',
+        message: sanitizeUiMessage(plan.citizenIdError, 'Số căn cước công dân này đã được đăng ký.'),
+      });
     }
 
     navigation.setParams({ ocrResult: undefined });
-    Alert.alert(plan.alertTitle, plan.alertMessage);
-  }, [route.params?.ocrResult]);
+    toast.success(plan.alertMessage, plan.alertTitle);
+  }, [navigation, route.params?.ocrResult, setError, setValue, toast]);
 
-  // Xử lý nút Back / Chuyển sang Đăng nhập: Hỏi xác nhận nếu đã nhập liệu (Mục 10 Docs)
-  const handleLeavePage = (destination: () => void) => {
-    if (isDirty) {
-      Alert.alert(
-        'Dữ liệu chưa được gửi',
-        'Bạn có dữ liệu chưa được gửi. Bạn có chắc chắn muốn rời khỏi trang này không?',
-        [
-          { text: 'Ở lại', style: 'cancel' },
-          { text: 'Rời khỏi', style: 'destructive', onPress: destination },
-        ]
-      );
-    } else {
-      destination();
-    }
-  };
-
-  const onSubmit = async (data: RegisterFormData) => {
-    setLoading(true);
-    try {
-      await authApi.register(data);
-
-      Alert.alert(
-        'Đăng ký tài khoản thành công',
-        'Vui lòng kiểm tra hộp thư email của bạn để xác thực tài khoản.',
-        [
-          {
-            text: 'Tiếp tục',
-            onPress: () => navigation.replace('VerifyPending', { email: data.email }),
-          },
-        ]
-      );
-    } catch (error: any) {
-      const status = error?.response?.status;
-      const responseData = error?.response?.data;
-
-      if (status === 400 && responseData?.errors) {
-        // Ánh xạ lỗi validation ModelState từ Backend
-        const fieldErrors = responseData.errors;
-        Object.keys(fieldErrors).forEach((key) => {
-          const fieldName = (key.charAt(0).toLowerCase() + key.slice(1)) as keyof RegisterFormData;
-          setError(fieldName, {
-            type: 'server',
-            message: fieldErrors[key][0] || 'Dữ liệu không hợp lệ.',
-          });
-        });
-      } else if (status === 409) {
-        const msg = responseData?.message || 'Thông tin đăng ký đã tồn tại trên hệ thống.';
-        if (msg.toLowerCase().includes('email')) {
-          setError('email', { type: 'server', message: 'Email này đã được sử dụng. Vui lòng dùng email khác.' });
-        } else if (msg.toLowerCase().includes('căn cước') || msg.toLowerCase().includes('cccd')) {
-          setError('citizenId', { type: 'server', message: 'Số căn cước công dân này đã được đăng ký.' });
-        } else if (msg.toLowerCase().includes('điện thoại') || msg.toLowerCase().includes('phone')) {
-          setError('phoneNumber', { type: 'server', message: 'Số điện thoại này đã được sử dụng.' });
-        } else {
-          Alert.alert('Trùng lặp dữ liệu', msg);
-        }
-      } else if (status === 429) {
-        Alert.alert('Gửi quá nhiều lần', 'Bạn đã thử đăng ký quá nhiều lần. Vui lòng thử lại sau ít phút.');
-      } else if (status === 500) {
-        Alert.alert('Lỗi hệ thống', 'Đã xảy ra lỗi hệ thống. Vui lòng thử lại sau.');
+  const handleLeavePage = useCallback(
+    (destination: () => void) => {
+      if (isDirty) {
+        setLeaveDestination(() => destination);
       } else {
-        // Fallback demo nếu chưa kết nối tới server Backend trực tiếp
-        Alert.alert(
-          'Đăng ký tài khoản thử nghiệm',
-          `Đã ghi nhận thông tin đăng ký cho ${data.fullName} (${data.email}). Bạn có muốn chuyển sang màn xác thực?`,
-          [
-            { text: 'Hủy', style: 'cancel' },
-            {
-              text: 'Đồng ý',
-              onPress: () => navigation.replace('VerifyPending', { email: data.email }),
-            },
-          ]
-        );
+        destination();
       }
-    } finally {
-      setLoading(false);
-    }
-  };
+    },
+    [isDirty]
+  );
+
+  const onSubmit = useCallback(
+    async (data: RegisterFormData) => {
+      setLoading(true);
+      try {
+        await authApi.register(data);
+        if (!isMountedRef.current) return;
+
+        toast.success(
+          'Vui lòng kiểm tra hộp thư điện tử để kích hoạt tài khoản.',
+          'Đăng ký tài khoản thành công'
+        );
+        navigation.replace('VerifyPending', { email: data.email });
+      } catch (error: any) {
+        if (!isMountedRef.current) return;
+        const status = error?.response?.status;
+        const responseData = error?.response?.data;
+
+        if (status === 400 && responseData?.errors) {
+          const fieldErrors = responseData.errors;
+          Object.keys(fieldErrors).forEach((key) => {
+            const fieldName = (key.charAt(0).toLowerCase() + key.slice(1)) as keyof RegisterFormData;
+            setError(fieldName, {
+              type: 'server',
+              message: sanitizeUiMessage(fieldErrors[key]?.[0], 'Thông tin nhập chưa hợp lệ.'),
+            });
+          });
+        } else if (status === 409) {
+          const msg = String(responseData?.message || 'Thông tin đăng ký đã tồn tại trên hệ thống.');
+          const lower = msg.toLowerCase();
+          if (lower.includes('email')) {
+            setError('email', {
+              type: 'server',
+              message: 'Địa chỉ email này đã được sử dụng. Vui lòng chọn email khác.',
+            });
+          } else if (lower.includes('căn cước') || lower.includes('cccd') || lower.includes('citizen')) {
+            setError('citizenId', {
+              type: 'server',
+              message: 'Số căn cước công dân này đã được đăng ký.',
+            });
+          } else if (lower.includes('điện thoại') || lower.includes('phone')) {
+            setError('phoneNumber', {
+              type: 'server',
+              message: 'Số điện thoại này đã được sử dụng.',
+            });
+          } else {
+            toast.warning(
+              sanitizeUiMessage(msg, 'Thông tin đăng ký đã tồn tại trên hệ thống.'),
+              'Thông tin đã được đăng ký'
+            );
+          }
+        } else if (status === 429) {
+          toast.warning(
+            'Bạn đã gửi yêu cầu đăng ký nhiều lần liên tiếp. Vui lòng đợi ít phút rồi thử lại.',
+            'Gửi yêu cầu quá nhanh'
+          );
+        } else {
+          const friendly = toFriendlyError(error, {
+            fallbackTitle: 'Chưa thể tạo tài khoản',
+            fallbackMessage: 'Kết nối tạm thời gián đoạn. Vui lòng kiểm tra mạng và thử lại.',
+          });
+          toast.error(friendly.message, friendly.title);
+        }
+      } finally {
+        if (isMountedRef.current) {
+          setLoading(false);
+        }
+      }
+    },
+    [navigation, setError, toast]
+  );
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -170,237 +186,250 @@ export const RegisterScreen: React.FC = () => {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
-          {/* Card Quét CCCD nhanh (Task 1.1.T4) */}
-          <TouchableOpacity
-            activeOpacity={0.85}
-            style={styles.ocrQuickCard}
-            onPress={() =>
-              navigation.navigate('ScanIdentity', {
-                source: 'register',
-                hasExistingData: isDirty,
-              })
-            }
-          >
-            <View style={styles.ocrIconCircle}>
-              <Ionicons name="scan-outline" size={24} color={theme.colors.primary} />
+          <View style={styles.contentWrap}>
+            {/* Card Quét CCCD nhanh */}
+            <TouchableOpacity
+              activeOpacity={0.85}
+              style={styles.ocrQuickCard}
+              onPress={() =>
+                navigation.navigate('ScanIdentity', {
+                  source: 'register',
+                  hasExistingData: isDirty,
+                })
+              }
+            >
+              <View style={styles.ocrIconCircle}>
+                <Ionicons name="scan-outline" size={24} color={theme.colors.primary} />
+              </View>
+              <View style={styles.ocrTextCol}>
+                <Text style={styles.ocrTitle}>Quét căn cước công dân</Text>
+                <Text style={styles.ocrSubtitle}>Điền nhanh thông tin từ giấy tờ tùy thân</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={theme.colors.textSecondary} />
+            </TouchableOpacity>
+
+            {/* Dải phân cách hoặc nhập tay */}
+            <View style={styles.dividerRow}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>hoặc nhập tay</Text>
+              <View style={styles.dividerLine} />
             </View>
-            <View style={styles.ocrTextCol}>
-              <Text style={styles.ocrTitle}>Quét căn cước công dân</Text>
-              <Text style={styles.ocrSubtitle}>Điền nhanh thông tin từ giấy tờ tùy thân</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color={theme.colors.textSecondary} />
-          </TouchableOpacity>
 
-          {/* Dải phân cách hoặc nhập tay */}
-          <View style={styles.dividerRow}>
-            <View style={styles.dividerLine} />
-            <Text style={styles.dividerText}>hoặc nhập tay</Text>
-            <View style={styles.dividerLine} />
-          </View>
+            {/* Form Card chính */}
+            <View style={styles.formCard}>
+              {/* Họ và tên */}
+              <Controller
+                control={control}
+                name="fullName"
+                render={({ field: { onChange, onBlur, value } }) => (
+                  <CustomInput
+                    label="Họ và tên"
+                    required
+                    onBlur={onBlur}
+                    onChangeText={onChange}
+                    value={value}
+                    error={errors.fullName?.message}
+                  />
+                )}
+              />
 
-          {/* Form Card chính */}
-          <View style={styles.formCard}>
-            {/* Họ và tên */}
-            <Controller
-              control={control}
-              name="fullName"
-              render={({ field: { onChange, onBlur, value } }) => (
-                <CustomInput
-                  label="Họ và tên"
-                  required
-                  placeholder="Nhập họ và tên đầy đủ (tiếng Việt có dấu)"
-                  onBlur={onBlur}
-                  onChangeText={onChange}
-                  value={value}
-                  error={errors.fullName?.message}
-                />
-              )}
-            />
+              {/* Số CCCD */}
+              <Controller
+                control={control}
+                name="citizenId"
+                render={({ field: { onChange, onBlur, value } }) => (
+                  <CustomInput
+                    label="Số căn cước công dân"
+                    required
+                    keyboardType="numeric"
+                    maxLength={12}
+                    placeholder="12 chữ số"
+                    onBlur={onBlur}
+                    onChangeText={onChange}
+                    value={value}
+                    error={errors.citizenId?.message}
+                  />
+                )}
+              />
 
-            {/* Số CCCD */}
-            <Controller
-              control={control}
-              name="citizenId"
-              render={({ field: { onChange, onBlur, value } }) => (
-                <CustomInput
-                  label="Số căn cước công dân"
-                  required
-                  keyboardType="numeric"
-                  maxLength={12}
-                  placeholder="Nhập 12 chữ số trên căn cước công dân"
-                  onBlur={onBlur}
-                  onChangeText={onChange}
-                  value={value}
-                  error={errors.citizenId?.message}
-                />
-              )}
-            />
+              {/* Ngày sinh */}
+              <Controller
+                control={control}
+                name="dateOfBirth"
+                render={({ field: { onChange, onBlur, value } }) => (
+                  <CustomInput
+                    label="Ngày sinh"
+                    placeholder="1995-05-12"
+                    helperText="Định dạng Năm-Tháng-Ngày (từ 18 tuổi trở lên)"
+                    onBlur={onBlur}
+                    onChangeText={onChange}
+                    value={value}
+                    error={errors.dateOfBirth?.message}
+                  />
+                )}
+              />
 
-            {/* Ngày sinh */}
-            <Controller
-              control={control}
-              name="dateOfBirth"
-              render={({ field: { onChange, onBlur, value } }) => (
-                <CustomInput
-                  label="Ngày sinh"
-                  placeholder="yyyy-MM-dd (ví dụ: 1995-05-12)"
-                  helperText="Người đăng ký phải từ 18 tuổi trở lên"
-                  onBlur={onBlur}
-                  onChangeText={onChange}
-                  value={value}
-                  error={errors.dateOfBirth?.message}
-                />
-              )}
-            />
+              {/* Email */}
+              <Controller
+                control={control}
+                name="email"
+                render={({ field: { onChange, onBlur, value } }) => (
+                  <CustomInput
+                    label="Email"
+                    required
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    placeholder="ten@email.com"
+                    helperText="Dùng làm tên đăng nhập và nhận thư kích hoạt"
+                    onBlur={onBlur}
+                    onChangeText={onChange}
+                    value={value}
+                    error={errors.email?.message}
+                  />
+                )}
+              />
 
-            {/* Email */}
-            <Controller
-              control={control}
-              name="email"
-              render={({ field: { onChange, onBlur, value } }) => (
-                <CustomInput
-                  label="Email"
-                  required
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  placeholder="Nhập địa chỉ email chính xác"
-                  helperText="Dùng làm tên đăng nhập và nhận mã kích hoạt"
-                  onBlur={onBlur}
-                  onChangeText={onChange}
-                  value={value}
-                  error={errors.email?.message}
-                />
-              )}
-            />
+              {/* Số điện thoại */}
+              <Controller
+                control={control}
+                name="phoneNumber"
+                render={({ field: { onChange, onBlur, value } }) => (
+                  <CustomInput
+                    label="Số điện thoại"
+                    required
+                    keyboardType="phone-pad"
+                    maxLength={10}
+                    placeholder="09xxxxxxxx"
+                    onBlur={onBlur}
+                    onChangeText={onChange}
+                    value={value}
+                    error={errors.phoneNumber?.message}
+                  />
+                )}
+              />
 
-            {/* Số điện thoại */}
-            <Controller
-              control={control}
-              name="phoneNumber"
-              render={({ field: { onChange, onBlur, value } }) => (
-                <CustomInput
-                  label="Số điện thoại"
-                  required
-                  keyboardType="phone-pad"
-                  maxLength={10}
-                  placeholder="Nhập số điện thoại (10 chữ số)"
-                  onBlur={onBlur}
-                  onChangeText={onChange}
-                  value={value}
-                  error={errors.phoneNumber?.message}
-                />
-              )}
-            />
+              {/* Mã số thuế */}
+              <Controller
+                control={control}
+                name="taxIdNumber"
+                render={({ field: { onChange, onBlur, value } }) => (
+                  <CustomInput
+                    label="Mã số thuế"
+                    keyboardType="numeric"
+                    maxLength={13}
+                    placeholder="10 hoặc 13 chữ số"
+                    helperText="Có thể bổ sung sau trong hồ sơ cá nhân"
+                    onBlur={onBlur}
+                    onChangeText={onChange}
+                    value={value}
+                    error={errors.taxIdNumber?.message}
+                  />
+                )}
+              />
 
-            {/* Mã số thuế */}
-            <Controller
-              control={control}
-              name="taxIdNumber"
-              render={({ field: { onChange, onBlur, value } }) => (
-                <CustomInput
-                  label="Mã số thuế"
-                  keyboardType="numeric"
-                  maxLength={13}
-                  placeholder="Nhập 10 hoặc 13 chữ số nếu đã có"
-                  helperText="Có thể bổ sung sau trong hồ sơ cá nhân"
-                  onBlur={onBlur}
-                  onChangeText={onChange}
-                  value={value}
-                  error={errors.taxIdNumber?.message}
-                />
-              )}
-            />
+              {/* Địa chỉ */}
+              <Controller
+                control={control}
+                name="address"
+                render={({ field: { onChange, onBlur, value } }) => (
+                  <CustomInput
+                    label="Địa chỉ thường trú"
+                    multiline
+                    numberOfLines={2}
+                    onBlur={onBlur}
+                    onChangeText={onChange}
+                    value={value}
+                    error={errors.address?.message}
+                  />
+                )}
+              />
 
-            {/* Địa chỉ */}
-            <Controller
-              control={control}
-              name="address"
-              render={({ field: { onChange, onBlur, value } }) => (
-                <CustomInput
-                  label="Địa chỉ thường trú"
-                  multiline
-                  numberOfLines={2}
-                  placeholder="Nhập địa chỉ theo giấy tờ"
-                  onBlur={onBlur}
-                  onChangeText={onChange}
-                  value={value}
-                  error={errors.address?.message}
-                />
-              )}
-            />
+              {/* Mật khẩu */}
+              <Controller
+                control={control}
+                name="password"
+                render={({ field: { onChange, onBlur, value } }) => (
+                  <CustomInput
+                    label="Mật khẩu"
+                    required
+                    isPassword
+                    placeholder="Tối thiểu 8 ký tự, chữ hoa, thường, số"
+                    onBlur={onBlur}
+                    onChangeText={onChange}
+                    value={value}
+                    error={errors.password?.message}
+                  />
+                )}
+              />
+              <PasswordStrengthBar passwordText={passwordValue || ''} />
 
-            {/* Mật khẩu */}
-            <Controller
-              control={control}
-              name="password"
-              render={({ field: { onChange, onBlur, value } }) => (
-                <CustomInput
-                  label="Mật khẩu"
-                  required
-                  isPassword
-                  placeholder="Tối thiểu 8 ký tự (chữ hoa, chữ thường, số)"
-                  onBlur={onBlur}
-                  onChangeText={onChange}
-                  value={value}
-                  error={errors.password?.message}
-                />
-              )}
-            />
-            {/* Thanh đo độ mạnh mật khẩu */}
-            <PasswordStrengthBar passwordText={passwordValue || ''} />
+              {/* Xác nhận Mật khẩu */}
+              <Controller
+                control={control}
+                name="confirmPassword"
+                render={({ field: { onChange, onBlur, value } }) => (
+                  <CustomInput
+                    label="Xác nhận mật khẩu"
+                    required
+                    isPassword
+                    onBlur={onBlur}
+                    onChangeText={onChange}
+                    value={value}
+                    error={errors.confirmPassword?.message}
+                  />
+                )}
+              />
 
-            {/* Xác nhận Mật khẩu */}
-            <Controller
-              control={control}
-              name="confirmPassword"
-              render={({ field: { onChange, onBlur, value } }) => (
-                <CustomInput
-                  label="Xác nhận mật khẩu"
-                  required
-                  isPassword
-                  placeholder="Nhập lại mật khẩu vừa nhập"
-                  onBlur={onBlur}
-                  onChangeText={onChange}
-                  value={value}
-                  error={errors.confirmPassword?.message}
-                />
-              )}
-            />
+              {/* Checkbox Đồng ý điều khoản */}
+              <Controller
+                control={control}
+                name="agreeTerms"
+                render={({ field: { onChange, value } }) => (
+                  <TermsCheckbox
+                    checked={value}
+                    onToggle={onChange}
+                    error={errors.agreeTerms?.message}
+                  />
+                )}
+              />
 
-            {/* Checkbox Đồng ý điều khoản */}
-            <Controller
-              control={control}
-              name="agreeTerms"
-              render={({ field: { onChange, value } }) => (
-                <TermsCheckbox
-                  checked={value}
-                  onToggle={onChange}
-                  error={errors.agreeTerms?.message}
-                />
-              )}
-            />
+              {/* Nút Đăng ký */}
+              <CustomButton
+                title={loading ? 'Đang tạo tài khoản...' : 'Đăng ký'}
+                onPress={handleSubmit(onSubmit)}
+                loading={loading}
+                disabled={!agreeTermsValue}
+                style={styles.submitBtn}
+              />
 
-            {/* Nút Đăng ký */}
-            <CustomButton
-              title={loading ? 'Đang tạo tài khoản...' : 'Đăng ký'}
-              onPress={handleSubmit(onSubmit)}
-              loading={loading}
-              disabled={!agreeTermsValue}
-              style={styles.submitBtn}
-            />
-
-            {/* Chuyển sang Đăng nhập */}
-            <View style={styles.loginLinkRow}>
-              <Text style={styles.loginLinkText}>Đã có tài khoản? </Text>
-              <TouchableOpacity
-                onPress={() => handleLeavePage(() => navigation.navigate('Login'))}
-              >
-                <Text style={styles.loginLinkHighlight}>Đăng nhập</Text>
-              </TouchableOpacity>
+              {/* Chuyển sang Đăng nhập */}
+              <View style={styles.loginLinkRow}>
+                <Text style={styles.loginLinkText}>Đã có tài khoản? </Text>
+                <TouchableOpacity
+                  onPress={() => handleLeavePage(() => navigation.navigate('Login'))}
+                >
+                  <Text style={styles.loginLinkHighlight}>Đăng nhập</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      <Dialog
+        visible={leaveDestination !== null}
+        title="Hủy thông tin đang nhập?"
+        message="Thông tin đăng ký chưa được gửi đi. Nếu rời khỏi màn hình này, dữ liệu vừa nhập sẽ không được lưu."
+        destructive
+        secondaryLabel="Tiếp tục nhập"
+        primaryLabel="Rời màn hình"
+        onSecondary={() => setLeaveDestination(null)}
+        onPrimary={() => {
+          const dest = leaveDestination;
+          setLeaveDestination(null);
+          dest?.();
+        }}
+      />
     </SafeAreaView>
   );
 };
@@ -417,6 +446,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: theme.spacing.md,
     paddingVertical: theme.spacing.md,
     paddingBottom: theme.spacing.xl * 2,
+  },
+  contentWrap: {
+    width: '100%',
+    maxWidth: 560,
+    alignSelf: 'center',
   },
   ocrQuickCard: {
     backgroundColor: '#FFFFFF',
@@ -484,6 +518,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
+    flexWrap: 'wrap',
     marginTop: theme.spacing.lg,
   },
   loginLinkText: {

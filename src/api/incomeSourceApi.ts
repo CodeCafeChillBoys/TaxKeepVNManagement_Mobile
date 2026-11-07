@@ -89,7 +89,9 @@ export const incomeSourceApi = {
       const response = await apiClient.get('/api/v1/income-sources', { params });
       return response.data?.data || response.data;
     } catch (err: any) {
-      console.warn('incomeSourceApi.getAll error:', err?.response?.data || err?.message);
+      if (__DEV__) {
+        console.warn('incomeSourceApi.getAll error:', err?.response?.data || err?.message);
+      }
       return {
         items: [],
         pagination: { page: 1, pageSize: 10, totalItems: 0, totalPages: 1 },
@@ -105,7 +107,9 @@ export const incomeSourceApi = {
       });
       return response.data?.data || response.data;
     } catch (err: any) {
-      console.warn('incomeSourceApi.getSummary error:', err?.response?.data || err?.message);
+      if (__DEV__) {
+        console.warn('incomeSourceApi.getSummary error:', err?.response?.data || err?.message);
+      }
       return {
         taxYear,
         totalIncome: 0,

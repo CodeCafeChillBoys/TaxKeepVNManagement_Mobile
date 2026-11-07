@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -23,6 +23,7 @@ import { Dialog } from '../../components/common/Dialog';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { consultationApi } from '../../api/consultationApi';
 import { toFriendlyConsultationError } from '../../utils/consultationFriendlyErrors';
+import { useDebounce } from '../../hooks/useDebounce';
 import type {
   ExpertDetailResponse,
   ExpertAvailableSlotDto,
@@ -294,22 +295,27 @@ const getSlotDurationMinutes = (startTime?: string, endTime?: string): number =>
     });
   }, [slotsForSelectedSession, selectedDate, slotPeriodFilter]);
 
-  // Dry-run preview calculation triggered when slot or specialization changes
-  const runPreview = useCallback(async () => {
-    if (!selectedSlotId || !selectedSpecId) return;
+  const debouncedSlotId = useDebounce(selectedSlotId, 300);
+  const debouncedSpecId = useDebounce(selectedSpecId, 300);
+  const previewReqSeq = useRef(0);
 
+  // Dry-run preview calculation triggered when slot or specialization changes
+  const runPreview = useCallback(async (slotId: string, specId: number) => {
+    const seq = ++previewReqSeq.current;
     setPreviewLoading(true);
     setPreviewError(null);
     try {
       const res = await consultationApi.previewBooking({
-        expertSlotId: selectedSlotId,
-        specializationId: selectedSpecId,
+        expertSlotId: slotId,
+        specializationId: specId,
       });
+      if (seq !== previewReqSeq.current) return;
       setPreviewData(res);
       if (!res.isValid && res.validationMessage) {
         setPreviewError(res.validationMessage);
       }
     } catch (err: any) {
+      if (seq !== previewReqSeq.current) return;
       const friendly = toFriendlyConsultationError(
         err,
         'Lỗi tạm tính',
@@ -318,15 +324,17 @@ const getSlotDurationMinutes = (startTime?: string, endTime?: string): number =>
       setPreviewError(friendly.message);
       setPreviewData(null);
     } finally {
-      setPreviewLoading(false);
+      if (seq === previewReqSeq.current) {
+        setPreviewLoading(false);
+      }
     }
-  }, [selectedSlotId, selectedSpecId]);
+  }, []);
 
   useEffect(() => {
-    if (selectedSlotId && selectedSpecId) {
-      runPreview();
+    if (debouncedSlotId && debouncedSpecId) {
+      runPreview(debouncedSlotId, debouncedSpecId);
     }
-  }, [selectedSlotId, selectedSpecId, runPreview]);
+  }, [debouncedSlotId, debouncedSpecId, runPreview]);
 
   // Submit Booking
   const handleSubmitBooking = async () => {

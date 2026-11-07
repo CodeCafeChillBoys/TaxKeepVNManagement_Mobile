@@ -467,7 +467,7 @@ export function formatBookingStatus(
         color: '#DC2626',
         bg: '#FEF2F2',
         icon: 'alert-circle-outline',
-        desc: 'Phiên tư vấn đang có khiếu nại chất lượng. Tiền ký quỹ Escrow đã được đóng băng an toàn.',
+        desc: 'Phiên tư vấn đang có khiếu nại chất lượng. Khoản tiền tạm giữ bảo đảm đã được đóng băng an toàn.',
       };
     default:
       return {
@@ -649,7 +649,7 @@ export function formatExpertApplicationStatus(status?: ExpertApplicationStatus |
         color: '#D97706',
         bg: '#FEF3C7',
         icon: 'hourglass-outline',
-        desc: 'Hồ sơ đã gửi và đang trong quá trình xét duyệt của Quản trị viên.',
+        desc: 'Hồ sơ đã gửi và đang trong quá trình xét duyệt của Bộ phận thẩm định.',
       };
     case 'NeedSupplement':
       return {
@@ -657,7 +657,7 @@ export function formatExpertApplicationStatus(status?: ExpertApplicationStatus |
         color: '#EA580C',
         bg: '#FFEDD5',
         icon: 'alert-circle-outline',
-        desc: 'Quản trị viên yêu cầu bổ sung thông tin hoặc giấy tờ chứng chỉ.',
+        desc: 'Bộ phận thẩm định yêu cầu bổ sung thông tin hoặc giấy tờ chứng chỉ.',
       };
     case 'Rejected':
       return {

@@ -3,6 +3,7 @@ import {
   calculateItemsTotal,
   validateCrucialFields,
   getValidationMatrixErrorDetails,
+  parseBackendError,
 } from './expenseValidationUtils';
 
 describe('expenseValidationUtils', () => {
@@ -92,6 +93,17 @@ describe('expenseValidationUtils', () => {
       const details = getValidationMatrixErrorDetails('ERR_IMAGE_QUALITY_TOO_LOW');
       expect(details.title).toContain('Chất lượng ảnh');
       expect(details.isFatal).toBe(false);
+    });
+  });
+
+  describe('parseBackendError', () => {
+    it('never leaks raw English or technical err.message on unknown errors', () => {
+      const parsed = parseBackendError({
+        response: { status: 400, data: { message: 'Validation failed for seller_tax_code: status 400 payload null' } },
+      });
+      expect(parsed.message).not.toContain('seller_tax_code');
+      expect(parsed.message).not.toContain('payload');
+      expect(parsed.message).not.toContain('Validation failed');
     });
   });
 });

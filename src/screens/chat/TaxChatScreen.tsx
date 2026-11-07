@@ -1,8 +1,9 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback, memo } from 'react';
 import {
   ActivityIndicator,
   FlatList,
   KeyboardAvoidingView,
+  Platform,
   StyleSheet,
   Text,
   TextInput,
@@ -28,6 +29,95 @@ type ChatItem = {
   failed?: boolean;
 };
 
+interface ChatInputBarProps {
+  sending: boolean;
+  onSend: (text: string) => void;
+}
+
+const ChatInputBar = memo(({ sending, onSend }: ChatInputBarProps) => {
+  const [text, setText] = useState('');
+
+  const handleSend = () => {
+    const trimmed = text.trim();
+    if (!trimmed || sending) return;
+    onSend(trimmed);
+    setText('');
+  };
+
+  return (
+    <View style={styles.inputBar}>
+      <TextInput
+        style={styles.input}
+        value={text}
+        onChangeText={setText}
+        placeholder="Nhập câu hỏi về thuế…"
+        placeholderTextColor={theme.colors.textPlaceholder}
+        multiline
+        maxLength={2000}
+        testID="chatInput"
+      />
+      <TouchableOpacity
+        style={[styles.sendBtn, (!text.trim() || sending) && styles.sendBtnDisabled]}
+        onPress={handleSend}
+        disabled={!text.trim() || sending}
+        testID="chatSendBtn"
+        accessibilityRole="button"
+        accessibilityLabel="Gửi câu hỏi"
+      >
+        <Ionicons name="send" size={18} color={theme.colors.textOnPrimary} />
+      </TouchableOpacity>
+    </View>
+  );
+});
+
+const AiMessageBubble = memo(({ content }: { content: string }) => (
+  <View style={[styles.bubble, styles.aiBubble]} testID="chatAiMessage">
+    <Markdown style={markdownStyles}>{content}</Markdown>
+  </View>
+));
+
+interface UserMessageBubbleProps {
+  item: ChatItem;
+  sending: boolean;
+  onRetry: (content: string, id: string) => void;
+}
+
+const UserMessageBubble = memo(({ item, sending, onRetry }: UserMessageBubbleProps) => (
+  <View style={styles.userWrap}>
+    <View style={[styles.bubble, styles.userBubble]} testID="chatUserMessage">
+      <Text style={styles.userText}>{item.content}</Text>
+    </View>
+    {item.failed ? (
+      <TouchableOpacity
+        onPress={() => onRetry(item.content, item.id)}
+        disabled={sending}
+        style={styles.retryBtn}
+        testID="chatRetryBtn"
+        accessibilityRole="button"
+        accessibilityLabel="Gửi lại câu hỏi"
+      >
+        <Ionicons name="refresh" size={13} color={theme.colors.error} />
+        <Text style={styles.retryText}>Gửi lỗi · Gửi lại</Text>
+      </TouchableOpacity>
+    ) : null}
+  </View>
+));
+
+const ChatMessageRow = memo(({
+  item,
+  sending,
+  onRetry,
+}: {
+  item: ChatItem;
+  sending: boolean;
+  onRetry: (content: string, id: string) => void;
+}) => {
+  if (item.role === 'user') {
+    return <UserMessageBubble item={item} sending={sending} onRetry={onRetry} />;
+  }
+  return <AiMessageBubble content={item.content} />;
+});
+
 /** Chat tư vấn thuế với AI. Không có sessionId = phiên mới (AI tạo phiên ở câu hỏi đầu). */
 export const TaxChatScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
@@ -37,7 +127,6 @@ export const TaxChatScreen: React.FC = () => {
 
   const [sessionId, setSessionId] = useState<string | null>(paramSessionId ?? null);
   const [items, setItems] = useState<ChatItem[]>([]);
-  const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [error, setError] = useState('');
@@ -63,14 +152,13 @@ export const TaxChatScreen: React.FC = () => {
     };
   }, [paramSessionId, nonce]);
 
-  const send = async (text: string, retryId?: string) => {
+  const send = useCallback(async (text: string, retryId?: string) => {
     const question = text.trim();
     if (!question || sending) return;
     const id = retryId ?? `local-${Date.now()}`;
     setItems((prev) =>
       retryId ? prev.map((i) => (i.id === id ? { ...i, failed: false } : i)) : [...prev, { id, role: 'user', content: question }]
     );
-    if (!retryId) setInput('');
     setSending(true);
     setError('');
     try {
@@ -83,33 +171,13 @@ export const TaxChatScreen: React.FC = () => {
     } finally {
       setSending(false);
     }
-  };
+  }, [sending, sessionId]);
 
-  const renderItem = ({ item }: { item: ChatItem }) =>
-    item.role === 'user' ? (
-      <View style={styles.userWrap}>
-        <View style={[styles.bubble, styles.userBubble]} testID="chatUserMessage">
-          <Text style={styles.userText}>{item.content}</Text>
-        </View>
-        {item.failed ? (
-          <TouchableOpacity
-            onPress={() => send(item.content, item.id)}
-            disabled={sending}
-            style={styles.retryBtn}
-            testID="chatRetryBtn"
-            accessibilityRole="button"
-            accessibilityLabel="Gửi lại câu hỏi"
-          >
-            <Ionicons name="refresh" size={13} color={theme.colors.error} />
-            <Text style={styles.retryText}>Gửi lỗi · Gửi lại</Text>
-          </TouchableOpacity>
-        ) : null}
-      </View>
-    ) : (
-      <View style={[styles.bubble, styles.aiBubble]} testID="chatAiMessage">
-        <Markdown style={markdownStyles}>{item.content}</Markdown>
-      </View>
-    );
+  const renderItem = useCallback(({ item }: { item: ChatItem }) => (
+    <ChatMessageRow item={item} sending={sending} onRetry={send} />
+  ), [sending, send]);
+
+  const keyExtractor = useCallback((i: ChatItem) => i.id, []);
 
   const showSuggestions = !paramSessionId && items.length === 0;
 
@@ -140,12 +208,16 @@ export const TaxChatScreen: React.FC = () => {
           <FlatList
             ref={listRef}
             data={items}
-            keyExtractor={(i) => i.id}
+            keyExtractor={keyExtractor}
             renderItem={renderItem}
             contentContainerStyle={styles.listContent}
             onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: true })}
             keyboardShouldPersistTaps="handled"
             testID="chatMessageList"
+            initialNumToRender={10}
+            maxToRenderPerBatch={8}
+            windowSize={7}
+            removeClippedSubviews={Platform.OS !== 'web'}
             ListHeaderComponent={
               showSuggestions ? (
                 <View style={styles.welcome} testID="chatSuggestions">
@@ -185,28 +257,7 @@ export const TaxChatScreen: React.FC = () => {
           </Text>
         ) : null}
 
-        <View style={styles.inputBar}>
-          <TextInput
-            style={styles.input}
-            value={input}
-            onChangeText={setInput}
-            placeholder="Nhập câu hỏi về thuế…"
-            placeholderTextColor={theme.colors.textPlaceholder}
-            multiline
-            maxLength={2000}
-            testID="chatInput"
-          />
-          <TouchableOpacity
-            style={[styles.sendBtn, (!input.trim() || sending) && styles.sendBtnDisabled]}
-            onPress={() => send(input)}
-            disabled={!input.trim() || sending}
-            testID="chatSendBtn"
-            accessibilityRole="button"
-            accessibilityLabel="Gửi câu hỏi"
-          >
-            <Ionicons name="send" size={18} color={theme.colors.textOnPrimary} />
-          </TouchableOpacity>
-        </View>
+        <ChatInputBar sending={sending} onSend={send} />
       </KeyboardAvoidingView>
     </SafeAreaView>
   );

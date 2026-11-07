@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { fonts } from '../../constants/fonts';
 import { theme } from '../../constants/theme';
+import { sanitizeUiMessage } from '../../utils/friendlyError';
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
 import {
   formatVnd,
@@ -37,9 +38,15 @@ const SECTIONS = [
   { key: 'notes', title: 'Ghi chú thuật ngữ' },
 ] as const;
 
-export function SettlementResultBlocks({ preview, locked }: Props) {
+export const SettlementResultBlocks = React.memo(function SettlementResultBlocks({
+  preview,
+  locked,
+}: Props) {
   const [open, setOpen] = useState<string>('summary');
   const hero = heroOutcome(preview);
+  const cleanSummary = preview.summaryMessage
+    ? sanitizeUiMessage(preview.summaryMessage.replace(/^[^\wÀ-ỹ]+/, ''))
+    : '';
 
   return (
     <View>
@@ -50,10 +57,15 @@ export function SettlementResultBlocks({ preview, locked }: Props) {
       <Text style={styles.law}>{preview.lawGroupLabel}</Text>
 
       <Text style={styles.heroLabel}>{hero.label}</Text>
-      <Text style={styles.heroAmount}>{formatVnd(hero.amount)}</Text>
-      {preview.summaryMessage ? (
-        <Text style={styles.summaryMsg}>{preview.summaryMessage.replace(/^[^\wÀ-ỹ]+/, '')}</Text>
-      ) : null}
+      <Text
+        style={styles.heroAmount}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.6}
+      >
+        {formatVnd(hero.amount)}
+      </Text>
+      {cleanSummary ? <Text style={styles.summaryMsg}>{cleanSummary}</Text> : null}
 
       <GoldDoubleRule style={styles.rule} />
 
@@ -76,7 +88,7 @@ export function SettlementResultBlocks({ preview, locked }: Props) {
       })}
     </View>
   );
-}
+});
 
 function renderSection(key: string, p: TaxSettlementPreview) {
   switch (key) {
@@ -89,34 +101,38 @@ function renderSection(key: string, p: TaxSettlementPreview) {
     case 'brackets':
       return <BracketsSection p={p} />;
     case 'summary':
-      return (
-        <>
-          <Row label="Thuế phải nộp cả năm" value={formatVnd(p.taxPayable)} />
-          <Row label="Thuế đã khấu trừ tại nguồn" value={formatVnd(p.totalTaxWithheld)} />
-          <Row label="Được hoàn" value={formatVnd(p.refundAmount)} />
-          <Row label="Còn phải nộp" value={formatVnd(p.dueAmount)} />
-          <Note>Kết quả = Thuế phải nộp cả năm − Thuế đã khấu trừ. Âm thì được hoàn, dương thì nộp thêm.</Note>
-        </>
-      );
+      return <SummarySection p={p} />;
     case 'notes':
-      return (
-        <>
-          {SETTLEMENT_GLOSSARY.map((g) => (
-            <Text key={g.term} style={styles.glossLine}>
-              <Text style={styles.glossTerm}>{g.term}: </Text>
-              {g.meaning}
-            </Text>
-          ))}
-        </>
-      );
+      return <NotesSection />;
     default:
       return null;
   }
 }
 
+const SummarySection = React.memo(({ p }: { p: TaxSettlementPreview }) => (
+  <>
+    <Row label="Thuế phải nộp cả năm" value={formatVnd(p.taxPayable)} />
+    <Row label="Thuế đã khấu trừ tại nguồn" value={formatVnd(p.totalTaxWithheld)} />
+    <Row label="Được hoàn" value={formatVnd(p.refundAmount)} />
+    <Row label="Còn phải nộp" value={formatVnd(p.dueAmount)} />
+    <Note>Kết quả = Thuế phải nộp cả năm − Thuế đã khấu trừ. Âm thì được hoàn, dương thì nộp thêm.</Note>
+  </>
+));
+
+const NotesSection = React.memo(() => (
+  <>
+    {SETTLEMENT_GLOSSARY.map((g) => (
+      <Text key={g.term} style={styles.glossLine}>
+        <Text style={styles.glossTerm}>{g.term}: </Text>
+        {g.meaning}
+      </Text>
+    ))}
+  </>
+));
+
 // ── 01 Thu nhập ────────────────────────────────────────────────────────────────
 
-function IncomeSection({ p }: { p: TaxSettlementPreview }) {
+const IncomeSection = React.memo(function IncomeSection({ p }: { p: TaxSettlementPreview }) {
   const selected = p.incomeItems.filter((i) => i.isSelected);
   // Thu nhập từng tháng (bảng incomes) để hiện bảng theo quý trong từng nơi chi trả
   const [monthlyGroups, setMonthlyGroups] = useState<IncomeCompanyGroup[] | null>(null);
@@ -124,12 +140,17 @@ function IncomeSection({ p }: { p: TaxSettlementPreview }) {
     let alive = true;
     incomeApi
       .getMyIncomes(p.taxYear)
-      .then((g) => alive && setMonthlyGroups(g))
-      .catch(() => alive && setMonthlyGroups([]));
+      .then((g) => {
+        if (alive) setMonthlyGroups(g);
+      })
+      .catch(() => {
+        if (alive) setMonthlyGroups([]);
+      });
     return () => {
       alive = false;
     };
   }, [p.taxYear]);
+
   return (
     <>
       <Row label="Tổng thu nhập chịu thuế" value={formatVnd(p.totalGrossIncome)} bold />
@@ -162,9 +183,9 @@ function IncomeSection({ p }: { p: TaxSettlementPreview }) {
       </Note>
     </>
   );
-}
+});
 
-function IncomeCompanyCard({
+const IncomeCompanyCard = React.memo(function IncomeCompanyCard({
   item,
   year,
   months,
@@ -178,10 +199,21 @@ function IncomeCompanyCard({
   const monthlySum = (months ?? []).reduce((s, m) => s + (Number(m.totalTaxableIncome) || 0), 0);
   return (
     <View style={[styles.card, !item.isSelected && styles.cardMuted]}>
-      <TouchableOpacity style={styles.cardHead} onPress={() => setExpanded((v) => !v)} accessibilityRole="button">
+      <TouchableOpacity
+        style={styles.cardHead}
+        onPress={() => setExpanded((v) => !v)}
+        accessibilityRole="button"
+      >
         <View style={styles.cardTitleWrap}>
           <Text style={styles.cardTitle}>{item.companyName}</Text>
-          <Text style={styles.cardAmount}>{formatVnd(item.grossIncome)}</Text>
+          <Text
+            style={styles.cardAmount}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.75}
+          >
+            {formatVnd(item.grossIncome)}
+          </Text>
           {!item.isSelected ? <Text style={styles.cardTag}>Không đưa vào quyết toán</Text> : null}
         </View>
         <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={16} color="#999" />
@@ -201,7 +233,11 @@ function IncomeCompanyCard({
           ) : (
             <>
               <View style={styles.monthlyTable}>
-                <QuarterIncomeTable months={months} year={year} testIDPrefix={`settlement_${item.companyTaxCode || item.incomeSourceId}_`} />
+                <QuarterIncomeTable
+                  months={months}
+                  year={year}
+                  testIDPrefix={`settlement_${item.companyTaxCode || item.incomeSourceId}_`}
+                />
               </View>
               {Math.abs(monthlySum - item.grossIncome) >= 1 ? (
                 <Text style={styles.monthlyWarn}>
@@ -214,21 +250,27 @@ function IncomeCompanyCard({
       ) : null}
     </View>
   );
-}
+});
 
 // ── 02 Người phụ thuộc ────────────────────────────────────────────────────────
 
-function DependentsSection({ p }: { p: TaxSettlementPreview }) {
+const DependentsSection = React.memo(function DependentsSection({
+  p,
+}: {
+  p: TaxSettlementPreview;
+}) {
   return (
     <>
       <Row label="Tổng giảm trừ NPT" value={formatVnd(p.dependentDeductionAmount)} bold />
-      <Row
-        label="Mức giảm trừ"
-        value={`${formatVnd(p.dependentMonthlyRate)}/người/tháng`}
-      />
+      <Row label="Mức giảm trừ" value={`${formatVnd(p.dependentMonthlyRate)}/người/tháng`} />
       <Row label="Tổng số người-tháng" value={`${p.dependentDeductionPersonMonths}`} />
       {p.dependentItems.map((d) => (
-        <DependentCard key={d.dependentId} item={d} taxYear={p.taxYear} monthlyRate={p.dependentMonthlyRate} />
+        <DependentCard
+          key={d.dependentId}
+          item={d}
+          taxYear={p.taxYear}
+          monthlyRate={p.dependentMonthlyRate}
+        />
       ))}
       {p.dependentItems.length === 0 ? <Text style={styles.muted}>Không có NPT hợp lệ.</Text> : null}
       <Note>
@@ -237,9 +279,9 @@ function DependentsSection({ p }: { p: TaxSettlementPreview }) {
       </Note>
     </>
   );
-}
+});
 
-function DependentCard({
+const DependentCard = React.memo(function DependentCard({
   item,
   taxYear,
   monthlyRate,
@@ -252,13 +294,24 @@ function DependentCard({
   const range = clampMonthRangeToYear(item.effectiveFromMonth, item.effectiveToMonth, taxYear);
   return (
     <View style={styles.card}>
-      <TouchableOpacity style={styles.cardHead} onPress={() => setExpanded((v) => !v)} accessibilityRole="button">
+      <TouchableOpacity
+        style={styles.cardHead}
+        onPress={() => setExpanded((v) => !v)}
+        accessibilityRole="button"
+      >
         <View style={styles.cardTitleWrap}>
           <Text style={styles.cardTitle}>{item.fullName}</Text>
           <Text style={styles.cardSub}>
             {relationshipLabel(item.relationship)} · {item.validMonths} tháng
           </Text>
-          <Text style={styles.cardAmount}>{formatVnd(item.deductionAmount)}</Text>
+          <Text
+            style={styles.cardAmount}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.75}
+          >
+            {formatVnd(item.deductionAmount)}
+          </Text>
         </View>
         <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={16} color="#999" />
       </TouchableOpacity>
@@ -275,11 +328,15 @@ function DependentCard({
       ) : null}
     </View>
   );
-}
+});
 
 // ── 03 Giảm trừ ───────────────────────────────────────────────────────────────
 
-function DeductionsSection({ p }: { p: TaxSettlementPreview }) {
+const DeductionsSection = React.memo(function DeductionsSection({
+  p,
+}: {
+  p: TaxSettlementPreview;
+}) {
   return (
     <>
       <Row label="Bảo hiểm bắt buộc" value={formatVnd(p.totalInsuranceDeduction)} />
@@ -294,7 +351,10 @@ function DeductionsSection({ p }: { p: TaxSettlementPreview }) {
         <Row label="Đóng góp từ thiện, nhân đạo" value={formatVnd(p.charityDeduction)} />
       ) : null}
       <Row label="Chi phí y tế" value={p.medicalDeduction > 0 ? formatVnd(p.medicalDeduction) : '—'} />
-      <Row label="Chi phí giáo dục" value={p.educationDeduction > 0 ? formatVnd(p.educationDeduction) : '—'} />
+      <Row
+        label="Chi phí giáo dục"
+        value={p.educationDeduction > 0 ? formatVnd(p.educationDeduction) : '—'}
+      />
       <Row label="Tổng giảm trừ" value={formatVnd(p.totalDeductions)} bold />
 
       {p.charityDeduction > 0 ? (
@@ -309,11 +369,11 @@ function DeductionsSection({ p }: { p: TaxSettlementPreview }) {
       </Note>
     </>
   );
-}
+});
 
 // ── 04 Bậc thuế ───────────────────────────────────────────────────────────────
 
-function BracketsSection({ p }: { p: TaxSettlementPreview }) {
+const BracketsSection = React.memo(function BracketsSection({ p }: { p: TaxSettlementPreview }) {
   const { rows, totalMonthly } = computeBracketBreakdown(p.taxableIncomeMonthly, p.bracketDetails);
   const matches = Math.abs(totalMonthly - p.taxPayableMonthly) <= rows.length;
 
@@ -322,7 +382,7 @@ function BracketsSection({ p }: { p: TaxSettlementPreview }) {
       <Row label="Tổng thu nhập chịu thuế" value={formatVnd(p.totalGrossIncome)} />
       <Row label="− Tổng giảm trừ" value={formatVnd(p.totalDeductions)} />
       <Row label="= TNTT cả năm" value={formatVnd(p.taxableIncomeYearly)} bold />
-      <Row label={'TNTT bình quân tháng (÷ 12)'} value={formatVnd(p.taxableIncomeMonthly)} bold />
+      <Row label={'TNTT bình quân tháng (÷\u00A012)'} value={formatVnd(p.taxableIncomeMonthly)} bold />
 
       <Text style={styles.subHead}>Tính lũy tiến từng phần (theo tháng)</Text>
       {rows.length === 0 ? (
@@ -339,7 +399,14 @@ function BracketsSection({ p }: { p: TaxSettlementPreview }) {
             <View key={r.bracketNo} style={styles.tr}>
               <Text style={[styles.td, styles.colNo]}>{r.bracketNo}</Text>
               <View style={styles.colRange}>
-                <Text style={styles.td}>{formatAmount(r.portion)}</Text>
+                <Text
+                  style={styles.td}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.7}
+                >
+                  {formatAmount(r.portion)}
+                </Text>
                 <Text style={styles.tdSub}>
                   {r.toMonthly == null
                     ? `trên ${formatAmount(r.fromMonthly)}`
@@ -347,19 +414,33 @@ function BracketsSection({ p }: { p: TaxSettlementPreview }) {
                 </Text>
               </View>
               <Text style={[styles.td, styles.colRate]}>{formatRate(r.rate)}</Text>
-              <Text style={[styles.td, styles.colTax]}>{formatVnd(r.tax)}</Text>
+              <Text
+                style={[styles.td, styles.colTax]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.7}
+              >
+                {formatVnd(r.tax)}
+              </Text>
             </View>
           ))}
           <View style={[styles.tr, styles.totalRow]}>
             <Text style={[styles.tdBold, styles.colTotalLabel]}>Thuế mỗi tháng</Text>
-            <Text style={[styles.tdBold, styles.colTax]}>{formatVnd(totalMonthly)}</Text>
+            <Text
+              style={[styles.tdBold, styles.colTax]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.7}
+            >
+              {formatVnd(totalMonthly)}
+            </Text>
           </View>
         </View>
       )}
 
-      <Row label={'Thuế phải nộp cả năm (× 12)'} value={formatVnd(p.taxPayable)} bold />
+      <Row label={'Thuế phải nộp cả năm (×\u00A012)'} value={formatVnd(p.taxPayable)} bold />
       <Note>
-        Thuế TNCN tính lũy tiến từng phần : phần thu nhập nằm trong khoảng của bậc nào thì nhân với
+        Thuế TNCN tính lũy tiến từng phần: phần thu nhập nằm trong khoảng của bậc nào thì nhân với
         thuế suất của bậc đó, rồi cộng lại.
         {rows.length > 0 && matches
           ? ' Kết quả khớp với công thức rút gọn của cơ quan thuế (TNTT × thuế suất bậc cao nhất − số trừ nhanh).'
@@ -367,7 +448,7 @@ function BracketsSection({ p }: { p: TaxSettlementPreview }) {
       </Note>
     </>
   );
-}
+});
 
 /** Số tiền không kèm "đ" — dùng trong nhãn phụ / khoảng bậc để chữ "đ" không rớt dòng. */
 function formatAmount(n: number): string {
@@ -381,26 +462,43 @@ function formatRate(rate: number): string {
 // ── Thành phần dùng chung ─────────────────────────────────────────────────────
 
 /** Trái: tên dòng (+ cách tính nhạt trong ngoặc) · Phải: chỉ kết quả */
-function Row({ label, value, bold, hint }: { label: string; value: string; bold?: boolean; hint?: string }) {
+const Row = React.memo(function Row({
+  label,
+  value,
+  bold,
+  hint,
+}: {
+  label: string;
+  value: string;
+  bold?: boolean;
+  hint?: string;
+}) {
   return (
     <View style={styles.row}>
       <Text style={styles.rowLabel}>
         {label}
         {hint ? <Text style={styles.rowHint}> ({hint})</Text> : null}
       </Text>
-      <Text style={[styles.rowValue, bold && styles.rowBold]}>{value}</Text>
+      <Text
+        style={[styles.rowValue, bold && styles.rowBold]}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.75}
+      >
+        {value}
+      </Text>
     </View>
   );
-}
+});
 
-function Note({ children }: { children: React.ReactNode }) {
+const Note = React.memo(function Note({ children }: { children: React.ReactNode }) {
   return (
     <View style={styles.note}>
       <Ionicons name="information-circle-outline" size={14} color="#7A5A14" style={styles.noteIcon} />
       <Text style={styles.noteText}>{children}</Text>
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   yearLine: {
@@ -440,6 +538,7 @@ const styles = StyleSheet.create({
     lineHeight: 42,
     color: theme.colors.primaryDark,
     textAlign: 'center',
+    flexShrink: 1,
   },
   summaryMsg: {
     marginTop: 8,
@@ -470,11 +569,17 @@ const styles = StyleSheet.create({
     color: theme.colors.textPrimary,
   },
   sectionBody: { paddingLeft: 38, paddingBottom: 12, gap: 6 },
-  row: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
-  rowLabel: { flex: 1, fontFamily: fonts.body, fontSize: 13, color: theme.colors.textSecondary },
+  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 },
+  rowLabel: {
+    flex: 1,
+    minWidth: 110,
+    fontFamily: fonts.body,
+    fontSize: 13,
+    color: theme.colors.textSecondary,
+  },
   rowValue: {
-    flexShrink: 0,
-    maxWidth: '60%',
+    flexShrink: 1,
+    maxWidth: '58%',
     fontFamily: fonts.bodySemi,
     fontSize: 13,
     color: theme.colors.textPrimary,
@@ -498,15 +603,32 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.surface,
   },
   cardMuted: { opacity: 0.6 },
-  monthlyHead: { marginTop: 6, fontFamily: fonts.bodySemi, fontSize: 12, color: theme.colors.textPrimary },
+  monthlyHead: {
+    marginTop: 6,
+    fontFamily: fonts.bodySemi,
+    fontSize: 12,
+    color: theme.colors.textPrimary,
+  },
   monthlyTable: { marginHorizontal: -12, marginTop: 2 },
   monthlyWarn: { fontFamily: fonts.body, fontSize: 11, lineHeight: 16, color: '#8A5A00' },
-  cardHead: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 10, paddingHorizontal: 12 },
-  cardTitleWrap: { flex: 1 },
+  cardHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  cardTitleWrap: { flex: 1, minWidth: 0 },
   cardTitle: { fontFamily: fonts.bodySemi, fontSize: 13, color: theme.colors.textPrimary },
   cardSub: { marginTop: 2, fontFamily: fonts.body, fontSize: 11, color: theme.colors.textSecondary },
   cardTag: { marginTop: 2, fontFamily: fonts.bodyMedium, fontSize: 11, color: theme.colors.primary },
-  cardAmount: { marginTop: 2, fontFamily: fonts.bodySemi, fontSize: 13, color: theme.colors.primaryDark },
+  cardAmount: {
+    marginTop: 2,
+    fontFamily: fonts.bodySemi,
+    fontSize: 13,
+    color: theme.colors.primaryDark,
+    flexShrink: 1,
+  },
   cardBody: {
     gap: 6,
     paddingHorizontal: 12,
@@ -517,7 +639,12 @@ const styles = StyleSheet.create({
   },
 
   // Bảng bậc thuế
-  table: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 10, overflow: 'hidden' },
+  table: {
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: 10,
+    overflow: 'hidden',
+  },
   tr: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -529,13 +656,18 @@ const styles = StyleSheet.create({
   thRow: { borderTopWidth: 0, backgroundColor: theme.colors.surfaceSecondary },
   totalRow: { backgroundColor: theme.colors.surfaceSecondary },
   th: { fontFamily: fonts.bodySemi, fontSize: 11, color: '#7A5A14' },
-  td: { fontFamily: fonts.body, fontSize: 12, color: theme.colors.textPrimary },
+  td: { fontFamily: fonts.body, fontSize: 12, color: theme.colors.textPrimary, flexShrink: 1 },
   tdSub: { fontFamily: fonts.body, fontSize: 10, color: theme.colors.textSecondary },
-  tdBold: { fontFamily: fonts.bodyBold, fontSize: 12, color: theme.colors.primaryDark },
+  tdBold: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 12,
+    color: theme.colors.primaryDark,
+    flexShrink: 1,
+  },
   colNo: { width: 30, textAlign: 'center' },
-  colRange: { flex: 1, paddingHorizontal: 4 },
+  colRange: { flex: 1, minWidth: 0, paddingHorizontal: 4 },
   colRate: { width: 52, textAlign: 'right' },
-  colTax: { width: 92, textAlign: 'right' },
+  colTax: { width: 96, textAlign: 'right', flexShrink: 1 },
   colTotalLabel: { flex: 1, paddingLeft: 4 },
 
   // Ghi chú

@@ -21,7 +21,7 @@ interface CustomButtonProps {
   icon?: React.ReactNode;
 }
 
-export const CustomButton: React.FC<CustomButtonProps> = ({
+export const CustomButton: React.FC<CustomButtonProps> = React.memo(({
   title,
   onPress,
   variant = 'primary',
@@ -86,7 +86,7 @@ export const CustomButton: React.FC<CustomButtonProps> = ({
               styles.text,
               getTextStyle(),
               isButtonDisabled && styles.textDisabled,
-              icon ? { marginLeft: 8 } : null,
+              icon ? styles.textWithIcon : null,
               textStyle,
             ]}
           >
@@ -96,7 +96,7 @@ export const CustomButton: React.FC<CustomButtonProps> = ({
       )}
     </TouchableOpacity>
   );
-};
+});
 
 const styles = StyleSheet.create({
   button: {
@@ -134,6 +134,10 @@ const styles = StyleSheet.create({
   text: {
     ...theme.typography.buttonText,
     textAlign: 'center',
+    flexShrink: 1,
+  },
+  textWithIcon: {
+    marginLeft: 8,
   },
   textPrimary: {
     color: '#FFFFFF',

@@ -25,6 +25,7 @@ import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
 import { Dialog } from '../../components/common/Dialog';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { useAuthStore } from '../../stores/useAuthStore';
+import { useDebounce } from '../../hooks/useDebounce';
 import { config } from '../../constants/config';
 import {
   walletApi,
@@ -136,7 +137,7 @@ function formatTxType(type?: string): {
       };
     case 'PENDING_ESCROW':
       return {
-        label: 'Tạm giữ bảo chứng Escrow',
+        label: 'Tạm giữ bảo đảm',
         badgeText: 'Đang tạm giữ (+)',
         isPositive: true,
         icon: 'hourglass-outline',
@@ -145,7 +146,7 @@ function formatTxType(type?: string): {
       };
     case 'PENDING_COOLING_DOWN':
       return {
-        label: 'Bảo chứng Cool-down 24h',
+        label: 'Bảo đảm chờ đối soát 24h',
         badgeText: 'Chờ giải ngân 24h (+)',
         isPositive: true,
         icon: 'hourglass-outline',
@@ -372,6 +373,7 @@ export const WalletScreen: React.FC = () => {
 
   // Bộ lọc giao dịch & thời gian
   const [txTypeFilter, setTxTypeFilter] = useState<string>('ALL'); // ALL | IN | OUT | DISBURSEMENT | REFUND | TOPUP | WITHDRAWAL
+  const debouncedTxTypeFilter = useDebounce(txTypeFilter, 300);
   const [withdrawalStatusFilter, setWithdrawalStatusFilter] = useState<string>('ALL'); // ALL | PENDING | COMPLETED | REJECTED
   const [dateRangeFilter, setDateRangeFilter] = useState<'ALL' | 'TODAY' | '7DAYS' | 'THIS_MONTH' | 'LAST_MONTH' | 'CUSTOM'>('ALL');
   const [customStartDate, setCustomStartDate] = useState<string>('');
@@ -395,7 +397,7 @@ export const WalletScreen: React.FC = () => {
       case 'OUT': return 'Tiền ra (-)';
       case 'DISBURSEMENT': return 'Thù lao tư vấn';
       case 'PAYMENT_CONSULTATION': return 'Thanh toán tư vấn';
-      case 'PENDING_ESCROW': return 'Đang tạm giữ Escrow';
+      case 'PENDING_ESCROW': return 'Đang tạm giữ bảo đảm';
       case 'REFUND': return 'Hoàn tiền';
       case 'TOPUP': return 'Nạp tiền';
       case 'WITHDRAWAL': return 'Rút tiền';
@@ -452,8 +454,13 @@ export const WalletScreen: React.FC = () => {
   const [dialog, setDialog] = useState<{
     title: string;
     message: string;
+    detail?: string;
+    detailLabel?: string;
     primaryLabel?: string;
     onPrimary?: () => void;
+    secondaryLabel?: string;
+    onSecondary?: () => void;
+    destructive?: boolean;
   } | null>(null);
 
   const fetchWalletData = useCallback(async (silent: boolean = false) => {
@@ -487,11 +494,11 @@ export const WalletScreen: React.FC = () => {
     try {
       if (activeTab === 'TRANSACTIONS') {
         const apiTxType =
-          txTypeFilter &&
+          debouncedTxTypeFilter &&
           ['DISBURSEMENT', 'PENDING_ESCROW', 'WITHDRAWAL', 'REFUND', 'TOPUP', 'PAYMENT_CONSULTATION'].includes(
-            txTypeFilter
+            debouncedTxTypeFilter
           )
-            ? txTypeFilter
+            ? debouncedTxTypeFilter
             : undefined;
         const res = await walletApi.getMyWalletTransactions(1, 100, apiTxType);
         setTransactions(res.items || []);
@@ -532,7 +539,7 @@ export const WalletScreen: React.FC = () => {
     } finally {
       setHistoryLoading(false);
     }
-  }, [activeTab, isExpertRole, txTypeFilter]);
+  }, [activeTab, isExpertRole, debouncedTxTypeFilter]);
 
   // Danh sách biến động số dư sau khi áp dụng bộ lọc
   const filteredTransactions = useMemo(() => {
@@ -793,61 +800,73 @@ export const WalletScreen: React.FC = () => {
       return;
     }
 
-    setSubmittingWithdraw(true);
-    try {
-      const payload = {
-        amount: parsedAmount,
-        bankName: bankName.trim(),
-        accountNumber: accountNumber.trim(),
-        accountName: accountName.trim().toUpperCase(),
-      };
+    setDialog({
+      title: 'Xác nhận rút tiền',
+      message: `Quý khách có chắc chắn muốn rút ${formatVnd(parsedAmount)} về tài khoản ngân hàng?`,
+      detail: `${accountName.trim().toUpperCase()} - ${accountNumber.trim()} (${bankName.trim()})`,
+      detailLabel: 'Tài khoản thụ hưởng',
+      primaryLabel: 'Rút tiền ngay',
+      secondaryLabel: 'Kiểm tra lại',
+      onPrimary: async () => {
+        setDialog(null);
+        setSubmittingWithdraw(true);
+        try {
+          const payload = {
+            amount: parsedAmount,
+            bankName: bankName.trim(),
+            accountNumber: accountNumber.trim(),
+            accountName: accountName.trim().toUpperCase(),
+          };
 
-      if (isExpertRole && withdrawSource === 'EXPERT') {
-        await walletApi.requestExpertWithdrawal(payload);
-      } else {
-        await walletApi.requestUserWithdrawal(payload);
-      }
+          if (isExpertRole && withdrawSource === 'EXPERT') {
+            await walletApi.requestExpertWithdrawal(payload);
+          } else {
+            await walletApi.requestUserWithdrawal(payload);
+          }
 
-      setWithdrawModalVisible(false);
-      setDialog({
-        title: 'Tạo lệnh rút tiền thành công',
-        message: `Yêu cầu rút ${formatVnd(parsedAmount)} đã được tiếp nhận. Ban quản trị sẽ đối soát và chuyển khoản vào tài khoản ${bankName} của bạn.`,
-        primaryLabel: 'Đã hiểu',
-        onPrimary: () => {
-          setDialog(null);
-          handleRefresh();
-        },
-      });
-    } catch (err: any) {
-      const errCode = err?.response?.data?.errors?.errorCode || err?.response?.data?.errorCode;
-      if (errCode === 'EKYC_REQUIRED') {
-        setDialog({
-          title: 'Yêu cầu định danh eKYC',
-          message: 'Theo quy định, bạn cần hoàn tất định danh công dân điện tử (eKYC) trước khi rút thù lao chuyên gia về tài khoản ngân hàng.',
-          primaryLabel: 'Đã hiểu',
-          onPrimary: () => setDialog(null),
-        });
-        return;
-      }
-      if (errCode === 'TAX_ID_REQUIRED') {
-        setDialog({
-          title: 'Cần cập nhật Mã số thuế',
-          message: 'Theo quy định thuế TNCN, bạn cần cập nhật Mã số thuế cá nhân hợp lệ trong mục Thông tin cá nhân trước khi thực hiện rút thù lao chuyên gia.',
-          primaryLabel: 'Đã hiểu',
-          onPrimary: () => setDialog(null),
-        });
-        return;
-      }
-      const msg = err?.response?.data?.message || err?.message || 'Không thể tạo yêu cầu rút tiền lúc này.';
-      setDialog({
-        title: 'Chưa thể rút tiền',
-        message: msg,
-        primaryLabel: 'Đã hiểu',
-        onPrimary: () => setDialog(null),
-      });
-    } finally {
-      setSubmittingWithdraw(false);
-    }
+          setWithdrawModalVisible(false);
+          setDialog({
+            title: 'Tạo lệnh rút tiền thành công',
+            message: `Yêu cầu rút ${formatVnd(parsedAmount)} đã được tiếp nhận. Ban quản trị sẽ đối soát và chuyển khoản vào tài khoản ${bankName} của bạn.`,
+            primaryLabel: 'Đã hiểu',
+            onPrimary: () => {
+              setDialog(null);
+              handleRefresh();
+            },
+          });
+        } catch (err: any) {
+          const errCode = err?.response?.data?.errors?.errorCode || err?.response?.data?.errorCode;
+          if (errCode === 'EKYC_REQUIRED') {
+            setDialog({
+              title: 'Yêu cầu định danh eKYC',
+              message: 'Theo quy định, bạn cần hoàn tất định danh công dân điện tử (eKYC) trước khi rút thù lao chuyên gia về tài khoản ngân hàng.',
+              primaryLabel: 'Đã hiểu',
+              onPrimary: () => setDialog(null),
+            });
+            return;
+          }
+          if (errCode === 'TAX_ID_REQUIRED') {
+            setDialog({
+              title: 'Cần cập nhật Mã số thuế',
+              message: 'Theo quy định thuế TNCN, bạn cần cập nhật Mã số thuế cá nhân hợp lệ trong mục Thông tin cá nhân trước khi thực hiện rút thù lao chuyên gia.',
+              primaryLabel: 'Đã hiểu',
+              onPrimary: () => setDialog(null),
+            });
+            return;
+          }
+          const msg = err?.response?.data?.message || err?.message || 'Không thể tạo yêu cầu rút tiền lúc này.';
+          setDialog({
+            title: 'Chưa thể rút tiền',
+            message: msg,
+            primaryLabel: 'Đã hiểu',
+            onPrimary: () => setDialog(null),
+          });
+        } finally {
+          setSubmittingWithdraw(false);
+        }
+      },
+      onSecondary: () => setDialog(null),
+    });
   };
 
   const handleBack = useCallback(() => {
@@ -941,7 +960,7 @@ export const WalletScreen: React.FC = () => {
               >
                 <Ionicons name="shield-half-outline" size={14} color="#B45309" style={{ marginRight: 6 }} />
                 <Text style={styles.walletBreakdownText} numberOfLines={1}>
-                  Tạm giữ (Escrow):{' '}
+                  Đang tạm giữ bảo đảm:{' '}
                   <Text style={{ fontFamily: fonts.serifBold, color: theme.colors.primaryDark }}>
                     {formatVnd(pendingEscrowReceivable)}
                   </Text>
@@ -1817,7 +1836,7 @@ export const WalletScreen: React.FC = () => {
                     { id: 'OUT', label: 'Tiền ra (-)', icon: 'arrow-up-circle', color: '#D97706' },
                     { id: 'PAYMENT_CONSULTATION', label: 'Thanh toán phí tư vấn', icon: 'card-outline', color: '#D97706' },
                     { id: 'DISBURSEMENT', label: 'Thù lao tư vấn', icon: 'cash-outline', color: '#059669' },
-                    { id: 'PENDING_ESCROW', label: 'Đang tạm giữ Escrow', icon: 'shield-half-outline', color: '#2563EB' },
+                    { id: 'PENDING_ESCROW', label: 'Đang tạm giữ bảo đảm', icon: 'shield-half-outline', color: '#2563EB' },
                     { id: 'REFUND', label: 'Hoàn tiền ca tư vấn', icon: 'refresh-circle', color: '#2563EB' },
                     { id: 'TOPUP', label: 'Nạp tiền vào ví', icon: 'add-circle', color: '#059669' },
                     { id: 'WITHDRAWAL', label: 'Rút tiền về ngân hàng', icon: 'arrow-up-circle', color: '#D97706' },
@@ -2413,8 +2432,8 @@ export const WalletScreen: React.FC = () => {
                   const statusBadgeBorder = isCooling ? '#BAE6FD' : '#FDE68A';
                   const statusBadgeColor = isCooling ? '#0284C7' : '#D97706';
                   const statusShortLabel = isCooling
-                    ? 'Bảo chứng Cool-down 24h (Chờ giải ngân)'
-                    : 'Đang tạm giữ Escrow (Chờ thực hiện ca)';
+                    ? 'Chờ đối soát giải ngân (24h)'
+                    : 'Đang tạm giữ chờ thực hiện ca';
 
                   return (
                     <View
@@ -2579,9 +2598,17 @@ export const WalletScreen: React.FC = () => {
         visible={Boolean(dialog)}
         title={dialog?.title || ''}
         message={dialog?.message || ''}
+        detail={dialog?.detail}
+        detailLabel={dialog?.detailLabel}
         primaryLabel={dialog?.primaryLabel || 'Đã hiểu'}
         onPrimary={dialog?.onPrimary || (() => setDialog(null))}
-        onRequestClose={() => setDialog(null)}
+        secondaryLabel={dialog?.secondaryLabel}
+        onSecondary={dialog?.onSecondary}
+        destructive={dialog?.destructive}
+        onRequestClose={() => {
+          if (dialog?.onSecondary) dialog.onSecondary();
+          else setDialog(null);
+        }}
       />
     </SafeAreaView>
   );

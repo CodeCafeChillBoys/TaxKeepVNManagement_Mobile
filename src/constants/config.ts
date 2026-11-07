@@ -54,15 +54,31 @@ export function getAutoDetectedHost(): string | null {
 export const DEV_LAN_HOST = '192.168.110.124';
 
 /**
+ * Kiểm tra xem URL cấu hình trong biến môi trường có phải máy chủ public / đã deploy
+ * (https://... hoặc http:// trỏ tới IP/domain public, không phải localhost hay mạng LAN nội bộ).
+ */
+function isRemoteServerUrl(rawUrl?: string): boolean {
+  if (!rawUrl) return false;
+  if (rawUrl.startsWith('https://')) return true;
+  const match = rawUrl.match(/^http:\/\/([^/:]+)/i);
+  if (!match) return false;
+  const host = match[1].toLowerCase();
+  if (host === 'localhost' || host === '127.0.0.1' || host === '10.0.2.2') return false;
+  if (host.startsWith('192.168.') || host.startsWith('10.')) return false;
+  if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(host)) return false;
+  return true;
+}
+
+/**
  * - Web: localhost hoặc hostname trình duyệt
- * - Ưu tiên URL production / tunnel (https://...) từ biến môi trường nếu có
+ * - Ưu tiên URL production / tunnel / server đã deploy từ biến môi trường nếu có
  * - Tự động nhận diện IP LAN từ Metro Bundler (Expo Go trên điện thoại thật)
  * - Fallback: DEV_LAN_HOST hoặc 10.0.2.2 (Android emulator)
  */
 export function getLocalApiBaseUrl(): string {
   const fromEnv = process.env.EXPO_PUBLIC_API_URL?.trim() || process.env.EXPO_PUBLIC_API_BASE_URL?.trim();
-  // URL cố định từ .env (deploy / ngrok / https) luôn thắng — cả web lẫn native
-  if (fromEnv && /^https?:\/\//i.test(fromEnv)) {
+  // Nếu có URL cố định dạng domain https hoặc IP/domain server đã deploy (vd http://13.236.166.3:5000), ưu tiên dùng trên mọi nền tảng
+  if (fromEnv && isRemoteServerUrl(fromEnv)) {
     return fromEnv.replace(/\/+$/, '');
   }
 
@@ -97,7 +113,7 @@ export function getLocalApiBaseUrl(): string {
 
 export function getLocalAiBaseUrl(): string {
   const fromEnv = process.env.EXPO_PUBLIC_AI_URL?.trim();
-  if (fromEnv && fromEnv.startsWith('https://')) {
+  if (fromEnv && isRemoteServerUrl(fromEnv)) {
     return fromEnv.replace(/\/+$/, '');
   }
 

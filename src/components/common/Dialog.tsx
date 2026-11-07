@@ -5,14 +5,17 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  Pressable, Platform} from 'react-native';
+  Pressable,
+  Platform,
+} from 'react-native';
 import { theme } from '../../constants/theme';
+import { fonts } from '../../constants/fonts';
 
 interface DialogProps {
   visible: boolean;
   title: string;
   message: string;
-  /** Optional highlighted detail (vd. tên nhóm điều kiện). */
+  /** Optional highlighted detail (vd. tên nhóm điều kiện, số tiền, khung giờ hẹn). */
   detail?: string;
   detailLabel?: string;
   primaryLabel: string;
@@ -24,7 +27,9 @@ interface DialogProps {
   testID?: string;
 }
 
-export const Dialog: React.FC<DialogProps> = ({
+const NOOP = () => undefined;
+
+export const Dialog: React.FC<DialogProps> = React.memo(({
   visible,
   title,
   message,
@@ -38,6 +43,8 @@ export const Dialog: React.FC<DialogProps> = ({
   destructive = false,
   testID,
 }) => {
+  if (!visible) return null;
+
   return (
     <Modal
       visible={visible}
@@ -48,7 +55,7 @@ export const Dialog: React.FC<DialogProps> = ({
       <Pressable style={styles.scrim} onPress={onRequestClose ?? onSecondary}>
         <Pressable
           style={styles.sheet}
-          onPress={() => undefined}
+          onPress={NOOP}
           testID={testID}
           accessibilityRole="summary"
         >
@@ -86,7 +93,7 @@ export const Dialog: React.FC<DialogProps> = ({
       </Pressable>
     </Modal>
   );
-};
+});
 
 const styles = StyleSheet.create({
   scrim: {
@@ -98,6 +105,7 @@ const styles = StyleSheet.create({
   },
   sheet: {
     width: '100%',
+    maxWidth: 440,
     backgroundColor: theme.colors.surface,
     borderRadius: 18,
     paddingHorizontal: theme.spacing.lg,
@@ -106,7 +114,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.colors.border,
     ...(Platform.OS === 'web'
-      ? { boxShadow: '0px 4px 10px rgba(0, 0, 0, 0.2)' }
+      ? { boxShadow: '0px 4px 14px rgba(0, 0, 0, 0.2)' }
       : {
           shadowColor: '#000',
           shadowOffset: { width: 0, height: 4 },
@@ -116,13 +124,15 @@ const styles = StyleSheet.create({
         }),
   },
   title: {
-    ...theme.typography.titleMedium,
+    fontFamily: fonts.serifBold,
+    fontSize: 19,
+    lineHeight: 25,
     color: theme.colors.primaryDark,
-    fontWeight: '700',
     marginBottom: 8,
   },
   message: {
-    ...theme.typography.bodyLarge,
+    ...theme.typography.body,
+    fontSize: 14.5,
     color: theme.colors.textPrimary,
     marginBottom: theme.spacing.md,
     lineHeight: 22,
@@ -137,37 +147,44 @@ const styles = StyleSheet.create({
     marginBottom: theme.spacing.lg,
   },
   detailLabel: {
-    ...theme.typography.caption,
+    fontFamily: fonts.bodyBold,
+    fontSize: 11,
+    lineHeight: 15,
     color: theme.colors.warning,
-    fontWeight: '700',
     textTransform: 'uppercase',
     letterSpacing: 0.4,
     marginBottom: 4,
   },
   detailValue: {
-    ...theme.typography.bodyMedium,
-    fontWeight: '700',
+    fontFamily: fonts.bodyBold,
+    fontSize: 14,
+    lineHeight: 20,
     color: theme.colors.textPrimary,
   },
   actions: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'flex-end',
     gap: 10,
   },
   btn: {
     minHeight: 42,
     paddingHorizontal: 16,
+    paddingVertical: 9,
     borderRadius: theme.borderRadius.md,
     alignItems: 'center',
     justifyContent: 'center',
+    flexShrink: 1,
   },
   btnGhost: {
     backgroundColor: theme.colors.surfaceSecondary,
   },
   btnGhostText: {
-    ...theme.typography.bodyMedium,
-    fontWeight: '600',
+    fontFamily: fonts.bodySemi,
+    fontSize: 14,
+    lineHeight: 19,
     color: theme.colors.textPrimary,
+    textAlign: 'center',
   },
   btnPrimary: {
     backgroundColor: theme.colors.primary,
@@ -176,8 +193,10 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.error,
   },
   btnPrimaryText: {
-    ...theme.typography.bodyMedium,
-    fontWeight: '700',
+    fontFamily: fonts.bodyBold,
+    fontSize: 14,
+    lineHeight: 19,
     color: '#FFFFFF',
+    textAlign: 'center',
   },
 });

@@ -268,7 +268,7 @@ export const dependentDocumentApi = {
       const isTimeout =
         err?.code === 'ECONNABORTED' || /timeout/i.test(String(err?.message || ''));
       const errMsg = isTimeout
-        ? 'Đã hết thời gian chờ đọc giấy tờ (OCR). Vui lòng thử lại với ảnh rõ hơn hoặc kiểm tra TaxAI đang chạy.'
+        ? 'Quá thời gian đọc thông tin giấy tờ. Vui lòng chụp lại ảnh rõ nét, đủ sáng và thử tải lên lại.'
         : err?.response?.data?.message ||
           err?.response?.data?.errors?.DocType?.[0] ||
           err?.message ||
@@ -314,7 +314,9 @@ export const dependentDocumentApi = {
       }
       return [];
     } catch (err: any) {
-      console.warn('getRules API error:', err?.response?.data || err?.message);
+      if (__DEV__) {
+        console.warn('getRules API error:', err?.response?.data || err?.message);
+      }
       return [];
     }
   },
@@ -331,7 +333,9 @@ export const dependentDocumentApi = {
       }
       return [];
     } catch (err: any) {
-      console.warn('getAgeTransitionReminders error:', err?.response?.data || err?.message);
+      if (__DEV__) {
+        console.warn('getAgeTransitionReminders error:', err?.response?.data || err?.message);
+      }
       return [];
     }
   },

@@ -1,6 +1,5 @@
 import { config } from '../constants/config';
 import { Platform } from 'react-native';
-import * as FileSystem from 'expo-file-system';
 import { apiClient, storageHelper } from './apiClient';
 import type { ApiResponse } from './authApi';
 import {
@@ -17,86 +16,6 @@ import {
   TaxPeriodItem,
   ThresholdResolveResponse,
 } from '../types/expense';
-
-/**
- * Chuyển đổi file từ URI sang Base64 và MIME type trên cả Web và Mobile
- */
-async function getFileBase64AndMime(file: {
-  uri: string;
-  name?: string;
-  type?: string;
-  base64?: string;
-}): Promise<{ base64: string; mimeType: string }> {
-  let mimeType = 'image/jpeg';
-  const fileName = (file.name || '').toLowerCase();
-  if (fileName.endsWith('.png')) mimeType = 'image/png';
-  else if (fileName.endsWith('.pdf')) mimeType = 'application/pdf';
-  else if (fileName.endsWith('.webp')) mimeType = 'image/webp';
-  else if (fileName.endsWith('.heic')) mimeType = 'image/heic';
-  else if (fileName.endsWith('.heif')) mimeType = 'image/heif';
-  else if (file.type && file.type.startsWith('image/')) mimeType = file.type;
-  else if (file.type === 'application/pdf') mimeType = 'application/pdf';
-
-  // 1. Base64 có sẵn
-  if (file.base64 && file.base64.length > 50) {
-    let cleanBase64 = file.base64;
-    if (cleanBase64.includes(',')) {
-      cleanBase64 = cleanBase64.split(',')[1];
-    }
-    return { base64: cleanBase64.trim(), mimeType };
-  }
-
-  // 2. Data URL
-  if (file.uri.startsWith('data:')) {
-    const parts = file.uri.split(',');
-    const match = file.uri.match(/data:(.*?);base64/);
-    if (match && match[1] && match[1] !== 'application/octet-stream') {
-      mimeType = match[1];
-    }
-    return { base64: parts[1] || '', mimeType };
-  }
-
-  // 3. Native (Android / iOS)
-  if (Platform.OS !== 'web') {
-    try {
-      const base64 = await FileSystem.readAsStringAsync(file.uri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-      if (base64 && base64.length > 50) {
-        return { base64: base64.trim(), mimeType };
-      }
-    } catch (fsErr) {
-      console.warn('Không thể đọc Base64 qua FileSystem:', fsErr);
-    }
-  }
-
-  // 4. Web fallback
-  try {
-    const response = await fetch(file.uri);
-    const blob = await response.blob();
-    if (
-      blob.type &&
-      (blob.type.startsWith('image/') || blob.type === 'application/pdf') &&
-      blob.type !== 'application/octet-stream'
-    ) {
-      mimeType = blob.type;
-    }
-
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const result = reader.result as string;
-        const base64 = result.includes(',') ? result.split(',')[1] : result;
-        resolve({ base64, mimeType });
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-  } catch (err) {
-    console.warn('Không thể đọc file sang Base64 qua fetch:', err);
-    throw err;
-  }
-}
 
 /**
  * Chuyển đổi dữ liệu DocumentReviewResponse từ backend sang ExpenseOcrResult dùng trong giao diện Review và Danh sách
@@ -548,7 +467,9 @@ export const expenseApi = {
       if (Array.isArray(raw?.data)) return raw.data;
       return [];
     } catch (err) {
-      console.warn('Lỗi khi tải cấu hình hệ thống từ Backend:', err);
+      if (__DEV__) {
+        console.warn('Lỗi khi tải cấu hình hệ thống từ Backend:', err);
+      }
       return [];
     }
   },
@@ -566,7 +487,9 @@ export const expenseApi = {
       );
       return res.data;
     } catch (err) {
-      console.warn('Lỗi khi resolve ngưỡng nhận diện từ Backend:', err);
+      if (__DEV__) {
+        console.warn('Lỗi khi resolve ngưỡng nhận diện từ Backend:', err);
+      }
       return {
         category_code: categoryCode || null,
         resolved_threshold: 0.8,

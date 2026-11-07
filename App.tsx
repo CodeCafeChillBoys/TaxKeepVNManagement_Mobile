@@ -8,7 +8,9 @@ import { ToastProvider } from './src/components/ui/Toast';
 import { fontAssets } from './src/constants/fonts';
 import { theme } from './src/constants/theme';
 
-LogBox.ignoreLogs(['Cannot connect to Expo CLI']);
+if (__DEV__) {
+  LogBox.ignoreLogs(['Cannot connect to Expo CLI']);
+}
 
 export default function App() {
   const [fontsLoaded] = useFonts(fontAssets);

@@ -671,7 +671,7 @@ export const MyBookingsScreen: React.FC = () => {
                 <ActivityIndicator size="small" color={theme.colors.primary} />
                 <Text style={styles.footerLoadingText}>Đang tải thêm...</Text>
               </View>
-            ) : null
+            ) : undefined
           }
         />
       )}

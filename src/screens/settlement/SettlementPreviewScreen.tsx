@@ -208,7 +208,9 @@ export const SettlementPreviewScreen: React.FC = () => {
         visible={confirmOpen}
         transparent
         animationType="fade"
-        onRequestClose={() => !exporting && setConfirmOpen(false)}
+        onRequestClose={() => {
+          if (!exporting) setConfirmOpen(false);
+        }}
       >
         <View style={styles.sheetOverlay}>
           <TouchableOpacity

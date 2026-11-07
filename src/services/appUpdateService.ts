@@ -104,3 +104,4 @@ export async function downloadAndInstallApk(
     await Linking.openURL(downloadUrl);
   }
 }
+

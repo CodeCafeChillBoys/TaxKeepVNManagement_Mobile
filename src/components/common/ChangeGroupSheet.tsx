@@ -23,8 +23,10 @@ export type ChangeGroupSheetProps = {
   onCancel: () => void;
 };
 
+const NOOP = () => undefined;
+
 /** Bottom sheet chọn nhóm NPT — đồng bộ palette TaxKeep (không dùng Alert hệ thống). */
-export const ChangeGroupSheet: React.FC<ChangeGroupSheetProps> = ({
+export const ChangeGroupSheet: React.FC<ChangeGroupSheetProps> = React.memo(({
   visible,
   fullName,
   currentGroup,
@@ -33,6 +35,8 @@ export const ChangeGroupSheet: React.FC<ChangeGroupSheetProps> = ({
   onSelect,
   onCancel,
 }) => {
+  if (!visible) return null;
+
   return (
     <Modal
       visible={visible}
@@ -41,15 +45,15 @@ export const ChangeGroupSheet: React.FC<ChangeGroupSheetProps> = ({
       onRequestClose={onCancel}
     >
       <Pressable style={styles.scrim} onPress={loading ? undefined : onCancel}>
-        <Pressable style={styles.sheet} onPress={() => undefined}>
+        <Pressable style={styles.sheet} onPress={NOOP}>
           <View style={styles.handle} />
-          <Text style={styles.title}>Đổi nhóm điều kiện</Text>
+          <Text style={styles.title}>Đổi nhóm điều kiện giảm trừ</Text>
           <Text style={styles.message}>
-            Chọn nhóm mới cho{' '}
+            Chọn nhóm điều kiện mới cho{' '}
             <Text style={styles.nameEmph}>{fullName}</Text>
           </Text>
           <View style={styles.currentBox}>
-            <Text style={styles.currentLabel}>Hiện tại</Text>
+            <Text style={styles.currentLabel}>Nhóm hiện tại</Text>
             <Text style={styles.currentValue}>{getGroupTitle(currentGroup)}</Text>
           </View>
 
@@ -81,23 +85,23 @@ export const ChangeGroupSheet: React.FC<ChangeGroupSheetProps> = ({
           {loading ? (
             <View style={styles.loadingRow}>
               <ActivityIndicator color={theme.colors.primary} />
-              <Text style={styles.loadingText}>Đang chuyển nhóm…</Text>
+              <Text style={styles.loadingText}>Đang cập nhật nhóm điều kiện…</Text>
             </View>
           ) : (
             <TouchableOpacity
               style={styles.cancelBtn}
               onPress={onCancel}
               accessibilityRole="button"
-              accessibilityLabel="Hủy"
+              accessibilityLabel="Giữ nguyên nhóm cũ"
             >
-              <Text style={styles.cancelBtnText}>Hủy</Text>
+              <Text style={styles.cancelBtnText}>Giữ lại nhóm cũ</Text>
             </TouchableOpacity>
           )}
         </Pressable>
       </Pressable>
     </Modal>
   );
-};
+});
 
 const styles = StyleSheet.create({
   scrim: {
@@ -106,6 +110,9 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   sheet: {
+    width: '100%',
+    maxWidth: 520,
+    alignSelf: 'center',
     backgroundColor: theme.colors.surface,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
@@ -114,7 +121,7 @@ const styles = StyleSheet.create({
     paddingBottom: theme.spacing.lg,
     borderWidth: 1,
     borderColor: theme.colors.border,
-    maxHeight: '78%',
+    maxHeight: '82%',
   },
   handle: {
     alignSelf: 'center',
@@ -191,6 +198,7 @@ const styles = StyleSheet.create({
   },
   optionTitle: {
     flex: 1,
+    flexShrink: 1,
     ...theme.typography.bodyMedium,
     fontWeight: '600',
     color: theme.colors.textPrimary,

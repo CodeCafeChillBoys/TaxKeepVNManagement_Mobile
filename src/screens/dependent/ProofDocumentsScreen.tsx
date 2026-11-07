@@ -6,7 +6,6 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
   Platform,
   Modal,
   Image,
@@ -18,6 +17,9 @@ import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { theme } from '../../constants/theme';
 import { DrumHeader } from '../../components/brand/DrumHeader';
+import { useToast } from '../../components/ui/Toast';
+import { Dialog } from '../../components/common/Dialog';
+import { HomeHeaderButton } from '../../components/navigation/HomeHeaderButton';
 import { formatPersonName } from '../../utils/formatPersonName';
 import {
   dependentDocumentApi,
@@ -203,6 +205,13 @@ const LAW_GROUP_SPECS: LawGroupRequirement[] = [
 export const ProofDocumentsScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
   const route = useRoute<ProofDocumentsRouteProp>();
+  const { toast } = useToast();
+  const [dialog, setDialog] = useState<{
+    title: string;
+    message: string;
+    primaryLabel?: string;
+    onPrimary?: () => void;
+  } | null>(null);
 
   const initialGroupIdx =
     typeof route.params?.groupIndex === 'number' &&
@@ -478,7 +487,7 @@ export const ProofDocumentsScreen: React.FC = () => {
     try {
       const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert('Cấp quyền Camera', 'Vui lòng cho phép ứng dụng truy cập Camera để chụp ảnh giấy tờ minh chứng.');
+        toast.warning('Vui lòng cho phép ứng dụng truy cập máy ảnh để chụp ảnh giấy tờ minh chứng.', 'Cần cấp quyền');
         return;
       }
 
@@ -504,7 +513,7 @@ export const ProofDocumentsScreen: React.FC = () => {
         }));
       }
     } catch (err: any) {
-      Alert.alert('Lỗi chụp ảnh', err.message || 'Không thể khởi động Camera.');
+      toast.error(err.message || 'Không thể khởi động máy ảnh.', 'Lỗi chụp ảnh');
     }
   };
 
@@ -516,7 +525,7 @@ export const ProofDocumentsScreen: React.FC = () => {
     try {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert('Cấp quyền Thư viện ảnh', 'Vui lòng cho phép ứng dụng truy cập Thư viện ảnh để chọn chứng từ.');
+        toast.warning('Vui lòng cho phép ứng dụng truy cập Thư viện ảnh để chọn chứng từ.', 'Cần cấp quyền');
         return;
       }
 
@@ -542,7 +551,7 @@ export const ProofDocumentsScreen: React.FC = () => {
         }));
       }
     } catch (err: any) {
-      Alert.alert('Lỗi thư viện ảnh', err.message || 'Không thể mở thư viện ảnh.');
+      toast.error(err.message || 'Không thể mở thư viện ảnh.', 'Lỗi thư viện ảnh');
     }
   };
 
@@ -573,7 +582,7 @@ export const ProofDocumentsScreen: React.FC = () => {
         }));
       }
     } catch (err: any) {
-      Alert.alert('Lỗi chọn tệp', err.message || 'Không thể chọn tệp tài liệu.');
+      toast.error(err.message || 'Không thể chọn tệp tài liệu.', 'Lỗi chọn tệp');
     }
   };
 
@@ -588,7 +597,7 @@ export const ProofDocumentsScreen: React.FC = () => {
       selectedDependent?.id;
 
     if (!dependentId) {
-      Alert.alert('Chưa có hồ sơ', 'Không tìm thấy thông tin hồ sơ người phụ thuộc để lưu.');
+      toast.warning('Không tìm thấy thông tin hồ sơ người phụ thuộc để lưu.', 'Chưa có hồ sơ');
       return;
     }
 
@@ -650,17 +659,18 @@ export const ProofDocumentsScreen: React.FC = () => {
         ? `Đã lưu hồ sơ và tải lên thành công ${uploadCount} giấy tờ minh chứng!`
         : 'Đã lưu thông tin hồ sơ người phụ thuộc thành công!';
 
-      Alert.alert('Thành công', msg, [
-        {
-          text: 'Về trang chủ',
-          onPress: () => {
-            navigation.reset({ index: 0, routes: [{ name: 'Home' }] });
-          },
+      setDialog({
+        title: 'Lưu hồ sơ thành công',
+        message: msg,
+        primaryLabel: 'Về trang chủ',
+        onPrimary: () => {
+          setDialog(null);
+          navigation.reset({ index: 0, routes: [{ name: 'Home' }] });
         },
-      ]);
+      });
     } catch (err: any) {
       setUploading(false);
-      Alert.alert('Lỗi lưu giấy tờ minh chứng', err?.message || 'Không thể tải lên giấy tờ minh chứng. Vui lòng thử lại.');
+      toast.error(err?.message || 'Không thể tải lên giấy tờ minh chứng. Vui lòng thử lại.', 'Lỗi lưu giấy tờ');
     }
   };
 
@@ -671,11 +681,11 @@ export const ProofDocumentsScreen: React.FC = () => {
 
     if (chosenEntries.length === 0) {
       const hasSaved = activeDocKeys.some((k) => selectedFiles[k]?.docId);
-      Alert.alert(
-        hasSaved ? 'Không có ảnh mới' : 'Chưa chọn ảnh minh chứng',
+      toast.warning(
         hasSaved
           ? 'Giấy tờ đã lưu trước đó vẫn được giữ. Bấm "Đổi ảnh khác" ở ô cần thay nếu muốn tải ảnh mới.'
-          : 'Vui lòng bấm vào ô khung bên dưới để chụp ảnh hoặc chọn tệp minh chứng.'
+          : 'Vui lòng bấm vào ô khung bên dưới để chụp ảnh hoặc chọn tệp minh chứng.',
+        hasSaved ? 'Không có ảnh mới' : 'Chưa chọn minh chứng'
       );
       return;
     }
@@ -686,7 +696,7 @@ export const ProofDocumentsScreen: React.FC = () => {
       selectedDependent?.id;
 
     if (!dependentId) {
-      Alert.alert('Chưa có hồ sơ', 'Không tìm thấy hồ sơ người phụ thuộc để tải lên.');
+      toast.warning('Không tìm thấy hồ sơ người phụ thuộc để tải lên.', 'Chưa có hồ sơ');
       return;
     }
 
@@ -710,15 +720,18 @@ export const ProofDocumentsScreen: React.FC = () => {
 
       const goHome = () => navigation.reset({ index: 0, routes: [{ name: 'Home' }] });
 
-      if (Platform.OS === 'web') {
-        window.alert(msg);
-        goHome();
-      } else {
-        Alert.alert('Thành công', msg, [{ text: 'Về trang chủ', onPress: goHome }]);
-      }
+      setDialog({
+        title: 'Tải lên thành công',
+        message: msg,
+        primaryLabel: 'Về trang chủ',
+        onPrimary: () => {
+          setDialog(null);
+          goHome();
+        },
+      });
     } catch (err: any) {
       const errMsg = err.response?.data?.message || 'Không thể tải lên tệp. Vui lòng thử lại sau.';
-      Alert.alert('Lỗi tải lên', errMsg);
+      toast.error(errMsg, 'Lỗi tải lên');
     } finally {
       setUploading(false);
     }
@@ -1060,6 +1073,15 @@ export const ProofDocumentsScreen: React.FC = () => {
             }
           }
         }}
+      />
+
+      <Dialog
+        visible={!!dialog}
+        title={dialog?.title || ''}
+        message={dialog?.message || ''}
+        primaryLabel={dialog?.primaryLabel || 'Đóng'}
+        onPrimary={dialog?.onPrimary || (() => setDialog(null))}
+        onRequestClose={() => setDialog(null)}
       />
     </SafeAreaView>
   );

@@ -1,18 +1,21 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
+  ScrollView,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Sharing from 'expo-sharing';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
+import { Dialog } from '../../components/common/Dialog';
+import { useToast } from '../../components/ui/Toast';
+import { sanitizeUiMessage, toFriendlyErrorMessage } from '../../utils/friendlyError';
 import { SettlementExportHeader } from '../../components/navigation/SettlementExportHeader';
 import {
   SettlementExportLoadingPanel,
@@ -31,9 +34,24 @@ type Phase = 'loading' | 'ready' | 'error';
 
 function useCountdown(expiresAt: string | null) {
   const [now, setNow] = useState(() => Date.now());
+
   useEffect(() => {
     if (!expiresAt) return;
-    const t = setInterval(() => setNow(Date.now()), 1000);
+    const end = new Date(expiresAt).getTime();
+    if (Number.isNaN(end)) return;
+
+    const initialNow = Date.now();
+    setNow(initialNow);
+    if (end - initialNow <= 0) return;
+
+    const t = setInterval(() => {
+      const current = Date.now();
+      setNow(current);
+      if (end - current <= 0) {
+        clearInterval(t);
+      }
+    }, 1000);
+
     return () => clearInterval(t);
   }, [expiresAt]);
 
@@ -52,12 +70,24 @@ function useCountdown(expiresAt: string | null) {
 
 export const SettlementZipReadyScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
+  const insets = useSafeAreaInsets();
+  const { toast } = useToast();
   const { params } = useRoute<Route>();
+
+  const isMountedRef = useRef(true);
   const [phase, setPhase] = useState<Phase>('loading');
   const [error, setError] = useState<string | null>(null);
   const [pkg, setPkg] = useState<TaxSettlementPackageZipResponse | null>(params.package ?? null);
   const [downloading, setDownloading] = useState(false);
+  const [confirmDialogVisible, setConfirmDialogVisible] = useState(false);
   const countdown = useCountdown(pkg?.expiresAt ?? null);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   const load = useCallback(async () => {
     setPhase('loading');
@@ -67,48 +97,83 @@ export const SettlementZipReadyScreen: React.FC = () => {
         taxSettlementApi.exportZip(params.dossierId, params.form),
         900
       );
+      if (!isMountedRef.current) return;
       setPkg(data);
       setPhase('ready');
-    } catch (e: any) {
-      const msg =
-        e?.response?.data?.message ||
-        e?.message ||
-        'Không đóng gói được hồ sơ ZIP.';
-      setError(typeof msg === 'string' ? msg : 'Không đóng gói được hồ sơ ZIP.');
+    } catch (e: unknown) {
+      if (!isMountedRef.current) return;
+      const friendly = toFriendlyErrorMessage(
+        e,
+        'Chưa thể đóng gói tệp hồ sơ quyết toán lúc này. Vui lòng thử lại sau ít phút.'
+      );
+      setError(friendly);
       setPhase('error');
+      toast.error(friendly, 'Chưa thể đóng gói hồ sơ');
     }
-  }, [params.dossierId, params.form]);
+  }, [params.dossierId, params.form, toast]);
 
   useFocusEffect(
     useCallback(() => {
+      let alive = true;
       if (params.package) {
         setPkg(params.package);
         setPhase('ready');
-        return;
+        return () => {
+          alive = false;
+        };
       }
-      void load();
-    }, [load, params.package])
+      (async () => {
+        setPhase('loading');
+        setError(null);
+        try {
+          const data = await withMinDuration(
+            taxSettlementApi.exportZip(params.dossierId, params.form),
+            900
+          );
+          if (!alive || !isMountedRef.current) return;
+          setPkg(data);
+          setPhase('ready');
+        } catch (e: unknown) {
+          if (!alive || !isMountedRef.current) return;
+          const friendly = toFriendlyErrorMessage(
+            e,
+            'Chưa thể đóng gói tệp hồ sơ quyết toán lúc này. Vui lòng thử lại sau ít phút.'
+          );
+          setError(friendly);
+          setPhase('error');
+          toast.error(friendly, 'Chưa thể đóng gói hồ sơ');
+        }
+      })();
+      return () => {
+        alive = false;
+      };
+    }, [params.dossierId, params.form, params.package, toast])
   );
 
-  const goReexport = () => {
-    Alert.alert(
-      'Xuất lại hồ sơ?',
-      'Link tải cũ sẽ không còn dùng được. Hệ thống tạo gói ZIP mới với hạn 30 phút.',
-      [
-        { text: 'Huỷ', style: 'cancel' },
-        {
-          text: 'Xuất lại',
-          onPress: () =>
-            navigation.replace('SettlementExportForm', {
-              dossierId: params.dossierId,
-              refundAmount: params.refundAmount,
-            }),
-        },
-      ]
-    );
-  };
+  const settlementPeriodDetail = useMemo(() => {
+    const matchedYear = /20\d{2}/.exec(pkg?.fileName ?? '')?.[0];
+    if (matchedYear && pkg?.fileName) {
+      return `Năm tính thuế ${matchedYear} · ${pkg.fileName}`;
+    }
+    if (matchedYear) {
+      return `Năm tính thuế ${matchedYear}`;
+    }
+    return pkg?.fileName || 'Bộ hồ sơ quyết toán thuế TNCN';
+  }, [pkg?.fileName]);
 
-  const onDownload = async () => {
+  const goReexport = useCallback(() => {
+    setConfirmDialogVisible(true);
+  }, []);
+
+  const handleConfirmReexport = useCallback(() => {
+    setConfirmDialogVisible(false);
+    navigation.replace('SettlementExportForm', {
+      dossierId: params.dossierId,
+      refundAmount: params.refundAmount,
+    });
+  }, [navigation, params.dossierId, params.refundAmount]);
+
+  const onDownload = useCallback(async () => {
     if (!pkg) return;
     if (countdown.expired) {
       navigation.replace('SettlementDownloadExpired', {
@@ -120,16 +185,24 @@ export const SettlementZipReadyScreen: React.FC = () => {
     setDownloading(true);
     try {
       const file = await taxSettlementApi.downloadByUrl(pkg.downloadUrl, pkg.fileName);
+      if (!isMountedRef.current) return;
       const can = await Sharing.isAvailableAsync();
       if (can) {
         await Sharing.shareAsync(file.uri, {
           mimeType: file.mimeType,
           dialogTitle: file.fileName,
         });
+        if (isMountedRef.current) {
+          toast.success('Bộ tệp hồ sơ quyết toán đã sẵn sàng để lưu trữ.', 'Đã tải tệp hồ sơ');
+        }
       } else {
-        Alert.alert('Đã tải', `File đã lưu tạm: ${file.fileName}`);
+        toast.warning(
+          `Thiết bị chưa hỗ trợ mở bảng chia sẻ. Tệp hồ sơ đã lưu tạm: ${file.fileName}`,
+          'Đã lưu tệp hồ sơ'
+        );
       }
     } catch (e: any) {
+      if (!isMountedRef.current) return;
       const status = e?.response?.status;
       if (status === 410) {
         navigation.replace('SettlementDownloadExpired', {
@@ -138,22 +211,27 @@ export const SettlementZipReadyScreen: React.FC = () => {
         });
         return;
       }
-      const msg =
-        e?.response?.data?.message ||
-        e?.message ||
-        'Không tải được file. Thử lại hoặc xuất lại hồ sơ.';
-      Alert.alert('Tải thất bại', typeof msg === 'string' ? msg : 'Không tải được file.');
+      toast.error(
+        toFriendlyErrorMessage(
+          e,
+          'Chưa thể tải tệp hồ sơ lúc này. Vui lòng thử lại hoặc xuất lại bộ hồ sơ mới.'
+        ),
+        'Chưa thể tải tệp hồ sơ'
+      );
     } finally {
-      setDownloading(false);
+      if (isMountedRef.current) {
+        setDownloading(false);
+      }
     }
-  };
+  }, [countdown.expired, navigation, params.dossierId, params.refundAmount, pkg, toast]);
 
   const emptyDocs = (pkg?.totalDocumentsIncluded ?? 0) === 0;
+  const cleanMessage = pkg?.message ? sanitizeUiMessage(pkg.message) : '';
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
       <SettlementExportHeader
-        title={phase === 'loading' ? 'Xuất hồ sơ ZIP' : 'Hồ sơ ZIP'}
+        title={phase === 'loading' ? 'Xuất bộ hồ sơ' : 'Bộ hồ sơ quyết toán'}
         backTestID="zipReadyBack"
         homeTestID="zipReadyHome"
       />
@@ -161,8 +239,8 @@ export const SettlementZipReadyScreen: React.FC = () => {
       {phase === 'loading' ? (
         <SettlementExportLoadingPanel
           testID="zipLoading"
-          title="Đang đóng gói hồ sơ (PDF + chứng từ)…"
-          subtitle="Vui lòng giữ màn hình mở."
+          title="Đang đóng gói tờ khai và chứng từ…"
+          subtitle="Vui lòng giữ màn hình mở trong giây lát."
         />
       ) : phase === 'error' ? (
         <View style={styles.center} testID="zipError">
@@ -173,51 +251,82 @@ export const SettlementZipReadyScreen: React.FC = () => {
           </TouchableOpacity>
         </View>
       ) : pkg ? (
-        <View style={styles.body} testID="zipReady">
-          <Text style={styles.eyebrow}>HỒ SƠ SẴN SÀNG</Text>
-          <Text style={styles.fileName}>{pkg.fileName}</Text>
-          {emptyDocs ? (
-            <Text style={styles.emptyHint} testID="zipEmptyDocs">
-              ZIP gồm tờ khai. Chưa có biên lai y tế/giáo dục đã xác nhận.
-            </Text>
-          ) : (
-            <Text style={styles.meta}>
-              Kèm {pkg.totalDocumentsIncluded} chứng từ gốc · {formatFileSize(pkg.fileSizeBytes)}
-            </Text>
-          )}
-          {pkg.message ? <Text style={styles.msg}>{pkg.message}</Text> : null}
+        <ScrollView
+          contentContainerStyle={[
+            styles.scrollBody,
+            { paddingBottom: Math.max(insets.bottom, 24) },
+          ]}
+          testID="zipReady"
+        >
+          <View style={styles.containerInner}>
+            <Text style={styles.eyebrow}>TỆP HỒ SƠ SẴN SÀNG</Text>
+            <Text style={styles.fileName}>{pkg.fileName}</Text>
+            {emptyDocs ? (
+              <Text style={styles.emptyHint} testID="zipEmptyDocs">
+                Bộ hồ sơ gồm tờ khai quyết toán. Chưa có biên lai y tế hoặc giáo dục đã xác nhận đính kèm.
+              </Text>
+            ) : (
+              <Text style={styles.meta}>
+                Kèm {pkg.totalDocumentsIncluded} chứng từ gốc · {formatFileSize(pkg.fileSizeBytes)}
+              </Text>
+            )}
+            {cleanMessage ? <Text style={styles.msg}>{cleanMessage}</Text> : null}
 
-          <View style={styles.expireCard}>
-            <Text style={styles.expireLabel}>Hết hạn lúc</Text>
-            <Text style={styles.expireAt}>{formatExpiresAt(pkg.expiresAt)}</Text>
-            <Text style={[styles.countdown, countdown.expired && styles.countdownExpired]}>
-              {countdown.label}
-            </Text>
-            <Text style={styles.expireNote}>Link tải còn hiệu lực trong khoảng 30 phút.</Text>
-          </View>
+            <View style={styles.expireCard}>
+              <Text style={styles.expireLabel}>Hiệu lực đến</Text>
+              <Text style={styles.expireAt}>{formatExpiresAt(pkg.expiresAt)}</Text>
+              <Text style={[styles.countdown, countdown.expired && styles.countdownExpired]}>
+                {countdown.label}
+              </Text>
+              <Text style={styles.expireNote}>
+                Đường dẫn tải tệp hồ sơ có hiệu lực trong khoảng 30 phút.
+              </Text>
+            </View>
 
-          <View style={styles.footer}>
-            <TouchableOpacity
-              style={[styles.cta, countdown.expired && styles.ctaDisabled]}
-              onPress={onDownload}
-              disabled={downloading}
-              testID="zipDownloadBtn"
-            >
-              {downloading ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <>
-                  <Ionicons name="download-outline" size={18} color="#fff" />
-                  <Text style={styles.ctaText}>{countdown.expired ? 'Link đã hết hạn' : 'Tải về'}</Text>
-                </>
-              )}
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.secondary} onPress={goReexport} testID="zipReexportBtn">
-              <Text style={styles.secondaryText}>Xuất lại</Text>
-            </TouchableOpacity>
+            <View style={styles.footer}>
+              <TouchableOpacity
+                style={[styles.cta, countdown.expired && styles.ctaDisabled]}
+                onPress={onDownload}
+                disabled={downloading}
+                testID="zipDownloadBtn"
+                accessibilityRole="button"
+              >
+                {downloading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <>
+                    <Ionicons name="download-outline" size={18} color="#fff" />
+                    <Text style={styles.ctaText}>
+                      {countdown.expired ? 'Đường dẫn đã hết hạn' : 'Tải tệp hồ sơ'}
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.secondary}
+                onPress={goReexport}
+                testID="zipReexportBtn"
+                accessibilityRole="button"
+              >
+                <Text style={styles.secondaryText}>Xuất lại hồ sơ</Text>
+              </TouchableOpacity>
+            </View>
           </View>
-        </View>
+        </ScrollView>
       ) : null}
+
+      <Dialog
+        visible={confirmDialogVisible}
+        title="Chốt hồ sơ quyết toán thuế"
+        message="Thao tác này sẽ đóng gói chốt bộ hồ sơ quyết toán mới và vô hiệu hóa đường dẫn tải hiện tại. Tệp hồ sơ mới sẽ sẵn sàng tải xuống trong vòng 30 phút."
+        detailLabel="Kỳ quyết toán"
+        detail={settlementPeriodDetail}
+        primaryLabel="Chốt và tải hồ sơ"
+        secondaryLabel="Kiểm tra lại"
+        onPrimary={handleConfirmReexport}
+        onSecondary={() => setConfirmDialogVisible(false)}
+        onRequestClose={() => setConfirmDialogVisible(false)}
+      />
     </SafeAreaView>
   );
 };
@@ -225,8 +334,21 @@ export const SettlementZipReadyScreen: React.FC = () => {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: '#F8F5EE' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 28, gap: 12 },
-  error: { fontFamily: fonts.body, fontSize: 14, color: theme.colors.error, textAlign: 'center' },
-  body: { flex: 1, paddingHorizontal: 22, paddingTop: 20 },
+  error: {
+    fontFamily: fonts.body,
+    fontSize: 14,
+    lineHeight: 20,
+    color: theme.colors.error,
+    textAlign: 'center',
+    maxWidth: 420,
+  },
+  scrollBody: { flexGrow: 1, paddingHorizontal: 22, paddingTop: 20 },
+  containerInner: {
+    flex: 1,
+    width: '100%',
+    maxWidth: 680,
+    alignSelf: 'center',
+  },
   eyebrow: {
     fontFamily: fonts.bodyBold,
     fontSize: 11,
@@ -253,7 +375,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderWidth: 1,
     borderColor: '#DED7CB',
-    borderRadius: 4,
+    borderRadius: 10,
     padding: 18,
     alignItems: 'center',
   },
@@ -269,6 +391,7 @@ const styles = StyleSheet.create({
     fontSize: 40,
     color: theme.colors.primaryDark,
     marginTop: 12,
+    fontVariant: ['tabular-nums'],
   },
   countdownExpired: { color: theme.colors.error, fontSize: 28 },
   expireNote: {
@@ -278,7 +401,7 @@ const styles = StyleSheet.create({
     marginTop: 8,
     textAlign: 'center',
   },
-  footer: { marginTop: 'auto', paddingBottom: 24, gap: 10 },
+  footer: { marginTop: 'auto', paddingTop: 24, gap: 10 },
   cta: {
     height: 52,
     borderRadius: 10,
@@ -287,6 +410,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     flexDirection: 'row',
     gap: 8,
+    paddingHorizontal: 24,
   },
   ctaDisabled: { opacity: 0.55 },
   ctaText: { fontFamily: fonts.bodyBold, fontSize: 16, color: '#fff' },

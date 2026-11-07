@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Modal,
   View,
@@ -10,12 +10,11 @@ import {
   ActivityIndicator,
   Platform,
   StatusBar,
-  Dimensions,
+  useWindowDimensions,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
-
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 export interface DocumentViewerItem {
   uri?: string;
@@ -36,12 +35,14 @@ interface DocumentViewerModalProps {
   onRePick?: () => void;
 }
 
-export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
+export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = React.memo(({
   visible,
   onClose,
   document,
   onRePick,
 }) => {
+  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const [loading, setLoading] = useState<boolean>(true);
   const [loadError, setLoadError] = useState<boolean>(false);
 
@@ -52,7 +53,12 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
     }
   }, [visible, document?.uri]);
 
-  if (!document) return null;
+  const handleRetry = useCallback(() => {
+    setLoading(true);
+    setLoadError(false);
+  }, []);
+
+  if (!visible || !document) return null;
 
   const isImage =
     (document.mimeType && document.mimeType.includes('image')) ||
@@ -63,10 +69,9 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
     ? document.uploadedAt.split('T')[0]
     : 'Hôm nay';
 
-  const handleRetry = () => {
-    setLoading(true);
-    setLoadError(false);
-  };
+  const topPad = Platform.OS === 'android'
+    ? Math.max(insets.top, StatusBar.currentHeight || 24) + 10
+    : Math.max(insets.top, 20) + 10;
 
   return (
     <Modal
@@ -77,10 +82,10 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
       statusBarTranslucent
     >
       <View style={styles.container}>
-        <StatusBar barStyle="light-content" backgroundColor="#0D0F12" />
+        <StatusBar barStyle="light-content" />
 
         {/* Top Header */}
-        <View style={styles.header}>
+        <View style={[styles.header, { paddingTop: topPad }]}>
           <TouchableOpacity
             style={styles.closeBtn}
             onPress={onClose}
@@ -100,17 +105,17 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
                 {document.subtitle}
               </Text>
             ) : (
-            <View style={styles.headerMetaRow}>
-              <Ionicons
-                name={document.isReadable ? 'checkmark-circle' : 'time-outline'}
-                size={14}
-                color={document.isReadable ? '#4CAF50' : '#FFA726'}
-                style={{ marginRight: 4 }}
-              />
-              <Text style={styles.headerSubtitle}>
-                {document.isReadable ? 'Đã duyệt hợp lệ' : 'Đang xử lý'} • Ngày nộp: {displayDate}
-              </Text>
-            </View>
+              <View style={styles.headerMetaRow}>
+                <Ionicons
+                  name={document.isReadable ? 'checkmark-circle' : 'time-outline'}
+                  size={14}
+                  color={document.isReadable ? '#4CAF50' : '#FFA726'}
+                  style={styles.metaIcon}
+                />
+                <Text style={styles.headerSubtitle} numberOfLines={1}>
+                  {document.isReadable ? 'Đã duyệt hợp lệ' : 'Đang xử lý'} • Ngày nộp: {displayDate}
+                </Text>
+              </View>
             )}
           </View>
         </View>
@@ -119,7 +124,10 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
         <View style={styles.body}>
           {isImage && document.uri ? (
             <ScrollView
-              contentContainerStyle={styles.scrollContainer}
+              contentContainerStyle={[
+                styles.scrollContainer,
+                { width: screenWidth, minHeight: screenHeight * 0.65 },
+              ]}
               maximumZoomScale={4}
               minimumZoomScale={1}
               showsHorizontalScrollIndicator={false}
@@ -129,7 +137,7 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
               {loading && !loadError && (
                 <View style={styles.loadingOverlay}>
                   <ActivityIndicator size="large" color={theme.colors.gold} />
-                  <Text style={styles.loadingText}>Đang tải hình ảnh từ máy chủ...</Text>
+                  <Text style={styles.loadingText}>Đang tải hình ảnh minh chứng...</Text>
                 </View>
               )}
 
@@ -138,17 +146,17 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
                   <Ionicons name="alert-circle-outline" size={54} color="#FF6B6B" />
                   <Text style={styles.errorTitle}>Không thể tải ảnh minh chứng</Text>
                   <Text style={styles.errorDesc}>
-                    Vui lòng kiểm tra kết nối mạng hoặc thử lại sau.
+                    Vui lòng kiểm tra kết nối mạng hoặc thử tải lại.
                   </Text>
                   <TouchableOpacity style={styles.retryBtn} onPress={handleRetry}>
-                    <Ionicons name="refresh" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
+                    <Ionicons name="refresh" size={18} color="#FFFFFF" style={styles.btnIcon} />
                     <Text style={styles.retryBtnText}>Thử lại</Text>
                   </TouchableOpacity>
                 </View>
               ) : (
                 <Image
                   source={{ uri: document.uri }}
-                  style={styles.fullImage}
+                  style={{ width: screenWidth, height: screenHeight * 0.72 }}
                   resizeMode="contain"
                   onLoadStart={() => {
                     setLoading(true);
@@ -163,27 +171,27 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
               )}
             </ScrollView>
           ) : (
-            <View style={styles.pdfCard}>
+            <View style={[styles.pdfCard, { maxWidth: Math.min(screenWidth * 0.88, 440) }]}>
               <View style={styles.pdfIconCircle}>
                 <Ionicons name="document-text" size={64} color="#D32F2F" />
               </View>
               <Text style={styles.pdfTitle}>{document.fileName || 'Tài liệu minh chứng'}</Text>
               <Text style={styles.pdfNotice}>
                 Định dạng tệp: {document.mimeType || 'PDF'}{'\n'}
-                Tài liệu đã được lưu trữ mã hóa và xác thực an toàn trên hệ thống máy chủ Thuế.
+                Tài liệu đã được lưu trữ an toàn trong hồ sơ thuế của bạn.
               </Text>
             </View>
           )}
         </View>
 
         {/* Bottom Info Bar */}
-        <View style={styles.footer}>
+        <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 16) }]}>
           <View style={styles.fileInfoCol}>
             <Text style={styles.fileNameText} numberOfLines={1}>
               {document.fileName || document.uri?.split('/').pop() || 'Tài liệu'}
             </Text>
             <Text style={styles.fileHintText}>
-              {isImage ? 'Chạm 2 lần hoặc vuốt 2 ngón tay để phóng to ảnh' : 'Tài liệu văn bản số'}
+              {isImage ? 'Chạm 2 lần hoặc vuốt 2 ngón tay để phóng to ảnh' : 'Tài liệu chứng từ số'}
             </Text>
           </View>
 
@@ -198,7 +206,7 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
                 accessibilityRole="button"
                 accessibilityLabel="Đổi ảnh khác"
               >
-                <Ionicons name="camera-reverse-outline" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
+                <Ionicons name="camera-reverse-outline" size={18} color="#FFFFFF" style={styles.btnIcon} />
                 <Text style={styles.repickBtnText}>Đổi ảnh</Text>
               </TouchableOpacity>
             )}
@@ -216,7 +224,7 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
       </View>
     </Modal>
   );
-};
+});
 
 const styles = StyleSheet.create({
   container: {
@@ -227,7 +235,6 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 24) + 10 : 54,
     paddingBottom: 14,
     paddingHorizontal: 16,
     backgroundColor: 'rgba(18, 21, 26, 0.95)',
@@ -246,6 +253,7 @@ const styles = StyleSheet.create({
   },
   headerCenter: {
     flex: 1,
+    flexShrink: 1,
   },
   headerTitle: {
     fontSize: 16,
@@ -258,9 +266,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 3,
   },
+  metaIcon: {
+    marginRight: 4,
+  },
   headerSubtitle: {
     fontSize: 12,
     color: '#B0BEC5',
+    flexShrink: 1,
   },
   body: {
     flex: 1,
@@ -271,8 +283,6 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    width: SCREEN_WIDTH,
-    minHeight: SCREEN_HEIGHT * 0.65,
   },
   loadingOverlay: {
     position: 'absolute',
@@ -284,10 +294,6 @@ const styles = StyleSheet.create({
     color: '#ECEFF1',
     fontSize: 14,
   },
-  fullImage: {
-    width: SCREEN_WIDTH,
-    height: SCREEN_HEIGHT * 0.72,
-  },
   errorBox: {
     alignItems: 'center',
     paddingHorizontal: 30,
@@ -298,6 +304,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginTop: 12,
     marginBottom: 6,
+    textAlign: 'center',
   },
   errorDesc: {
     color: '#90A4AE',
@@ -314,6 +321,9 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: 8,
   },
+  btnIcon: {
+    marginRight: 6,
+  },
   retryBtnText: {
     color: '#FFFFFF',
     fontSize: 14,
@@ -326,7 +336,6 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.1)',
-    maxWidth: SCREEN_WIDTH * 0.85,
   },
   pdfIconCircle: {
     width: 90,
@@ -352,17 +361,20 @@ const styles = StyleSheet.create({
   },
   footer: {
     paddingHorizontal: 16,
-    paddingVertical: 16,
+    paddingTop: 14,
     backgroundColor: 'rgba(18, 21, 26, 0.98)',
     borderTopWidth: 1,
     borderTopColor: 'rgba(255, 255, 255, 0.08)',
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 8,
   },
   fileInfoCol: {
     flex: 1,
-    marginRight: 12,
+    minWidth: 150,
+    marginRight: 8,
   },
   fileNameText: {
     color: '#ECEFF1',

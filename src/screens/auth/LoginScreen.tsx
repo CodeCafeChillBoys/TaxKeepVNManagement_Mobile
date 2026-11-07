@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -7,7 +7,6 @@ import {
   KeyboardAvoidingView,
   Platform,
   TouchableOpacity,
-  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -19,16 +18,25 @@ import { CustomInput } from '../../components/common/CustomInput';
 import { CustomButton } from '../../components/common/CustomButton';
 import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
+import { useToast } from '../../components/ui/Toast';
 import { theme } from '../../constants/theme';
 import { RootNavigationProp } from '../../navigation/types';
 import { authApi } from '../../api/authApi';
 import { useAuthStore } from '../../stores/useAuthStore';
-import { getLocalApiBaseUrl } from '../../constants/config';
+import { sanitizeUiMessage, toFriendlyError } from '../../utils/friendlyError';
 
 export const LoginScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
   const setAuth = useAuthStore((state) => state.setAuth);
+  const { toast } = useToast();
   const [loading, setLoading] = useState(false);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   const {
     control,
@@ -42,49 +50,70 @@ export const LoginScreen: React.FC = () => {
     },
   });
 
-  const onSubmit = async (data: LoginFormData) => {
-    setLoading(true);
-    try {
-      if (__DEV__) {
-        console.log('[Login] API =', getLocalApiBaseUrl());
-      }
-      const response = await authApi.login(data);
+  const handleLanguagePress = useCallback(() => {
+    toast.info('Ứng dụng hiện sử dụng tiếng Việt theo chuẩn hồ sơ thuế.', 'Ngôn ngữ hiển thị');
+  }, [toast]);
 
-      if (response && response.data) {
-        const rawData = response.data;
-        const jwt = rawData.token || rawData.accessToken || '';
-        const profile = rawData.user || {
-          id: rawData.userId || 'temp-id',
-          citizenId: rawData.citizenId || data.account,
-          fullName: rawData.fullName || 'Người nộp thuế',
-          email: rawData.email || `${data.account}@taxkeep.vn`,
-          role: rawData.userRole,
-        };
+  const handleForgotPasswordPress = useCallback(() => {
+    toast.info(
+      'Vui lòng liên hệ cơ quan thuế quản lý hoặc bộ phận hỗ trợ để xác minh danh tính và đặt lại mật khẩu.',
+      'Hướng dẫn cấp lại mật khẩu'
+    );
+  }, [toast]);
 
-        await setAuth(jwt, profile, rawData.refreshToken);
-        navigation.replace('Home');
-      } else {
-        Alert.alert('Đăng nhập thành công', 'Chào mừng bạn quay trở lại!');
-        navigation.replace('Home');
-      }
-    } catch (error: any) {
-      const status = error?.response?.status;
-      const serverMsg = error?.response?.data?.message;
+  const onSubmit = useCallback(
+    async (data: LoginFormData) => {
+      setLoading(true);
+      try {
+        const response = await authApi.login(data);
+        if (!isMountedRef.current) return;
 
-      if (status === 401 || status === 400) {
-        Alert.alert('Đăng nhập thất bại', serverMsg || 'Số CCCD hoặc mật khẩu không chính xác.');
-      } else if (status === 500) {
-        Alert.alert('Lỗi hệ thống', 'Đã xảy ra lỗi trên máy chủ. Vui lòng thử lại sau.');
-      } else {
-        Alert.alert(
-          'Không kết nối được máy chủ',
-          `${serverMsg || 'Vui lòng kiểm tra API đang chạy rồi thử đăng nhập lại.'}\n\nAPI: ${getLocalApiBaseUrl()}`
-        );
+        if (response && response.data) {
+          const rawData = response.data;
+          const jwt = rawData.token || rawData.accessToken || '';
+          const profile = rawData.user || {
+            id: rawData.userId || 'temp-id',
+            citizenId: rawData.citizenId || data.account,
+            fullName: rawData.fullName || 'Người nộp thuế',
+            email: rawData.email || `${data.account}@taxkeep.vn`,
+            role: rawData.userRole,
+          };
+
+          await setAuth(jwt, profile, rawData.refreshToken);
+          toast.success(`Chào mừng ${profile.fullName} quay trở lại.`, 'Đăng nhập thành công');
+          navigation.replace('Home');
+        } else {
+          toast.success('Chào mừng bạn quay trở lại.', 'Đăng nhập thành công');
+          navigation.replace('Home');
+        }
+      } catch (error: any) {
+        if (!isMountedRef.current) return;
+        const status = error?.response?.status;
+        const serverMsg = error?.response?.data?.message;
+
+        if (status === 401 || status === 400) {
+          toast.error(
+            sanitizeUiMessage(
+              serverMsg,
+              'Số căn cước công dân, email hoặc mật khẩu chưa chính xác. Vui lòng kiểm tra lại.'
+            ),
+            'Thông tin đăng nhập chưa đúng'
+          );
+        } else {
+          const friendly = toFriendlyError(error, {
+            fallbackTitle: 'Chưa thể đăng nhập',
+            fallbackMessage: 'Kết nối tạm thời gián đoạn. Vui lòng kiểm tra mạng và thử lại.',
+          });
+          toast.error(friendly.message, friendly.title);
+        }
+      } finally {
+        if (isMountedRef.current) {
+          setLoading(false);
+        }
       }
-    } finally {
-      setLoading(false);
-    }
-  };
+    },
+    [navigation, setAuth, toast]
+  );
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
@@ -102,9 +131,7 @@ export const LoginScreen: React.FC = () => {
           <View style={styles.langRow}>
             <TouchableOpacity
               style={styles.langBtn}
-              onPress={() =>
-                Alert.alert('Ngôn ngữ', 'Hiện tại ứng dụng dùng tiếng Việt.')
-              }
+              onPress={handleLanguagePress}
               accessibilityRole="button"
               accessibilityLabel="Chọn ngôn ngữ"
             >
@@ -126,7 +153,7 @@ export const LoginScreen: React.FC = () => {
               name="account"
               render={({ field: { onChange, onBlur, value } }) => (
                 <CustomInput
-                  placeholder="Nhập số CCCD (12 số) hoặc Email"
+                  placeholder="079... hoặc ten@email.com"
                   autoCapitalize="none"
                   keyboardType="default"
                   onBlur={onBlur}
@@ -141,14 +168,7 @@ export const LoginScreen: React.FC = () => {
 
             <View style={styles.passwordLabelRow}>
               <Text style={styles.fieldLabel}>Mật khẩu</Text>
-              <TouchableOpacity
-                onPress={() =>
-                  Alert.alert(
-                    'Quên mật khẩu',
-                    'Vui lòng liên hệ cơ quan thuế hoặc quản trị viên để cấp lại mật khẩu cho số CCCD của bạn.'
-                  )
-                }
-              >
+              <TouchableOpacity onPress={handleForgotPasswordPress}>
                 <Text style={styles.forgotText}>Quên mật khẩu?</Text>
               </TouchableOpacity>
             </View>
@@ -158,7 +178,6 @@ export const LoginScreen: React.FC = () => {
               render={({ field: { onChange, onBlur, value } }) => (
                 <CustomInput
                   isPassword
-                  placeholder="Nhập mật khẩu"
                   onBlur={onBlur}
                   onChangeText={onChange}
                   value={value}
@@ -211,6 +230,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
+    paddingVertical: 4,
   },
   langText: {
     ...theme.typography.fieldLabel,
@@ -218,19 +238,21 @@ const styles = StyleSheet.create({
   },
   brandBlock: {
     alignItems: 'center',
-    marginTop: 84,
+    marginTop: 64,
     gap: 8,
     paddingHorizontal: 20,
   },
   brandTitle: {
     ...theme.typography.appTitle,
     color: theme.colors.primaryDark,
+    textAlign: 'center',
   },
   brandSubtitle: {
     ...theme.typography.body,
     fontSize: 13,
     lineHeight: 20,
     color: '#5A4A22',
+    textAlign: 'center',
   },
   brandRule: {
     width: 56,
@@ -238,11 +260,15 @@ const styles = StyleSheet.create({
   },
   formBlock: {
     paddingHorizontal: 20,
-    paddingTop: 48,
+    paddingTop: 40,
+    width: '100%',
+    maxWidth: 460,
+    alignSelf: 'center',
   },
   fieldLabel: {
     ...theme.typography.fieldLabel,
     color: theme.colors.textPrimary,
+    flexShrink: 1,
   },
   fieldInput: {
     ...theme.typography.inputText,
@@ -255,6 +281,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
   },
   forgotText: {
     ...theme.typography.fieldLabel,
@@ -272,6 +300,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
+    flexWrap: 'wrap',
     marginTop: 24,
   },
   switchAuthText: {

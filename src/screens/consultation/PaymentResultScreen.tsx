@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -26,6 +26,7 @@ import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
 import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
+import { sanitizeUiMessage, toFriendlyErrorMessage } from '../../utils/friendlyError';
 
 function formatVnPayDate(str?: string | null): string {
   if (!str || str.length < 14) return '—';
@@ -43,7 +44,10 @@ export const PaymentResultScreen: React.FC = () => {
   const route = useRoute<RouteProp<RootStackParamList, 'PaymentResult'>>();
   const navigation = useNavigation<RootNavigationProp>();
 
-  const routeParams = (route.params || {}) as Record<string, any>;
+  const routeParams = useMemo(
+    () => (route.params || {}) as Record<string, any>,
+    [route.params]
+  );
   const initialMessage = routeParams.message;
   const initialSuccess =
     routeParams.isSuccess === true || routeParams.isSuccess === 'true';
@@ -51,9 +55,21 @@ export const PaymentResultScreen: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [booking, setBooking] = useState<BookingDetailResponse | null>(null);
   const [escrow, setEscrow] = useState<EscrowTransactionResponse | null>(null);
-  const [statusMessage, setStatusMessage] = useState<string>(initialMessage || '');
+  const [statusMessage, setStatusMessage] = useState<string>(() =>
+    sanitizeUiMessage(initialMessage, '')
+  );
   const [isSuccess, setIsSuccess] = useState<boolean>(initialSuccess);
-  const [extractedParams, setExtractedParams] = useState<Record<string, string>>({});
+
+  const isMountedRef = useRef(true);
+  const escrowBookingIdRef = useRef<string | undefined>(undefined);
+  escrowBookingIdRef.current = escrow?.bookingId;
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   // 1. Trích xuất đầy đủ query parameters từ Web window.location.search và React Navigation route.params
   const extractAllParams = useCallback((): Record<string, string> => {
@@ -107,10 +123,9 @@ export const PaymentResultScreen: React.FC = () => {
   }, [allParams, routeParams, escrow?.bookingId]);
 
   const processPaymentResult = useCallback(async () => {
+    if (!isMountedRef.current) return;
     setLoading(true);
     try {
-      setExtractedParams(allParams);
-
       const passedSuccess =
         routeParams.isSuccess === true || routeParams.isSuccess === 'true';
       const responseCode =
@@ -118,15 +133,28 @@ export const PaymentResultScreen: React.FC = () => {
       const codeSuccess = responseCode === '00';
 
       const effectiveBookingId =
-        routeParams.bookingId || allParams.bookingId || escrow?.bookingId;
+        routeParams.bookingId || allParams.bookingId || escrowBookingIdRef.current;
 
-      // 1. Tải thông tin booking và escrow từ DB trước nếu có bookingId
+      const orderInfoUpper = (
+        allParams.vnp_OrderInfo ||
+        routeParams.vnp_OrderInfo ||
+        ''
+      ).toUpperCase();
+      let currentIsTopUp =
+        orderInfoUpper.includes('NAPVI') ||
+        orderInfoUpper.includes('NẠP TIỀN') ||
+        orderInfoUpper.includes('NAP TIEN') ||
+        (!effectiveBookingId && Boolean(allParams.vnp_TxnRef || allParams.vnp_Amount));
+
+      // 1. Tải thông tin booking và escrow từ hệ thống trước nếu có bookingId
       let isPaidBooking = false;
       if (effectiveBookingId) {
         const [bookingRes, escrowRes] = await Promise.allSettled([
           consultationApi.getBookingDetail(effectiveBookingId),
           consultationApi.getBookingEscrow(effectiveBookingId),
         ]);
+
+        if (!isMountedRef.current) return;
 
         if (bookingRes.status === 'fulfilled') {
           setBooking(bookingRes.value);
@@ -149,19 +177,24 @@ export const PaymentResultScreen: React.FC = () => {
         }
       }
 
-      // 2. Nếu có vnp_SecureHash, gọi Backend đối soát (xác thực chữ ký và cập nhật DB tự động)
+      // 2. Nếu có vnp_SecureHash, gọi đối soát xác thực chữ ký và cập nhật tự động
       let backendSuccess = false;
       if (allParams.vnp_SecureHash) {
         try {
           const escrowRes = await consultationApi.handleVnPayReturn(allParams);
+          if (!isMountedRef.current) return;
           if (escrowRes) {
             setEscrow(escrowRes);
+            if (escrowRes.bookingId) {
+              currentIsTopUp = false;
+            }
             if (escrowRes.escrowStatus === 'HeldInEscrow' || escrowRes.escrowStatus === 'Settled') {
               backendSuccess = true;
             }
             if (escrowRes.bookingId) {
               try {
                 const bRes = await consultationApi.getBookingDetail(escrowRes.bookingId);
+                if (!isMountedRef.current) return;
                 setBooking(bRes);
                 if (Boolean(bRes.paidAt) || bRes.status === 'AWAITING_EXPERT_APPROVAL' || bRes.status === 'CONFIRMED') {
                   isPaidBooking = true;
@@ -178,8 +211,10 @@ export const PaymentResultScreen: React.FC = () => {
         }
       }
 
+      if (!isMountedRef.current) return;
+
       // 3. Quyết định trạng thái hiển thị
-      if (isPaidBooking || backendSuccess || (codeSuccess && isTopUpTx)) {
+      if (isPaidBooking || backendSuccess || (codeSuccess && currentIsTopUp)) {
         setIsSuccess(true);
       } else if (codeSuccess || passedSuccess) {
         // VNPay báo thành công 00
@@ -203,11 +238,17 @@ export const PaymentResultScreen: React.FC = () => {
         }
       }
     } catch (err: any) {
-      setStatusMessage('Chưa thể cập nhật trạng thái thanh toán.');
+      if (isMountedRef.current) {
+        setStatusMessage(
+          toFriendlyErrorMessage(err, 'Chưa thể cập nhật trạng thái thanh toán.')
+        );
+      }
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+      }
     }
-  }, [allParams, isTopUpTx, routeParams, escrow?.bookingId]);
+  }, [allParams, routeParams]);
 
   useEffect(() => {
     processPaymentResult();
@@ -322,7 +363,7 @@ export const PaymentResultScreen: React.FC = () => {
           <Text style={styles.statusSubtitle}>
             {isTopUpTx
               ? isSuccess
-                ? 'Số tiền đã được cộng trực tiếp vào ví TAXKEEP VN của bạn.'
+                ? 'Số tiền đã được cộng trực tiếp vào Ví điện tử TaxKeep của bạn.'
                 : statusMessage || 'Giao dịch nạp tiền qua cổng VNPay chưa được hoàn tất.'
               : isSuccess
               ? 'Lịch hẹn của bạn đã được ghi nhận và gửi đến chuyên gia.'
@@ -340,12 +381,14 @@ export const PaymentResultScreen: React.FC = () => {
 
             <View style={styles.receiptRow}>
               <Text style={styles.receiptLabel}>Loại giao dịch:</Text>
-              <Text style={styles.receiptValueBold}>Nạp tiền vào ví TAXKEEP VN</Text>
+              <Text style={styles.receiptValueBold} numberOfLines={1}>
+                Nạp tiền vào Ví điện tử TaxKeep
+              </Text>
             </View>
 
             <View style={styles.receiptRow}>
               <Text style={styles.receiptLabel}>Mã đơn giao dịch:</Text>
-              <Text style={styles.receiptValue}>
+              <Text style={styles.receiptValue} numberOfLines={1}>
                 {allParams.vnp_TxnRef || escrow?.orderCode || '—'}
               </Text>
             </View>
@@ -353,20 +396,24 @@ export const PaymentResultScreen: React.FC = () => {
             {allParams.vnp_TransactionNo ? (
               <View style={styles.receiptRow}>
                 <Text style={styles.receiptLabel}>Mã GD VNPay:</Text>
-                <Text style={styles.receiptValue}>{allParams.vnp_TransactionNo}</Text>
+                <Text style={styles.receiptValue} numberOfLines={1}>
+                  {allParams.vnp_TransactionNo}
+                </Text>
               </View>
             ) : null}
 
             {allParams.vnp_BankCode ? (
               <View style={styles.receiptRow}>
                 <Text style={styles.receiptLabel}>Ngân hàng / Cổng:</Text>
-                <Text style={styles.receiptValue}>{allParams.vnp_BankCode}</Text>
+                <Text style={styles.receiptValue} numberOfLines={1}>
+                  {allParams.vnp_BankCode}
+                </Text>
               </View>
             ) : null}
 
             <View style={styles.receiptRow}>
               <Text style={styles.receiptLabel}>Thời gian:</Text>
-              <Text style={styles.receiptValue}>
+              <Text style={styles.receiptValue} numberOfLines={1}>
                 {allParams.vnp_PayDate
                   ? formatVnPayDate(allParams.vnp_PayDate)
                   : new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) +
@@ -379,7 +426,11 @@ export const PaymentResultScreen: React.FC = () => {
 
             <View style={styles.receiptRow}>
               <Text style={styles.receiptLabelTotal}>Số tiền nạp:</Text>
-              <Text style={styles.receiptValueTotal}>
+              <Text
+                style={styles.receiptValueTotal}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+              >
                 {formatVnd(topUpAmountDisplay)}
               </Text>
             </View>
@@ -414,17 +465,21 @@ export const PaymentResultScreen: React.FC = () => {
 
               <View style={styles.receiptRow}>
                 <Text style={styles.receiptLabel}>Mã lịch hẹn:</Text>
-                <Text style={styles.receiptValueBold}>{booking.bookingCode}</Text>
+                <Text style={styles.receiptValueBold} numberOfLines={1}>
+                  {booking.bookingCode}
+                </Text>
               </View>
 
               <View style={styles.receiptRow}>
                 <Text style={styles.receiptLabel}>Chuyên gia:</Text>
-                <Text style={styles.receiptValue}>{booking.expertFullName}</Text>
+                <Text style={styles.receiptValue} numberOfLines={1}>
+                  {booking.expertFullName}
+                </Text>
               </View>
 
               <View style={styles.receiptRow}>
                 <Text style={styles.receiptLabel}>Thời gian:</Text>
-                <Text style={styles.receiptValue}>
+                <Text style={styles.receiptValue} numberOfLines={1}>
                   {formatVietnameseDate(booking.slotDate)} ({formatTimeRange(booking.startTime, booking.endTime)})
                 </Text>
               </View>
@@ -432,7 +487,7 @@ export const PaymentResultScreen: React.FC = () => {
               {sessionInfo && (
                 <View style={styles.receiptRow}>
                   <Text style={styles.receiptLabel}>Hình thức:</Text>
-                  <Text style={styles.receiptValue}>
+                  <Text style={styles.receiptValue} numberOfLines={1}>
                     {sessionInfo.label} ({booking.durationMinutes} phút)
                   </Text>
                 </View>
@@ -442,7 +497,11 @@ export const PaymentResultScreen: React.FC = () => {
 
               <View style={styles.receiptRow}>
                 <Text style={styles.receiptLabelTotal}>Số tiền:</Text>
-                <Text style={styles.receiptValueTotal}>
+                <Text
+                  style={styles.receiptValueTotal}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                >
                   {formatVnd(escrow?.amount ?? booking.fee)}
                 </Text>
               </View>
@@ -505,7 +564,7 @@ export const PaymentResultScreen: React.FC = () => {
                 activeOpacity={0.85}
               >
                 <Ionicons name="wallet-outline" size={18} color="#FFFFFF" style={{ marginRight: 8 }} />
-                <Text style={styles.primaryBtnText}>Về màn hình TAXKEEP VN WALLET</Text>
+                <Text style={styles.primaryBtnText}>Về Ví điện tử TaxKeep</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -559,7 +618,7 @@ export const PaymentResultScreen: React.FC = () => {
                   onPress={() => navigation.replace('Wallet')}
                   activeOpacity={0.8}
                 >
-                  <Text style={styles.secondaryBtnText}>Quay lại ví TAXKEEP VN</Text>
+                  <Text style={styles.secondaryBtnText}>Quay lại Ví điện tử TaxKeep</Text>
                 </TouchableOpacity>
               ) : (
                 <>
@@ -643,6 +702,9 @@ const styles = StyleSheet.create({
   scrollContent: {
     padding: 16,
     paddingBottom: 40,
+    maxWidth: 720,
+    width: '100%',
+    alignSelf: 'center',
   },
 
   // Status Hero
@@ -728,21 +790,27 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 10,
+    gap: 10,
   },
   receiptLabel: {
     fontFamily: fonts.body,
     fontSize: 13,
     color: '#6B7280',
+    flexShrink: 0,
   },
   receiptValue: {
     fontFamily: fonts.bodyMedium,
     fontSize: 13,
     color: theme.colors.textPrimary,
+    flexShrink: 1,
+    textAlign: 'right',
   },
   receiptValueBold: {
     fontFamily: fonts.bodySemi,
     fontSize: 14,
     color: theme.colors.primary,
+    flexShrink: 1,
+    textAlign: 'right',
   },
   receiptDivider: {
     height: 1,
@@ -753,11 +821,15 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bodySemi,
     fontSize: 14,
     color: theme.colors.textPrimary,
+    flexShrink: 0,
   },
   receiptValueTotal: {
     fontFamily: fonts.serifBold,
     fontSize: 18,
     color: '#059669',
+    flexShrink: 1,
+    textAlign: 'right',
+    fontVariant: ['tabular-nums'],
   },
   statusPill: {
     paddingHorizontal: 8,
@@ -829,6 +901,7 @@ const styles = StyleSheet.create({
   primaryBtn: {
     flexDirection: 'row',
     height: 48,
+    paddingHorizontal: 14,
     backgroundColor: theme.colors.primary,
     borderRadius: 10,
     justifyContent: 'center',
@@ -843,9 +916,11 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bodySemi,
     fontSize: 15,
     color: '#FFFFFF',
+    flexShrink: 1,
   },
   secondaryBtn: {
     height: 46,
+    paddingHorizontal: 14,
     backgroundColor: '#FFFFFF',
     borderRadius: 10,
     justifyContent: 'center',
@@ -857,5 +932,6 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bodyMedium,
     fontSize: 14,
     color: '#374151',
+    flexShrink: 1,
   },
 });

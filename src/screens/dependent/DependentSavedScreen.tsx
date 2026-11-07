@@ -1,6 +1,7 @@
 import React from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Image, Platform } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { fonts } from '../../constants/fonts';
@@ -31,6 +32,7 @@ function conditionLabel(groupCode: string, groupId?: number): string {
 export const DependentSavedScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
   const route = useRoute<Route>();
+  const insets = useSafeAreaInsets();
   const { fullName, relationship, groupCode, groupId, effectiveFromMonth } = route.params;
   const displayName = formatPersonName(fullName) || fullName;
 
@@ -46,60 +48,66 @@ export const DependentSavedScreen: React.FC = () => {
       <StatusBar style="dark" />
       <SavedPattern />
       <ScrollView
-        contentContainerStyle={styles.scroll}
+        contentContainerStyle={[
+          styles.scroll,
+          { paddingTop: Math.max(insets.top, 20) + 24 },
+        ]}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.heading}>
-          <Text style={styles.eyebrow}>Đơn đăng ký người phụ thuộc</Text>
-          <Text style={styles.title}>Đã lưu hồ sơ</Text>
-          <Text style={styles.lead}>
-            Thông tin của <Text style={styles.leadName}>{displayName}</Text> đã được ghi nhận vào
-            danh sách người phụ thuộc.
-          </Text>
-        </View>
-
-        <View style={styles.cardShadow}>
-          <View style={styles.card}>
-            <View style={styles.cardHead}>
-              <Text style={styles.cardKicker}>BIÊN NHẬN HỒ SƠ</Text>
-              <Text style={styles.cardBrand}>TaxKeep VN</Text>
-            </View>
-            <View style={styles.doubleRule} />
-
-            <ReceiptRow label="Người phụ thuộc" value={displayName} />
-            <ReceiptRow label="Quan hệ" value={relationshipLabel(relationship)} />
-            <ReceiptRow label="Điều kiện" value={conditionLabel(groupCode, groupId)} />
-            <ReceiptRow label="Hiệu lực từ" value={formatEffectiveFrom(effectiveFromMonth)} last />
+        <View style={styles.container}>
+          <View style={styles.heading}>
+            <Text style={styles.eyebrow}>Đơn đăng ký người phụ thuộc</Text>
+            <Text style={styles.title}>Đã lưu hồ sơ</Text>
+            <Text style={styles.lead}>
+              Thông tin của <Text style={styles.leadName}>{displayName}</Text> đã được ghi nhận vào
+              danh sách người phụ thuộc.
+            </Text>
           </View>
 
-          <View style={styles.stamp} pointerEvents="none">
-            <View style={styles.stampInner}>
-              <Text style={styles.stampSmall}>TAXKEEP</Text>
-              <Text style={styles.stampMain}>ĐÃ LƯU</Text>
-              <Text style={styles.stampSmall}>HỒ SƠ NPT</Text>
+          <View style={styles.cardShadow}>
+            <View style={styles.card}>
+              <View style={styles.cardHead}>
+                <Text style={styles.cardKicker}>BIÊN NHẬN HỒ SƠ</Text>
+                <Text style={styles.cardBrand}>TaxKeep VN</Text>
+              </View>
+              <View style={styles.doubleRule} />
+
+              <ReceiptRow label="Người phụ thuộc" value={displayName} />
+              <ReceiptRow label="Quan hệ" value={relationshipLabel(relationship)} />
+              <ReceiptRow label="Điều kiện" value={conditionLabel(groupCode, groupId)} />
+              <ReceiptRow label="Hiệu lực từ" value={formatEffectiveFrom(effectiveFromMonth)} last />
+            </View>
+
+            <View style={styles.stamp} pointerEvents="none">
+              <View style={styles.stampInner}>
+                <Text style={styles.stampSmall}>TAXKEEP</Text>
+                <Text style={styles.stampMain}>ĐÃ LƯU</Text>
+                <Text style={styles.stampSmall}>HỒ SƠ NPT</Text>
+              </View>
             </View>
           </View>
         </View>
       </ScrollView>
 
-      <View style={styles.footer}>
-        <TouchableOpacity
-          style={styles.button}
-          activeOpacity={0.85}
-          onPress={goToList}
-          accessibilityRole="button"
-          accessibilityLabel="Về danh sách người phụ thuộc"
-          testID="dependentSavedGoList"
-        >
-          <Text style={styles.buttonText}>Về danh sách người phụ thuộc</Text>
-        </TouchableOpacity>
+      <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+        <View style={styles.footerInner}>
+          <TouchableOpacity
+            style={styles.button}
+            activeOpacity={0.85}
+            onPress={goToList}
+            accessibilityRole="button"
+            accessibilityLabel="Về danh sách người phụ thuộc"
+            testID="dependentSavedGoList"
+          >
+            <Text style={styles.buttonText}>Về danh sách người phụ thuộc</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     </View>
   );
 };
 
-/** Hoa văn 460px, right -190 / top -150, mờ từ 40% đến 80% chiều cao. */
-function SavedPattern() {
+const SavedPattern = React.memo(function SavedPattern() {
   return (
     <View pointerEvents="none" style={styles.pattern}>
       <LinearGradient
@@ -121,9 +129,9 @@ function SavedPattern() {
       </View>
     </View>
   );
-}
+});
 
-function ReceiptRow({
+const ReceiptRow = React.memo(function ReceiptRow({
   label,
   value,
   last = false,
@@ -138,7 +146,7 @@ function ReceiptRow({
       <Text style={styles.rowValue}>{value}</Text>
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   safe: {
@@ -172,10 +180,15 @@ const styles = StyleSheet.create({
     opacity: 0.8,
   },
   scroll: {
-    paddingBottom: 56,
+    flexGrow: 1,
+    paddingBottom: 64,
+  },
+  container: {
+    width: '100%',
+    maxWidth: 520,
+    alignSelf: 'center',
   },
   heading: {
-    paddingTop: 56,
     paddingHorizontal: 22,
   },
   eyebrow: {
@@ -196,7 +209,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 22,
     color: '#444444',
-    maxWidth: 250,
+    maxWidth: 380,
     marginTop: 8,
   },
   leadName: {
@@ -209,11 +222,15 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: '#DED7CB',
     paddingBottom: 1,
-    shadowColor: '#661212',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.06,
-    shadowRadius: 20,
-    elevation: 2,
+    ...(Platform.OS === 'web'
+      ? { boxShadow: '0px 8px 20px rgba(102, 18, 18, 0.06)' }
+      : {
+          shadowColor: '#661212',
+          shadowOffset: { width: 0, height: 8 },
+          shadowOpacity: 0.06,
+          shadowRadius: 20,
+          elevation: 2,
+        }),
   },
   card: {
     backgroundColor: '#FFFFFF',
@@ -260,7 +277,8 @@ const styles = StyleSheet.create({
     borderColor: '#BDB5A6',
   },
   rowLabel: {
-    width: 96,
+    width: 104,
+    flexShrink: 0,
     fontFamily: fonts.body,
     fontSize: 14,
     lineHeight: 20,
@@ -268,6 +286,7 @@ const styles = StyleSheet.create({
   },
   rowValue: {
     flex: 1,
+    flexShrink: 1,
     fontFamily: fonts.bodySemi,
     fontSize: 14,
     lineHeight: 20,
@@ -275,7 +294,7 @@ const styles = StyleSheet.create({
   },
   stamp: {
     position: 'absolute',
-    right: -8,
+    right: -4,
     bottom: -44,
     width: 92,
     height: 92,
@@ -313,21 +332,27 @@ const styles = StyleSheet.create({
   footer: {
     paddingTop: 12,
     paddingHorizontal: 20,
-    paddingBottom: 20,
     backgroundColor: '#F8F5EE',
   },
+  footerInner: {
+    width: '100%',
+    maxWidth: 520,
+    alignSelf: 'center',
+  },
   button: {
-    height: 52,
+    minHeight: 52,
     borderRadius: 10,
     backgroundColor: '#8B1E1E',
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 16,
+    paddingVertical: 12,
   },
   buttonText: {
     fontFamily: fonts.bodyBold,
     fontSize: 16,
     lineHeight: 20,
     color: '#FFFFFF',
+    textAlign: 'center',
   },
 });

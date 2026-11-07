@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -7,10 +7,10 @@ import {
   TouchableOpacity,
   Image,
   TextInput,
-  Alert,
   Modal,
   Platform,
   ActivityIndicator,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
@@ -46,6 +46,47 @@ import { Dialog } from '../../components/common/Dialog';
 import { parseBackendError } from './expenseValidationUtils';
 
 type TabType = 'KIEM_TRA' | 'THONG_TIN';
+
+interface ReviewFieldInputProps {
+  label: string;
+  value: string;
+  onChange?: (v: string) => void;
+  placeholder?: string;
+  keyboardType?: any;
+  readOnly?: boolean;
+  required?: boolean;
+  disabled?: boolean;
+}
+
+const ReviewFieldInput = React.memo(({
+  label,
+  value,
+  onChange,
+  placeholder,
+  keyboardType = 'default',
+  readOnly = false,
+  required = false,
+  disabled = false,
+}: ReviewFieldInputProps) => (
+  <View style={styles.fieldGroup}>
+    <Text style={styles.fieldLabel}>
+      {label} {required && <Text style={{ color: '#DC2626' }}>*</Text>}
+    </Text>
+    <TextInput
+      editable={!disabled && !readOnly}
+      style={[
+        styles.textInput,
+        (disabled || readOnly) && styles.readOnlyInput,
+        required && !value.trim() && !disabled && { borderColor: '#FCA5A5' },
+      ]}
+      value={value}
+      onChangeText={onChange}
+      placeholder={placeholder}
+      placeholderTextColor="#94A3B8"
+      keyboardType={keyboardType}
+    />
+  </View>
+));
 
 export const ExpenseReviewScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
@@ -342,7 +383,7 @@ export const ExpenseReviewScreen: React.FC = () => {
 
   const handleSaveItem = () => {
     if (!itemFormName.trim()) {
-      Alert.alert('Thiếu thông tin', 'Vui lòng nhập tên dịch vụ / khoản mục.');
+      toast.warning('Vui lòng nhập tên dịch vụ hoặc khoản mục chi phí.', 'Thiếu thông tin');
       return;
     }
     const qty = parseFloat(itemFormQty) || 1;
@@ -688,7 +729,8 @@ export const ExpenseReviewScreen: React.FC = () => {
       navigation.navigate('ExpenseList');
     } catch (err: any) {
       setSaving(false);
-      Alert.alert('Lỗi xác nhận', err?.message || 'Không thể xác nhận chứng từ.');
+      const parsed = parseBackendError(err);
+      toast.error(parsed.message, parsed.title);
     }
   };
 
@@ -793,31 +835,17 @@ export const ExpenseReviewScreen: React.FC = () => {
     setShowSaveConfirmModal(true);
   };
 
-  const FieldInput = ({
-    label, value, onChange, placeholder, keyboardType = 'default', readOnly = false, required = false,
-  }: {
-    label: string; value: string; onChange?: (v: string) => void;
-    placeholder?: string; keyboardType?: any; readOnly?: boolean; required?: boolean;
+  const FieldInput = useCallback((props: {
+    label: string;
+    value: string;
+    onChange?: (v: string) => void;
+    placeholder?: string;
+    keyboardType?: any;
+    readOnly?: boolean;
+    required?: boolean;
   }) => (
-    <View style={styles.fieldGroup}>
-      <Text style={styles.fieldLabel}>
-        {label} {required && <Text style={{ color: '#DC2626' }}>*</Text>}
-      </Text>
-      <TextInput
-        editable={!isReadOnly && !readOnly}
-        style={[
-          styles.textInput,
-          (isReadOnly || readOnly) && styles.readOnlyInput,
-          required && !value.trim() && !isReadOnly && { borderColor: '#FCA5A5' },
-        ]}
-        value={value}
-        onChangeText={onChange}
-        placeholder={placeholder}
-        placeholderTextColor="#94A3B8"
-        keyboardType={keyboardType}
-      />
-    </View>
-  );
+    <ReviewFieldInput {...props} disabled={isReadOnly} />
+  ), [isReadOnly]);
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -831,8 +859,12 @@ export const ExpenseReviewScreen: React.FC = () => {
         onBack={() => navigation.goBack()}
       />
 
-      {/* STICKY HEADER: Số tiền/Thuế + Danh mục + Trạng thái */}
-      <View style={styles.stickyHeader}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={{ flex: 1 }}
+      >
+        {/* STICKY HEADER: Số tiền/Thuế + Danh mục + Trạng thái */}
+        <View style={styles.stickyHeader}>
         <View style={styles.stickyLeft}>
           <View style={[styles.stickyIconCircle, { backgroundColor: `${groupMeta.color}20` }]}>
             <Ionicons name={groupMeta.icon as any} size={18} color={groupMeta.color} />
@@ -976,7 +1008,7 @@ export const ExpenseReviewScreen: React.FC = () => {
                 }]} />
               </View>
               <Text style={styles.confidencePct}>
-                {Math.round(effectiveConfidence * 100)}% / Ngưỡng {Math.round(dynamicThreshold * 100)}%
+                {Math.round(effectiveConfidence * 100)}% {isPassedThreshold ? '(Đạt tiêu chuẩn đối soát)' : '(Cần kiểm tra lại)'}
               </Text>
 
               {/* Các điểm kiểm tra trường cốt lõi */}
@@ -1260,7 +1292,7 @@ export const ExpenseReviewScreen: React.FC = () => {
                     label="Tên tổ chức chi trả thu nhập"
                     value={sellerName}
                     onChange={setSellerName}
-                    placeholder="Công ty Cổ phần / Cơ quan / Tổ chức chi trả"
+                    placeholder="Ví dụ: Công ty Cổ phần ABC"
                     required
                   />
                   <FieldInput
@@ -1275,13 +1307,12 @@ export const ExpenseReviewScreen: React.FC = () => {
                     label="Địa chỉ tổ chức chi trả"
                     value={sellerAddress}
                     onChange={setSellerAddress}
-                    placeholder="Địa chỉ trụ sở tổ chức chi trả"
                   />
                   <FieldInput
                     label="Số điện thoại liên hệ"
                     value={sellerPhone}
                     onChange={setSellerPhone}
-                    placeholder="Số điện thoại"
+                    placeholder="0901 234 567"
                     keyboardType="phone-pad"
                   />
                 </Card>
@@ -1341,7 +1372,6 @@ export const ExpenseReviewScreen: React.FC = () => {
                     label="Mã tra cứu chứng từ"
                     value={lookupCode}
                     onChange={setLookupCode}
-                    placeholder="Mã tra cứu"
                   />
                 </Card>
 
@@ -1355,7 +1385,7 @@ export const ExpenseReviewScreen: React.FC = () => {
                     label="Họ và tên người nộp thuế"
                     value={buyerName}
                     onChange={setBuyerName}
-                    placeholder="NGUYỄN VĂN AN"
+                    placeholder="Ví dụ: NGUYỄN VĂN A"
                     required
                   />
                   <View style={styles.rowInputs}>
@@ -1383,7 +1413,6 @@ export const ExpenseReviewScreen: React.FC = () => {
                     label="Địa chỉ thường trú / cư trú"
                     value={buyerAddress}
                     onChange={setBuyerAddress}
-                    placeholder="Địa chỉ cư trú"
                   />
                 </Card>
 
@@ -1464,10 +1493,10 @@ export const ExpenseReviewScreen: React.FC = () => {
                     <Ionicons name="business-outline" size={15} color="#475569" />
                     <Text style={styles.cardHeaderTitle}>Đơn vị phát hành hóa đơn</Text>
                   </View>
-                  <FieldInput label="Tên đơn vị / Người bán" value={sellerName} onChange={setSellerName} placeholder="Tên bệnh viện, trường học, cơ sở..." />
+                  <FieldInput label="Tên đơn vị / Người bán" value={sellerName} onChange={setSellerName} placeholder="Ví dụ: Bệnh viện, Trường học, Nhà thuốc..." />
                   <FieldInput label="Mã số thuế" value={sellerTaxCode} onChange={setSellerTaxCode} placeholder="Ví dụ: 0302221111" keyboardType="numeric" />
-                  <FieldInput label="Địa chỉ" value={sellerAddress} onChange={setSellerAddress} placeholder="Địa chỉ trụ sở" />
-                  <FieldInput label="Số điện thoại" value={sellerPhone} onChange={setSellerPhone} placeholder="Số điện thoại liên hệ" keyboardType="phone-pad" />
+                  <FieldInput label="Địa chỉ" value={sellerAddress} onChange={setSellerAddress} />
+                  <FieldInput label="Số điện thoại" value={sellerPhone} onChange={setSellerPhone} placeholder="0901 234 567" keyboardType="phone-pad" />
                 </Card>
 
                 {/* 3. Thông tin hóa đơn */}
@@ -1485,9 +1514,9 @@ export const ExpenseReviewScreen: React.FC = () => {
                     </View>
                   </View>
                   <FieldInput label="Ngày lập (YYYY-MM-DD)" value={invoiceDate} onChange={setInvoiceDate} placeholder={`${new Date().getFullYear()}-03-15`} />
-                  <FieldInput label="Tổng tiền thực thanh toán (VNĐ)" value={totalAmount ? String(totalAmount) : ''} onChange={(v) => setTotalAmount(Number(v.replace(/[^0-9]/g,''))||0)} placeholder="Nhập số tiền" keyboardType="numeric" />
+                  <FieldInput label="Tổng tiền thực thanh toán (VNĐ)" value={totalAmount ? String(totalAmount) : ''} onChange={(v) => setTotalAmount(Number(v.replace(/[^0-9]/g,''))||0)} placeholder="0" keyboardType="numeric" />
                   <FieldInput label="Đường dẫn tra cứu điện tử" value={lookupUrl} onChange={setLookupUrl} placeholder="https://..." />
-                  <FieldInput label="Mã tra cứu hóa đơn" value={lookupCode} onChange={setLookupCode} placeholder="Mã tra cứu" />
+                  <FieldInput label="Mã tra cứu hóa đơn" value={lookupCode} onChange={setLookupCode} />
                 </Card>
 
                 {/* 4. Người thanh toán */}
@@ -1496,10 +1525,10 @@ export const ExpenseReviewScreen: React.FC = () => {
                     <Ionicons name="person-outline" size={15} color="#475569" />
                     <Text style={styles.cardHeaderTitle}>Người thanh toán</Text>
                   </View>
-                  <FieldInput label="Họ và tên" value={buyerName} onChange={setBuyerName} placeholder="NGUYỄN VĂN AN" required />
+                  <FieldInput label="Họ và tên" value={buyerName} onChange={setBuyerName} placeholder="Ví dụ: NGUYỄN VĂN A" required />
                   <FieldInput label="Số CCCD" value={buyerIdCard} onChange={setBuyerIdCard} placeholder="12 chữ số" keyboardType="numeric" required />
-                  <FieldInput label="Địa chỉ" value={buyerAddress} onChange={setBuyerAddress} placeholder="Địa chỉ thường trú" required />
-                  <FieldInput label="Hình thức thanh toán" value={paymentMethod} onChange={setPaymentMethod} placeholder="Chuyển khoản / Tiền mặt" required />
+                  <FieldInput label="Địa chỉ" value={buyerAddress} onChange={setBuyerAddress} required />
+                  <FieldInput label="Hình thức thanh toán" value={paymentMethod} onChange={setPaymentMethod} placeholder="Chuyển khoản" required />
                 </Card>
 
                 {/* 5. Bảng kê chi tiết */}
@@ -1607,6 +1636,7 @@ export const ExpenseReviewScreen: React.FC = () => {
           </TouchableOpacity>
         )}
       </View>
+      </KeyboardAvoidingView>
 
       {/* MODAL THÊM / SỬA DÒNG CHI PHÍ (HÓA ĐƠN) */}
       <Modal visible={itemModalVisible} transparent animationType="slide">
@@ -1720,9 +1750,11 @@ export const ExpenseReviewScreen: React.FC = () => {
       <Dialog
         visible={deleteItemIndex !== null}
         title="Xóa mục chi phí"
-        message={`Xóa mục "${deleteItemIndex !== null ? items[deleteItemIndex]?.itemName : ''}"?`}
-        primaryLabel="Xóa"
-        secondaryLabel="Hủy"
+        message="Quý khách có chắc chắn muốn xóa mục này khỏi danh sách chi tiết không?"
+        detail={deleteItemIndex !== null ? items[deleteItemIndex]?.itemName : ''}
+        detailLabel="Khoản mục"
+        primaryLabel="Xóa khoản mục"
+        secondaryLabel="Giữ lại"
         destructive={true}
         onPrimary={() => {
           if (deleteItemIndex !== null) {

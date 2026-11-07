@@ -1,10 +1,11 @@
-import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
+import React, { useCallback } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRoute, useNavigation, RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { CustomButton } from '../../components/common/CustomButton';
 import { HeaderMotif } from '../../components/common/HeaderMotif';
+import { useToast } from '../../components/ui/Toast';
 import { theme } from '../../constants/theme';
 import { RootStackParamList, RootNavigationProp } from '../../navigation/types';
 
@@ -13,20 +14,24 @@ type VerifyPendingRouteProp = RouteProp<RootStackParamList, 'VerifyPending'>;
 export const VerifyPendingScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
   const route = useRoute<VerifyPendingRouteProp>();
+  const { toast } = useToast();
   const email = route.params?.email || 'email của bạn';
 
-  const handleResendEmail = () => {
-    Alert.alert(
-      'Đã gửi lại thư xác thực',
-      `Hệ thống đã gửi một liên kết kích hoạt mới tới địa chỉ ${email}. Vui lòng kiểm tra hòm thư chính và thư rác.`
+  const handleResendEmail = useCallback(() => {
+    toast.success(
+      `Liên kết kích hoạt mới đã được gửi tới ${email}. Vui lòng kiểm tra cả hòm thư chính và thư rác.`,
+      'Đã gửi lại thư xác thực'
     );
-  };
+  }, [email, toast]);
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <HeaderMotif title="XÁC THỰC TÀI KHOẢN" showFlag={false} />
 
-      <View style={styles.content}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+      >
         <View style={styles.card}>
           <View style={styles.iconCircle}>
             <Ionicons name="mail-unread-outline" size={54} color={theme.colors.primary} />
@@ -38,11 +43,13 @@ export const VerifyPendingScreen: React.FC = () => {
           </Text>
 
           <View style={styles.emailBadge}>
-            <Text style={styles.emailText}>{email}</Text>
+            <Text style={styles.emailText} numberOfLines={2}>
+              {email}
+            </Text>
           </View>
 
           <Text style={styles.note}>
-            Vui lòng nhấn vào đường liên kết trong email để kích hoạt tài khoản trước khi thực hiện các thủ tục kê khai thuế.
+            Vui lòng nhấn vào đường liên kết trong thư điện tử để kích hoạt tài khoản trước khi thực hiện các thủ tục kê khai thuế.
           </Text>
 
           <CustomButton
@@ -59,7 +66,7 @@ export const VerifyPendingScreen: React.FC = () => {
             <Text style={styles.resendText}>Chưa nhận được thư? Gửi lại</Text>
           </TouchableOpacity>
         </View>
-      </View>
+      </ScrollView>
     </SafeAreaView>
   );
 };
@@ -70,8 +77,9 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.background,
   },
   content: {
-    flex: 1,
+    flexGrow: 1,
     paddingHorizontal: theme.spacing.md,
+    paddingVertical: theme.spacing.lg,
     justifyContent: 'center',
   },
   card: {
@@ -82,6 +90,9 @@ const styles = StyleSheet.create({
     ...theme.shadows.card,
     borderWidth: 1,
     borderColor: theme.colors.border,
+    width: '100%',
+    maxWidth: 480,
+    alignSelf: 'center',
   },
   iconCircle: {
     width: 90,
@@ -111,11 +122,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     borderRadius: theme.borderRadius.md,
     marginBottom: theme.spacing.md,
+    maxWidth: '100%',
   },
   emailText: {
     ...theme.typography.bodyLarge,
     fontWeight: '700',
     color: theme.colors.primaryDark,
+    textAlign: 'center',
   },
   note: {
     ...theme.typography.caption,
@@ -136,5 +149,6 @@ const styles = StyleSheet.create({
     color: theme.colors.primary,
     fontWeight: '600',
     textDecorationLine: 'underline',
+    textAlign: 'center',
   },
 });

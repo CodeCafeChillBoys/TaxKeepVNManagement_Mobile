@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -8,9 +8,9 @@ import {
   Image,
   ActivityIndicator,
   RefreshControl,
-  ScrollView,
   BackHandler,
   Modal,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp, useFocusEffect } from '@react-navigation/native';
@@ -30,6 +30,14 @@ import {
   formatTimeRange,
   isValidAvatarUrl,
 } from '../../types/consultation';
+import { toFriendlyErrorMessage } from '../../utils/friendlyError';
+
+function formatLocalYmd(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
 
 const STATUS_TABS: { key: string; label: string; shortLabel: string; status?: BookingStatus }[] = [
   { key: 'ALL', label: 'Tất cả trạng thái', shortLabel: 'Trạng thái' },
@@ -58,131 +66,20 @@ const DATE_FILTER_OPTIONS: { key: 'ALL' | 'TODAY' | 'UPCOMING' | '7DAYS' | 'THIS
   { key: 'THIS_MONTH', label: 'Trong tháng này', shortLabel: 'Tháng này' },
 ];
 
-export const MyBookingsScreen: React.FC = () => {
-  const navigation = useNavigation<RootNavigationProp>();
-  const route = useRoute<RouteProp<RootStackParamList, 'MyBookings'>>();
+interface MyBookingCardItemProps {
+  item: BookingListItemResponse;
+  nowMs: number;
+  onPress: (bookingId: string) => void;
+}
 
-  const [activeTabKey, setActiveTabKey] = useState<string>(route.params?.initialStatus || 'ALL');
-  const [sessionFilter, setSessionFilter] = useState<'ALL' | 'ONLINE_MEETING' | 'CHAT' | 'VOICE_CALL'>('ALL');
-  const [dateFilter, setDateFilter] = useState<'ALL' | 'TODAY' | 'UPCOMING' | '7DAYS' | 'THIS_MONTH'>('ALL');
-  const [configuredSessionTypes, setConfiguredSessionTypes] = useState<string[]>(['ONLINE_MEETING']);
-  const [statusModalVisible, setStatusModalVisible] = useState(false);
-  const [sessionModalVisible, setSessionModalVisible] = useState(false);
-  const [dateModalVisible, setDateModalVisible] = useState(false);
+const MyBookingCardItem = React.memo<MyBookingCardItemProps>(({ item, nowMs, onPress }) => {
+  const statusInfo = formatBookingStatus(item.status, item.noShowType, false);
+  const sessionInfo = formatSessionType(item.sessionType);
 
-  const [bookings, setBookings] = useState<BookingListItemResponse[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
-
-  const displayedBookings = useMemo(() => {
-    const todayStr = new Date().toISOString().split('T')[0];
-    const now = new Date();
-    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 3600 * 1000).toISOString().split('T')[0];
-    const currentMonthPrefix = todayStr.slice(0, 7);
-
-    return bookings.filter((item) => {
-      if (activeTabKey === 'USER_NO_SHOW' && item.noShowType !== 'USER_NO_SHOW') {
-        return false;
-      }
-      if (sessionFilter !== 'ALL' && item.sessionType !== sessionFilter) {
-        return false;
-      }
-      if (dateFilter !== 'ALL') {
-        const slotDate = (item.slotDate || '').split('T')[0];
-        if (dateFilter === 'TODAY' && slotDate !== todayStr) return false;
-        if (dateFilter === 'UPCOMING' && slotDate < todayStr) return false;
-        if (dateFilter === '7DAYS' && slotDate < sevenDaysAgo) return false;
-        if (dateFilter === 'THIS_MONTH' && !slotDate.startsWith(currentMonthPrefix)) return false;
-      }
-      return true;
-    });
-  }, [bookings, activeTabKey, sessionFilter, dateFilter]);
-
-  // Countdown tick state
-  const [currentTimeMs, setCurrentTimeMs] = useState(Date.now());
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setCurrentTimeMs(Date.now());
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
-    consultationApi
-      .getConsultationFeeConfigs({ isActive: true })
-      .then((configs) => {
-        if (Array.isArray(configs)) {
-          const activeTypes = Array.from(
-            new Set(configs.filter((c) => c.isActive !== false).map((c) => c.sessionType))
-          );
-          if (activeTypes.length > 0) {
-            setConfiguredSessionTypes(activeTypes);
-          }
-        }
-      })
-      .catch(() => {});
-  }, []);
-
-  const fetchBookings = useCallback(
-    async (isRefresh = false, pageNum = 1) => {
-      if (isRefresh) setRefreshing(true);
-      else if (pageNum === 1) setLoading(true);
-      else setLoadingMore(true);
-
-      setError(null);
-      try {
-        const tab = STATUS_TABS.find((t) => t.key === activeTabKey);
-        const result = await consultationApi.getMyBookings({
-          status: tab?.status,
-          page: pageNum,
-          size: 10,
-        });
-
-        if (pageNum === 1) {
-          setBookings(result.items);
-        } else {
-          setBookings((prev) => [...prev, ...result.items]);
-        }
-        setPage(pageNum);
-        setHasMore(result.pagination.page < result.pagination.totalPages);
-      } catch (err: any) {
-        setError(err?.response?.data?.message || err?.message || 'Không thể tải danh sách lịch hẹn.');
-      } finally {
-        setLoading(false);
-        setRefreshing(false);
-        setLoadingMore(false);
-      }
-    },
-    [activeTabKey]
-  );
-
-  // Tự động tải lại danh sách lịch hẹn mới nhất mỗi khi quay lại màn hình
-  useFocusEffect(
-    useCallback(() => {
-      fetchBookings(false, 1);
-    }, [fetchBookings])
-  );
-
-  const handleRefresh = () => {
-    fetchBookings(true, 1);
-  };
-
-  const handleLoadMore = () => {
-    if (!loading && !loadingMore && hasMore) {
-      fetchBookings(false, page + 1);
-    }
-  };
-
-  // Helper calculation for hold timer
-  const renderHoldTimer = (item: BookingListItemResponse) => {
+  const renderHoldTimer = () => {
     if (item.status === 'PENDING_PAYMENT') {
       const expiresAtMs = new Date(item.holdExpiresAt).getTime();
-      const diffSec = Math.max(0, Math.floor((expiresAtMs - currentTimeMs) / 1000));
+      const diffSec = Math.max(0, Math.floor((expiresAtMs - nowMs) / 1000));
       const mins = Math.floor(diffSec / 60);
       const secs = diffSec % 60;
 
@@ -207,7 +104,7 @@ export const MyBookingsScreen: React.FC = () => {
 
     if (item.status === 'AWAITING_EXPERT_APPROVAL' && item.approvalDeadline) {
       const deadlineMs = new Date(item.approvalDeadline).getTime();
-      const diffSec = Math.max(0, Math.floor((deadlineMs - currentTimeMs) / 1000));
+      const diffSec = Math.max(0, Math.floor((deadlineMs - nowMs) / 1000));
       const hours = Math.floor(diffSec / 3600);
       const mins = Math.floor((diffSec % 3600) / 60);
 
@@ -232,6 +129,320 @@ export const MyBookingsScreen: React.FC = () => {
 
     return null;
   };
+
+  return (
+    <TouchableOpacity
+      style={styles.bookingCard}
+      activeOpacity={0.88}
+      onPress={() => onPress(item.id)}
+    >
+      {/* Header: Session & Status Indicator */}
+      <View style={styles.cardHeader}>
+        <View style={styles.sessionMeta}>
+          <Ionicons name={sessionInfo.icon as any} size={14} color="#666666" />
+          <Text style={styles.sessionMetaText}>{sessionInfo.label}</Text>
+        </View>
+
+        <View style={styles.statusIndicatorRow}>
+          <View style={[styles.statusDot, { backgroundColor: statusInfo.color }]} />
+          <Text style={[styles.statusIndicatorText, { color: statusInfo.color }]}>
+            {statusInfo.label}
+          </Text>
+        </View>
+      </View>
+
+      {/* Countdown banner if applicable */}
+      {renderHoldTimer()}
+
+      {/* No-Show Notice Strip */}
+      {item.noShowType === 'USER_NO_SHOW' && (
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            backgroundColor: '#FFF7ED',
+            borderWidth: 1,
+            borderColor: '#FED7AA',
+            borderRadius: 8,
+            paddingHorizontal: 10,
+            paddingVertical: 7,
+            marginBottom: 10,
+            gap: 6,
+          }}
+        >
+          <Ionicons name="alert-circle" size={15} color="#C2410C" />
+          <Text style={{ flex: 1, fontFamily: fonts.bodySemi, fontSize: 12, color: '#9A3412' }}>
+            Bạn không tham gia phòng tư vấn sau 15 phút • Hệ thống tự động đóng ca
+          </Text>
+        </View>
+      )}
+      {item.noShowType === 'EXPERT_NO_SHOW' && (
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            backgroundColor: '#ECFDF5',
+            borderWidth: 1,
+            borderColor: '#A7F3D0',
+            borderRadius: 8,
+            paddingHorizontal: 10,
+            paddingVertical: 7,
+            marginBottom: 10,
+            gap: 6,
+          }}
+        >
+          <Ionicons name="shield-checkmark" size={15} color="#059669" />
+          <Text style={{ flex: 1, fontFamily: fonts.bodySemi, fontSize: 12, color: '#065F46' }}>
+            Chuyên gia vắng mặt quá 15 phút • Đã hoàn tiền 100% về ví
+          </Text>
+        </View>
+      )}
+
+      {/* Expert info row */}
+      <View style={styles.expertRow}>
+        <View style={styles.expertAvatarWrap}>
+          {isValidAvatarUrl(item.expertAvatarUrl) ? (
+            <Image source={{ uri: item.expertAvatarUrl! }} style={styles.expertAvatar} />
+          ) : (
+            <View style={styles.expertAvatarPlaceholder}>
+              <Text style={styles.expertAvatarLetter}>
+                {item.expertFullName.trim().charAt(item.expertFullName.trim().length - 1)}
+              </Text>
+            </View>
+          )}
+        </View>
+        <View style={styles.expertInfo}>
+          <Text style={styles.expertName} numberOfLines={1}>
+            {item.expertFullName}
+          </Text>
+          <Text style={styles.specName} numberOfLines={1}>
+            Chủ đề: {item.specializationName || 'Tư vấn thuế'}
+          </Text>
+        </View>
+      </View>
+
+      {/* Topic title */}
+      <Text style={styles.topicTitle} numberOfLines={2}>
+        {item.topicTitle}
+      </Text>
+
+      {/* Slot schedule row */}
+      <View style={styles.scheduleRow}>
+        <View style={styles.scheduleTime}>
+          <Ionicons name="calendar-outline" size={14} color="#666666" />
+          <Text style={styles.scheduleDateText}>
+            {formatVietnameseDate(item.slotDate)}
+          </Text>
+          <Text style={styles.scheduleHoursText}>
+            ({formatTimeRange(item.startTime, item.endTime)})
+          </Text>
+        </View>
+      </View>
+
+      {/* Card footer: Fee & action */}
+      <View style={styles.cardFooter}>
+        <View style={styles.feeWrap}>
+          <Text style={styles.feeLabel}>Phí tư vấn:</Text>
+          <Text style={styles.feeValue} numberOfLines={1} adjustsFontSizeToFit>
+            {formatVnd(item.fee)}
+          </Text>
+        </View>
+
+        <View style={styles.arrowWrap}>
+          <Text style={styles.detailLinkText}>Chi tiết</Text>
+          <Ionicons name="chevron-forward" size={14} color={theme.colors.primary} />
+        </View>
+      </View>
+    </TouchableOpacity>
+  );
+});
+
+export const MyBookingsScreen: React.FC = () => {
+  const navigation = useNavigation<RootNavigationProp>();
+  const route = useRoute<RouteProp<RootStackParamList, 'MyBookings'>>();
+
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  const [activeTabKey, setActiveTabKey] = useState<string>(route.params?.initialStatus || 'ALL');
+  const [sessionFilter, setSessionFilter] = useState<'ALL' | 'ONLINE_MEETING' | 'CHAT' | 'VOICE_CALL'>('ALL');
+  const [dateFilter, setDateFilter] = useState<'ALL' | 'TODAY' | 'UPCOMING' | '7DAYS' | 'THIS_MONTH'>('ALL');
+  const [configuredSessionTypes, setConfiguredSessionTypes] = useState<string[]>(['ONLINE_MEETING']);
+  const [statusModalVisible, setStatusModalVisible] = useState(false);
+  const [sessionModalVisible, setSessionModalVisible] = useState(false);
+  const [dateModalVisible, setDateModalVisible] = useState(false);
+
+  const [bookings, setBookings] = useState<BookingListItemResponse[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  const displayedBookings = useMemo(() => {
+    const now = new Date();
+    const todayStr = formatLocalYmd(now);
+    const sevenDaysAgo = formatLocalYmd(new Date(now.getTime() - 7 * 24 * 3600 * 1000));
+    const currentMonthPrefix = todayStr.slice(0, 7);
+
+    return bookings.filter((item) => {
+      if (activeTabKey === 'USER_NO_SHOW' && item.noShowType !== 'USER_NO_SHOW') {
+        return false;
+      }
+      if (sessionFilter !== 'ALL' && item.sessionType !== sessionFilter) {
+        return false;
+      }
+      if (dateFilter !== 'ALL') {
+        const slotDate = (item.slotDate || '').split('T')[0];
+        if (dateFilter === 'TODAY' && slotDate !== todayStr) return false;
+        if (dateFilter === 'UPCOMING' && slotDate < todayStr) return false;
+        if (dateFilter === '7DAYS' && slotDate < sevenDaysAgo) return false;
+        if (dateFilter === 'THIS_MONTH' && !slotDate.startsWith(currentMonthPrefix)) return false;
+      }
+      return true;
+    });
+  }, [bookings, activeTabKey, sessionFilter, dateFilter]);
+
+  // Countdown tick state — only run when visible bookings actually have an active countdown
+  const [currentTimeMs, setCurrentTimeMs] = useState(Date.now());
+
+  const countdownIntervalMs = useMemo(() => {
+    const nowMs = Date.now();
+    const hasActiveHold = displayedBookings.some(
+      (b) =>
+        b.status === 'PENDING_PAYMENT' &&
+        b.holdExpiresAt != null &&
+        new Date(b.holdExpiresAt).getTime() > nowMs
+    );
+    if (hasActiveHold) return 1000;
+
+    const hasActiveApproval = displayedBookings.some(
+      (b) =>
+        b.status === 'AWAITING_EXPERT_APPROVAL' &&
+        b.approvalDeadline != null &&
+        new Date(b.approvalDeadline).getTime() > nowMs
+    );
+    if (hasActiveApproval) return 30_000;
+
+    return 0;
+  }, [displayedBookings]);
+
+  useEffect(() => {
+    if (!countdownIntervalMs) return;
+    setCurrentTimeMs(Date.now());
+    const timer = setInterval(() => {
+      setCurrentTimeMs(Date.now());
+    }, countdownIntervalMs);
+    return () => clearInterval(timer);
+  }, [countdownIntervalMs]);
+
+  useEffect(() => {
+    let alive = true;
+    consultationApi
+      .getConsultationFeeConfigs({ isActive: true })
+      .then((configs) => {
+        if (!alive || !isMountedRef.current) return;
+        if (Array.isArray(configs)) {
+          const activeTypes = Array.from(
+            new Set(configs.filter((c) => c.isActive !== false).map((c) => c.sessionType))
+          );
+          if (activeTypes.length > 0) {
+            setConfiguredSessionTypes(activeTypes);
+          }
+        }
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const fetchBookings = useCallback(
+    async (isRefresh = false, pageNum = 1) => {
+      if (!isMountedRef.current) return;
+      if (isRefresh) setRefreshing(true);
+      else if (pageNum === 1) setLoading(true);
+      else setLoadingMore(true);
+
+      setError(null);
+      try {
+        const tab = STATUS_TABS.find((t) => t.key === activeTabKey);
+        const result = await consultationApi.getMyBookings({
+          status: tab?.status,
+          page: pageNum,
+          size: 10,
+        });
+
+        if (!isMountedRef.current) return;
+
+        if (pageNum === 1) {
+          setBookings(result.items);
+        } else {
+          setBookings((prev) => [...prev, ...result.items]);
+        }
+        setPage(pageNum);
+        setHasMore(result.pagination.page < result.pagination.totalPages);
+      } catch (err: any) {
+        if (isMountedRef.current) {
+          setError(toFriendlyErrorMessage(err, 'Không thể tải danh sách lịch hẹn.'));
+        }
+      } finally {
+        if (isMountedRef.current) {
+          setLoading(false);
+          setRefreshing(false);
+          setLoadingMore(false);
+        }
+      }
+    },
+    [activeTabKey]
+  );
+
+  // Tự động tải lại danh sách lịch hẹn mới nhất mỗi khi quay lại màn hình
+  useFocusEffect(
+    useCallback(() => {
+      fetchBookings(false, 1);
+    }, [fetchBookings])
+  );
+
+  const handleRefresh = useCallback(() => {
+    fetchBookings(true, 1);
+  }, [fetchBookings]);
+
+  const handleLoadMore = useCallback(() => {
+    if (!loading && !loadingMore && hasMore) {
+      fetchBookings(false, page + 1);
+    }
+  }, [loading, loadingMore, hasMore, fetchBookings, page]);
+
+  const handlePressBooking = useCallback(
+    (bookingId: string) => {
+      navigation.navigate('BookingDetail', { bookingId });
+    },
+    [navigation]
+  );
+
+  const keyExtractor = useCallback((item: BookingListItemResponse) => item.id, []);
+
+  const renderBookingItem = useCallback(
+    ({ item }: { item: BookingListItemResponse }) => {
+      const needsTick =
+        item.status === 'PENDING_PAYMENT' || item.status === 'AWAITING_EXPERT_APPROVAL';
+      return (
+        <MyBookingCardItem
+          item={item}
+          nowMs={needsTick ? currentTimeMs : 0}
+          onPress={handlePressBooking}
+        />
+      );
+    },
+    [currentTimeMs, handlePressBooking]
+  );
 
   const handleBack = useCallback(() => {
     const state = navigation.getState();
@@ -420,8 +631,13 @@ export const MyBookingsScreen: React.FC = () => {
       ) : (
         <FlatList
           data={displayedBookings}
-          keyExtractor={(item) => item.id}
+          keyExtractor={keyExtractor}
+          renderItem={renderBookingItem}
           contentContainerStyle={styles.listContent}
+          initialNumToRender={8}
+          maxToRenderPerBatch={8}
+          windowSize={7}
+          removeClippedSubviews={Platform.OS === 'android'}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -449,143 +665,13 @@ export const MyBookingsScreen: React.FC = () => {
               </TouchableOpacity>
             </View>
           }
-          renderItem={({ item }) => {
-            const statusInfo = formatBookingStatus(item.status, item.noShowType, false);
-            const sessionInfo = formatSessionType(item.sessionType);
-
-            return (
-              <TouchableOpacity
-                style={styles.bookingCard}
-                activeOpacity={0.88}
-                onPress={() => navigation.navigate('BookingDetail', { bookingId: item.id })}
-              >
-                {/* Header: Session & Status Indicator */}
-                <View style={styles.cardHeader}>
-                  <View style={styles.sessionMeta}>
-                    <Ionicons name={sessionInfo.icon as any} size={14} color="#666666" />
-                    <Text style={styles.sessionMetaText}>
-                      {sessionInfo.label}
-                    </Text>
-                  </View>
-
-                  <View style={styles.statusIndicatorRow}>
-                    <View style={[styles.statusDot, { backgroundColor: statusInfo.color }]} />
-                    <Text style={[styles.statusIndicatorText, { color: statusInfo.color }]}>
-                      {statusInfo.label}
-                    </Text>
-                  </View>
-                </View>
-
-                {/* Countdown banner if applicable */}
-                {renderHoldTimer(item)}
-
-                {/* No-Show Notice Strip */}
-                {item.noShowType === 'USER_NO_SHOW' && (
-                  <View
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      backgroundColor: '#FFF7ED',
-                      borderWidth: 1,
-                      borderColor: '#FED7AA',
-                      borderRadius: 8,
-                      paddingHorizontal: 10,
-                      paddingVertical: 7,
-                      marginBottom: 10,
-                      gap: 6,
-                    }}
-                  >
-                    <Ionicons name="alert-circle" size={15} color="#C2410C" />
-                    <Text style={{ flex: 1, fontFamily: fonts.bodySemi, fontSize: 12, color: '#9A3412' }}>
-                      Bạn không tham gia phòng tư vấn sau 15 phút • Hệ thống tự động đóng ca
-                    </Text>
-                  </View>
-                )}
-                {item.noShowType === 'EXPERT_NO_SHOW' && (
-                  <View
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      backgroundColor: '#ECFDF5',
-                      borderWidth: 1,
-                      borderColor: '#A7F3D0',
-                      borderRadius: 8,
-                      paddingHorizontal: 10,
-                      paddingVertical: 7,
-                      marginBottom: 10,
-                      gap: 6,
-                    }}
-                  >
-                    <Ionicons name="shield-checkmark" size={15} color="#059669" />
-                    <Text style={{ flex: 1, fontFamily: fonts.bodySemi, fontSize: 12, color: '#065F46' }}>
-                      Chuyên gia vắng mặt quá 15 phút • Đã hoàn tiền 100% về ví
-                    </Text>
-                  </View>
-                )}
-
-                {/* Expert info row */}
-                <View style={styles.expertRow}>
-                  <View style={styles.expertAvatarWrap}>
-                    {isValidAvatarUrl(item.expertAvatarUrl) ? (
-                      <Image source={{ uri: item.expertAvatarUrl! }} style={styles.expertAvatar} />
-                    ) : (
-                      <View style={styles.expertAvatarPlaceholder}>
-                        <Text style={styles.expertAvatarLetter}>
-                          {item.expertFullName.trim().charAt(item.expertFullName.trim().length - 1)}
-                        </Text>
-                      </View>
-                    )}
-                  </View>
-                  <View style={styles.expertInfo}>
-                    <Text style={styles.expertName} numberOfLines={1}>
-                      {item.expertFullName}
-                    </Text>
-                    <Text style={styles.specName} numberOfLines={1}>
-                      Chủ đề: {item.specializationName || 'Tư vấn thuế'}
-                    </Text>
-                  </View>
-                </View>
-
-                {/* Topic title */}
-                <Text style={styles.topicTitle} numberOfLines={2}>
-                  {item.topicTitle}
-                </Text>
-
-                {/* Slot schedule row */}
-                <View style={styles.scheduleRow}>
-                  <View style={styles.scheduleTime}>
-                    <Ionicons name="calendar-outline" size={14} color="#666666" />
-                    <Text style={styles.scheduleDateText}>
-                      {formatVietnameseDate(item.slotDate)}
-                    </Text>
-                    <Text style={styles.scheduleHoursText}>
-                      ({formatTimeRange(item.startTime, item.endTime)})
-                    </Text>
-                  </View>
-                </View>
-
-                {/* Card footer: Fee & action */}
-                <View style={styles.cardFooter}>
-                  <View style={styles.feeWrap}>
-                    <Text style={styles.feeLabel}>Phí tư vấn:</Text>
-                    <Text style={styles.feeValue}>{formatVnd(item.fee)}</Text>
-                  </View>
-
-                  <View style={styles.arrowWrap}>
-                    <Text style={styles.detailLinkText}>Chi tiết</Text>
-                    <Ionicons name="chevron-forward" size={14} color={theme.colors.primary} />
-                  </View>
-                </View>
-              </TouchableOpacity>
-            );
-          }}
           ListFooterComponent={
             loadingMore ? (
               <View style={styles.footerLoading}>
                 <ActivityIndicator size="small" color={theme.colors.primary} />
                 <Text style={styles.footerLoadingText}>Đang tải thêm...</Text>
               </View>
-            ) : null
+            ) : undefined
           }
         />
       )}
@@ -776,6 +862,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
+    maxWidth: 720,
+    width: '100%',
+    alignSelf: 'center',
   },
   dropdownFilterBtn: {
     flex: 1,
@@ -870,6 +959,9 @@ const styles = StyleSheet.create({
   listContent: {
     padding: 16,
     paddingBottom: 32,
+    maxWidth: 720,
+    width: '100%',
+    alignSelf: 'center',
   },
 
   // Booking Card
@@ -1028,8 +1120,11 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     borderTopWidth: 1,
     borderTopColor: '#F3EFE6',
+    gap: 8,
   },
   feeWrap: {
+    flex: 1,
+    flexShrink: 1,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
@@ -1038,17 +1133,20 @@ const styles = StyleSheet.create({
     fontFamily: fonts.body,
     fontSize: 11,
     color: '#777777',
+    flexShrink: 0,
   },
   feeValue: {
     fontFamily: fonts.serifBold,
     fontSize: 13,
     color: theme.colors.primary,
     fontVariant: ['tabular-nums'],
+    flexShrink: 1,
   },
   arrowWrap: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 2,
+    flexShrink: 0,
   },
   detailLinkText: {
     fontFamily: fonts.bodyBold,

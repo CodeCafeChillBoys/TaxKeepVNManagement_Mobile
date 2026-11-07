@@ -24,7 +24,7 @@ type Props = {
   active?: TabKey;
 };
 
-export function MainTabBar({ active }: Props) {
+export const MainTabBar = React.memo(function MainTabBar({ active }: Props) {
   const navigation = useNavigation<RootNavigationProp>();
   const route = useRoute();
   const current = active ?? (route.name as TabKey);
@@ -52,27 +52,32 @@ export function MainTabBar({ active }: Props) {
               size={22}
               color={isActive ? theme.colors.primary : theme.colors.textSecondary}
             />
-            <Text style={[styles.label, isActive && styles.labelActive]}>{tab.label}</Text>
+            <Text style={[styles.label, isActive && styles.labelActive]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.85}>
+              {tab.label}
+            </Text>
           </TouchableOpacity>
         );
       })}
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   bar: {
-    height: 68,
+    minHeight: 68,
     backgroundColor: '#FFFFFF',
     borderTopWidth: 1,
     borderTopColor: theme.colors.border,
     flexDirection: 'row',
-    paddingTop: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 4,
   },
   item: {
     flex: 1,
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 3,
+    paddingHorizontal: 2,
   },
   label: {
     ...theme.typography.tabBarLabel,

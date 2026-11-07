@@ -83,7 +83,7 @@ export const TaxChatHistoryScreen: React.FC = () => {
           refreshing={loading}
           testID="chatSessionList"
           ListEmptyComponent={
-            error ? null : (
+            error ? undefined : (
               <Text style={styles.empty} testID="chatHistoryEmpty">
                 Chưa có cuộc trò chuyện nào.
               </Text>

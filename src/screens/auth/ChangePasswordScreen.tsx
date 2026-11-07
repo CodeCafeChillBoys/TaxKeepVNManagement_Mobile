@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -7,8 +7,8 @@ import {
   TouchableOpacity,
   TextInput,
   ActivityIndicator,
-  Alert,
   Platform,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -17,10 +17,13 @@ import { theme } from '../../constants/theme';
 import { HomeHeaderButton } from '../../components/navigation/HomeHeaderButton';
 import { authApi } from '../../api/authApi';
 import { PasswordStrengthBar } from '../../components/common/PasswordStrengthBar';
+import { useToast } from '../../components/ui/Toast';
 import { RootNavigationProp } from '../../navigation/types';
+import { sanitizeUiMessage, toFriendlyError } from '../../utils/friendlyError';
 
 export const ChangePasswordScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
+  const { toast } = useToast();
 
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -32,8 +35,15 @@ export const ChangePasswordScreen: React.FC = () => {
 
   const [submitting, setSubmitting] = useState(false);
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
+  const isMountedRef = useRef(true);
 
-  const validate = (): boolean => {
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  const validate = useCallback((): boolean => {
     const errs: { [key: string]: string } = {};
 
     if (!currentPassword) {
@@ -42,14 +52,12 @@ export const ChangePasswordScreen: React.FC = () => {
 
     if (!newPassword) {
       errs.newPassword = 'Vui lòng nhập mật khẩu mới.';
-    } else {
-      if (newPassword.length < 8) {
-        errs.newPassword = 'Mật khẩu mới phải có ít nhất 8 ký tự.';
-      } else if (!/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/.test(newPassword)) {
-        errs.newPassword = 'Mật khẩu phải gồm ít nhất 1 chữ hoa, 1 chữ thường và 1 chữ số.';
-      } else if (currentPassword && newPassword === currentPassword) {
-        errs.newPassword = 'Mật khẩu mới không được trùng với mật khẩu hiện tại.';
-      }
+    } else if (newPassword.length < 8) {
+      errs.newPassword = 'Mật khẩu mới phải có ít nhất 8 ký tự.';
+    } else if (!/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/.test(newPassword)) {
+      errs.newPassword = 'Mật khẩu phải gồm ít nhất 1 chữ hoa, 1 chữ thường và 1 chữ số.';
+    } else if (currentPassword && newPassword === currentPassword) {
+      errs.newPassword = 'Mật khẩu mới không được trùng với mật khẩu hiện tại.';
     }
 
     if (!confirmNewPassword) {
@@ -60,9 +68,9 @@ export const ChangePasswordScreen: React.FC = () => {
 
     setErrors(errs);
     return Object.keys(errs).length === 0;
-  };
+  }, [confirmNewPassword, currentPassword, newPassword]);
 
-  const handleSubmit = async () => {
+  const handleSubmit = useCallback(async () => {
     if (!validate()) {
       return;
     }
@@ -74,29 +82,31 @@ export const ChangePasswordScreen: React.FC = () => {
         newPassword: newPassword.trim(),
         confirmNewPassword: confirmNewPassword.trim(),
       });
+      if (!isMountedRef.current) return;
 
-      const successMsg =
-        res.message || 'Đổi mật khẩu thành công! Các phiên làm việc khác đã được đăng xuất an toàn.';
-
-      if (Platform.OS === 'web') {
-        window.alert(successMsg);
-        navigation.goBack();
-      } else {
-        Alert.alert('Thành công', successMsg, [
-          {
-            text: 'Xác nhận',
-            onPress: () => navigation.goBack(),
-          },
-        ]);
-      }
+      const successMsg = sanitizeUiMessage(
+        res.message,
+        'Mật khẩu mới đã được áp dụng. Các thiết bị khác đã được đăng xuất an toàn.'
+      );
+      toast.success(successMsg, 'Đổi mật khẩu thành công');
+      navigation.goBack();
     } catch (err: any) {
-      const resp = err.response?.data;
+      if (!isMountedRef.current) return;
+      const resp = err?.response?.data;
       const errorCode = resp?.errorCode;
-      const msg = resp?.message || 'Không thể đổi mật khẩu. Vui lòng kiểm tra lại.';
+      const msg = String(resp?.message || '');
 
-      if (errorCode === 'WRONG_CURRENT_PASSWORD' || errorCode === 'INCORRECT_CURRENT_PASSWORD' || msg.includes('hiện tại')) {
+      if (
+        errorCode === 'WRONG_CURRENT_PASSWORD' ||
+        errorCode === 'INCORRECT_CURRENT_PASSWORD' ||
+        msg.includes('hiện tại')
+      ) {
         setErrors((prev) => ({ ...prev, currentPassword: 'Mật khẩu hiện tại không chính xác.' }));
-      } else if (errorCode === 'SAME_PASSWORD' || errorCode === 'PASSWORD_CANNOT_BE_IDENTICAL' || msg.includes('trùng')) {
+      } else if (
+        errorCode === 'SAME_PASSWORD' ||
+        errorCode === 'PASSWORD_CANNOT_BE_IDENTICAL' ||
+        msg.includes('trùng')
+      ) {
         setErrors((prev) => ({
           ...prev,
           newPassword: 'Mật khẩu mới không được trùng với mật khẩu hiện tại.',
@@ -104,12 +114,18 @@ export const ChangePasswordScreen: React.FC = () => {
       } else if (errorCode === 'NEW_PASSWORDS_DO_NOT_MATCH' || msg.includes('khớp')) {
         setErrors((prev) => ({ ...prev, confirmNewPassword: 'Mật khẩu xác nhận không khớp.' }));
       } else {
-        Alert.alert('Đổi mật khẩu thất bại', msg);
+        const friendly = toFriendlyError(err, {
+          fallbackTitle: 'Chưa đổi được mật khẩu',
+          fallbackMessage: 'Không thể cập nhật mật khẩu lúc này. Vui lòng kiểm tra lại và thử lại.',
+        });
+        toast.error(friendly.message, friendly.title);
       }
     } finally {
-      setSubmitting(false);
+      if (isMountedRef.current) {
+        setSubmitting(false);
+      }
     }
-  };
+  }, [confirmNewPassword, currentPassword, navigation, newPassword, toast, validate]);
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -123,197 +139,209 @@ export const ChangePasswordScreen: React.FC = () => {
         >
           <Ionicons name="arrow-back" size={24} color={theme.colors.textPrimary} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle} testID="changePasswordHeaderTitle">
+        <Text style={styles.headerTitle} numberOfLines={1} testID="changePasswordHeaderTitle">
           ĐỔI MẬT KHẨU
         </Text>
-        <View style={styles.homeSlot}><HomeHeaderButton /></View>
+        <View style={styles.homeSlot}>
+          <HomeHeaderButton />
+        </View>
       </View>
 
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.keyboardView}
       >
-        {/* Banner bảo mật */}
-        <View style={styles.securityCard}>
-          <View style={styles.securityIconCircle}>
-            <Ionicons name="shield-checkmark" size={24} color={theme.colors.primary} />
-          </View>
-          <View style={styles.securityTextCol}>
-            <Text style={styles.securityTitle}>Bảo vệ tài khoản an toàn</Text>
-            <Text style={styles.securitySubtitle}>
-              Mật khẩu mạnh cần tối thiểu 8 ký tự, kết hợp chữ hoa, chữ thường và chữ số để ngăn ngừa truy cập trái phép.
-            </Text>
-          </View>
-        </View>
-
-        {/* Card biểu mẫu đổi mật khẩu */}
-        <View style={styles.formCard}>
-          {/* Mật khẩu hiện tại */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>
-              Mật khẩu hiện tại <Text style={styles.required}>*</Text>
-            </Text>
-            <View style={[styles.inputRow, errors.currentPassword && styles.inputError]}>
-              <TextInput
-                style={styles.inputField}
-                value={currentPassword}
-                onChangeText={(val) => {
-                  setCurrentPassword(val);
-                  if (errors.currentPassword) setErrors((prev) => ({ ...prev, currentPassword: '' }));
-                }}
-                placeholder="Nhập mật khẩu hiện tại"
-                placeholderTextColor={theme.colors.textPlaceholder}
-                secureTextEntry={!showCurrent}
-                autoCapitalize="none"
-              />
-              <TouchableOpacity
-                style={styles.eyeBtn}
-                onPress={() => setShowCurrent(!showCurrent)}
-                accessibilityRole="button"
-                accessibilityLabel={showCurrent ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
-              >
-                <Ionicons
-                  name={showCurrent ? 'eye-off-outline' : 'eye-outline'}
-                  size={20}
-                  color={theme.colors.textSecondary}
-                />
-              </TouchableOpacity>
-            </View>
-            {errors.currentPassword ? (
-              <Text style={styles.errorText}>{errors.currentPassword}</Text>
-            ) : null}
-          </View>
-
-          {/* Mật khẩu mới */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>
-              Mật khẩu mới <Text style={styles.required}>*</Text>
-            </Text>
-            <View style={[styles.inputRow, errors.newPassword && styles.inputError]}>
-              <TextInput
-                style={styles.inputField}
-                value={newPassword}
-                onChangeText={(val) => {
-                  setNewPassword(val);
-                  if (errors.newPassword) setErrors((prev) => ({ ...prev, newPassword: '' }));
-                }}
-                placeholder="Tối thiểu 8 ký tự, có hoa, thường, số"
-                placeholderTextColor={theme.colors.textPlaceholder}
-                secureTextEntry={!showNew}
-                autoCapitalize="none"
-              />
-              <TouchableOpacity
-                style={styles.eyeBtn}
-                onPress={() => setShowNew(!showNew)}
-                accessibilityRole="button"
-                accessibilityLabel={showNew ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
-              >
-                <Ionicons
-                  name={showNew ? 'eye-off-outline' : 'eye-outline'}
-                  size={20}
-                  color={theme.colors.textSecondary}
-                />
-              </TouchableOpacity>
-            </View>
-            {errors.newPassword ? (
-              <Text style={styles.errorText}>{errors.newPassword}</Text>
-            ) : null}
-
-            {/* Thanh đo độ mạnh mật khẩu realtime */}
-            {newPassword.length > 0 && (
-              <View style={{ marginTop: 10 }}>
-                <PasswordStrengthBar passwordText={newPassword} />
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={styles.contentWrap}>
+            {/* Banner bảo mật */}
+            <View style={styles.securityCard}>
+              <View style={styles.securityIconCircle}>
+                <Ionicons name="shield-checkmark" size={24} color={theme.colors.primary} />
               </View>
-            )}
-          </View>
-
-          {/* Xác nhận mật khẩu mới */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>
-              Xác nhận mật khẩu mới <Text style={styles.required}>*</Text>
-            </Text>
-            <View style={[styles.inputRow, errors.confirmNewPassword && styles.inputError]}>
-              <TextInput
-                style={styles.inputField}
-                value={confirmNewPassword}
-                onChangeText={(val) => {
-                  setConfirmNewPassword(val);
-                  if (errors.confirmNewPassword)
-                    setErrors((prev) => ({ ...prev, confirmNewPassword: '' }));
-                }}
-                placeholder="Nhập lại mật khẩu mới"
-                placeholderTextColor={theme.colors.textPlaceholder}
-                secureTextEntry={!showConfirm}
-                autoCapitalize="none"
-              />
-              <TouchableOpacity
-                style={styles.eyeBtn}
-                onPress={() => setShowConfirm(!showConfirm)}
-                accessibilityRole="button"
-                accessibilityLabel={showConfirm ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
-              >
-                <Ionicons
-                  name={showConfirm ? 'eye-off-outline' : 'eye-outline'}
-                  size={20}
-                  color={theme.colors.textSecondary}
-                />
-              </TouchableOpacity>
+              <View style={styles.securityTextCol}>
+                <Text style={styles.securityTitle}>Bảo vệ tài khoản an toàn</Text>
+                <Text style={styles.securitySubtitle}>
+                  Mật khẩu mạnh cần tối thiểu 8 ký tự, kết hợp chữ hoa, chữ thường và chữ số để ngăn ngừa truy cập trái phép.
+                </Text>
+              </View>
             </View>
-            {errors.confirmNewPassword ? (
-              <Text style={styles.errorText}>{errors.confirmNewPassword}</Text>
-            ) : null}
-          </View>
-        </View>
 
-        {/* Lời nhắc an toàn */}
-        <View style={styles.tipBox}>
-          <Ionicons name="information-circle-outline" size={20} color={theme.colors.info} />
-          <Text style={styles.tipText}>
-            Sau khi đổi mật khẩu thành công, bạn sẽ nhận được thông báo xác nhận và các phiên đăng nhập trên thiết bị khác sẽ được tự động kết thúc.
-          </Text>
-        </View>
+            {/* Card biểu mẫu đổi mật khẩu */}
+            <View style={styles.formCard}>
+              {/* Mật khẩu hiện tại */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>
+                  Mật khẩu hiện tại <Text style={styles.required}>*</Text>
+                </Text>
+                <View style={[styles.inputRow, errors.currentPassword && styles.inputError]}>
+                  <TextInput
+                    style={styles.inputField}
+                    value={currentPassword}
+                    onChangeText={(val) => {
+                      setCurrentPassword(val);
+                      if (errors.currentPassword) {
+                        setErrors((prev) => ({ ...prev, currentPassword: '' }));
+                      }
+                    }}
+                    placeholderTextColor={theme.colors.textPlaceholder}
+                    secureTextEntry={!showCurrent}
+                    autoCapitalize="none"
+                  />
+                  <TouchableOpacity
+                    style={styles.eyeBtn}
+                    onPress={() => setShowCurrent(!showCurrent)}
+                    accessibilityRole="button"
+                    accessibilityLabel={showCurrent ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
+                  >
+                    <Ionicons
+                      name={showCurrent ? 'eye-off-outline' : 'eye-outline'}
+                      size={20}
+                      color={theme.colors.textSecondary}
+                    />
+                  </TouchableOpacity>
+                </View>
+                {errors.currentPassword ? (
+                  <Text style={styles.errorText}>{errors.currentPassword}</Text>
+                ) : null}
+              </View>
 
-        {/* Nút hành động */}
-        <TouchableOpacity
-          style={[styles.submitBtn, submitting && styles.submitBtnDisabled]}
-          onPress={handleSubmit}
-          disabled={submitting}
-          activeOpacity={0.85}
-          accessibilityRole="button"
-          accessibilityLabel="Đổi mật khẩu"
-          testID="submitChangePasswordBtn"
-        >
-          {submitting ? (
-            <View style={styles.loadingRow}>
-              <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
-              <Text style={styles.submitBtnText}>Đang cập nhật...</Text>
+              {/* Mật khẩu mới */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>
+                  Mật khẩu mới <Text style={styles.required}>*</Text>
+                </Text>
+                <View style={[styles.inputRow, errors.newPassword && styles.inputError]}>
+                  <TextInput
+                    style={styles.inputField}
+                    value={newPassword}
+                    onChangeText={(val) => {
+                      setNewPassword(val);
+                      if (errors.newPassword) {
+                        setErrors((prev) => ({ ...prev, newPassword: '' }));
+                      }
+                    }}
+                    placeholder="Tối thiểu 8 ký tự, có chữ hoa, thường, số"
+                    placeholderTextColor={theme.colors.textPlaceholder}
+                    secureTextEntry={!showNew}
+                    autoCapitalize="none"
+                  />
+                  <TouchableOpacity
+                    style={styles.eyeBtn}
+                    onPress={() => setShowNew(!showNew)}
+                    accessibilityRole="button"
+                    accessibilityLabel={showNew ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
+                  >
+                    <Ionicons
+                      name={showNew ? 'eye-off-outline' : 'eye-outline'}
+                      size={20}
+                      color={theme.colors.textSecondary}
+                    />
+                  </TouchableOpacity>
+                </View>
+                {errors.newPassword ? (
+                  <Text style={styles.errorText}>{errors.newPassword}</Text>
+                ) : null}
+
+                {/* Thanh đo độ mạnh mật khẩu realtime */}
+                {newPassword.length > 0 && (
+                  <View style={styles.strengthWrap}>
+                    <PasswordStrengthBar passwordText={newPassword} />
+                  </View>
+                )}
+              </View>
+
+              {/* Xác nhận mật khẩu mới */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>
+                  Xác nhận mật khẩu mới <Text style={styles.required}>*</Text>
+                </Text>
+                <View style={[styles.inputRow, errors.confirmNewPassword && styles.inputError]}>
+                  <TextInput
+                    style={styles.inputField}
+                    value={confirmNewPassword}
+                    onChangeText={(val) => {
+                      setConfirmNewPassword(val);
+                      if (errors.confirmNewPassword) {
+                        setErrors((prev) => ({ ...prev, confirmNewPassword: '' }));
+                      }
+                    }}
+                    placeholderTextColor={theme.colors.textPlaceholder}
+                    secureTextEntry={!showConfirm}
+                    autoCapitalize="none"
+                  />
+                  <TouchableOpacity
+                    style={styles.eyeBtn}
+                    onPress={() => setShowConfirm(!showConfirm)}
+                    accessibilityRole="button"
+                    accessibilityLabel={showConfirm ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
+                  >
+                    <Ionicons
+                      name={showConfirm ? 'eye-off-outline' : 'eye-outline'}
+                      size={20}
+                      color={theme.colors.textSecondary}
+                    />
+                  </TouchableOpacity>
+                </View>
+                {errors.confirmNewPassword ? (
+                  <Text style={styles.errorText}>{errors.confirmNewPassword}</Text>
+                ) : null}
+              </View>
             </View>
-          ) : (
-            <Text style={styles.submitBtnText}>Xác nhận đổi mật khẩu</Text>
-          )}
-        </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.cancelBtn}
-          onPress={() => navigation.goBack()}
-          disabled={submitting}
-        >
-          <Text style={styles.cancelBtnText}>Hủy</Text>
-        </TouchableOpacity>
+            {/* Lời nhắc an toàn */}
+            <View style={styles.tipBox}>
+              <Ionicons name="information-circle-outline" size={20} color={theme.colors.info} />
+              <Text style={styles.tipText}>
+                Sau khi đổi mật khẩu thành công, bạn sẽ nhận được thông báo xác nhận và các lần đăng nhập trên thiết bị khác sẽ tự động kết thúc.
+              </Text>
+            </View>
 
-        <View style={{ height: 40 }} />
-      </ScrollView>
+            {/* Nút hành động */}
+            <TouchableOpacity
+              style={[styles.submitBtn, submitting && styles.submitBtnDisabled]}
+              onPress={handleSubmit}
+              disabled={submitting}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="Đổi mật khẩu"
+              testID="submitChangePasswordBtn"
+            >
+              {submitting ? (
+                <View style={styles.loadingRow}>
+                  <ActivityIndicator size="small" color="#FFFFFF" style={styles.spinnerGap} />
+                  <Text style={styles.submitBtnText}>Đang cập nhật...</Text>
+                </View>
+              ) : (
+                <Text style={styles.submitBtnText}>Xác nhận đổi mật khẩu</Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.cancelBtn}
+              onPress={() => navigation.goBack()}
+              disabled={submitting}
+            >
+              <Text style={styles.cancelBtnText}>Quay lại</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
-  // Ô phải header: nút về Trang chủ, giữ độ rộng cũ để tiêu đề vẫn ở giữa
   homeSlot: { width: 40, alignItems: 'flex-end', justifyContent: 'center' },
   safeArea: {
     flex: 1,
     backgroundColor: theme.colors.background,
+  },
+  keyboardView: {
+    flex: 1,
   },
   header: {
     flexDirection: 'row',
@@ -336,10 +364,18 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: theme.colors.primaryDark,
     letterSpacing: 0.5,
+    flex: 1,
+    textAlign: 'center',
   },
   scrollContent: {
     paddingHorizontal: theme.spacing.md,
     paddingVertical: theme.spacing.md,
+    paddingBottom: 48,
+  },
+  contentWrap: {
+    width: '100%',
+    maxWidth: 540,
+    alignSelf: 'center',
   },
   securityCard: {
     flexDirection: 'row',
@@ -422,6 +458,9 @@ const styles = StyleSheet.create({
     color: theme.colors.error,
     marginTop: 4,
   },
+  strengthWrap: {
+    marginTop: 10,
+  },
   tipBox: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -441,6 +480,7 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.primary,
     borderRadius: theme.borderRadius.md,
     paddingVertical: 14,
+    paddingHorizontal: 16,
     alignItems: 'center',
     justifyContent: 'center',
     ...theme.shadows.button,
@@ -452,10 +492,14 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '700',
+    textAlign: 'center',
   },
   loadingRow: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  spinnerGap: {
+    marginRight: 8,
   },
   cancelBtn: {
     paddingVertical: 14,

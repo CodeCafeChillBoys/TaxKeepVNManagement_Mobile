@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -6,15 +6,17 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
   TextInput,
   Platform,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { HomeHeaderButton } from '../../components/navigation/HomeHeaderButton';
+import { Dialog } from '../../components/common/Dialog';
+import { useToast } from '../../components/ui/Toast';
 import { profileApi, UserProfileResponse } from '../../api/profileApi';
 import { RootStackParamList, RootNavigationProp } from '../../navigation/types';
 import { useAuthStore } from '../../stores/useAuthStore';
@@ -22,19 +24,21 @@ import {
   applyEditProfileOcrResult,
   buildEditProfileScanParams,
 } from './applyEditProfileOcrResult';
+import { toFriendlyError } from '../../utils/friendlyError';
 
 type EditProfileRouteProp = RouteProp<RootStackParamList, 'EditProfile'>;
 
 export const EditProfileScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
   const route = useRoute<EditProfileRouteProp>();
+  const { toast } = useToast();
   const autoFocusTaxId = route.params?.autoFocusTaxId;
 
   const [loading, setLoading] = useState<boolean>(true);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [initialProfile, setInitialProfile] = useState<UserProfileResponse | null>(null);
+  const [discardDialogVisible, setDiscardDialogVisible] = useState<boolean>(false);
 
-  // Form states
   const [fullName, setFullName] = useState<string>('');
   const [citizenId, setCitizenId] = useState<string>('');
   const [dateOfBirth, setDateOfBirth] = useState<string>('');
@@ -42,12 +46,43 @@ export const EditProfileScreen: React.FC = () => {
   const [phoneNumber, setPhoneNumber] = useState<string>('');
   const [taxIdNumber, setTaxIdNumber] = useState<string>('');
   const [isTaxRegisteredConfirmed, setIsTaxRegisteredConfirmed] = useState<boolean>(false);
-
-  // Validation errors
   const [errors, setErrors] = useState<{ [key: string]: string }>({});
 
+  const isMountedRef = useRef(true);
+
   useEffect(() => {
-    fetchProfile();
+    isMountedRef.current = true;
+    const fetchProfile = async () => {
+      try {
+        setLoading(true);
+        const data = await profileApi.getProfile();
+        if (!isMountedRef.current) return;
+        setInitialProfile(data);
+        setFullName(data.fullName || '');
+        setCitizenId(data.citizenId || '');
+        setDateOfBirth(data.dateOfBirth || '');
+        setAddress(data.address || '');
+        setPhoneNumber(data.phoneNumber || '');
+        setTaxIdNumber(data.taxIdNumber || '');
+        setIsTaxRegisteredConfirmed(Boolean(data.taxIdNumber && data.taxIdNumber.trim().length > 0));
+      } catch {
+        if (!isMountedRef.current) return;
+        const authUser = useAuthStore.getState().user;
+        if (authUser) {
+          setFullName(authUser.fullName || '');
+          setCitizenId(authUser.citizenId || '');
+        }
+      } finally {
+        if (isMountedRef.current) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void fetchProfile();
+    return () => {
+      isMountedRef.current = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -57,41 +92,11 @@ export const EditProfileScreen: React.FC = () => {
     setFullName(plan.fields.fullName);
     setDateOfBirth(plan.fields.dateOfBirth);
     setAddress(plan.fields.address);
-    // Không setCitizenId — CCCD khóa
     navigation.setParams({ ocrResult: undefined });
-    Alert.alert(plan.alertTitle, plan.alertMessage);
-  }, [route.params?.ocrResult]);
+    toast.success(plan.alertMessage, plan.alertTitle);
+  }, [navigation, route.params?.ocrResult, toast]);
 
-  const fetchProfile = async () => {
-    try {
-      setLoading(true);
-      const data = await profileApi.getProfile();
-      setInitialProfile(data);
-      setFullName(data.fullName || '');
-      setCitizenId(data.citizenId || '');
-      setDateOfBirth(data.dateOfBirth || '');
-      setAddress(data.address || '');
-      setPhoneNumber(data.phoneNumber || '');
-      setTaxIdNumber(data.taxIdNumber || '');
-      // Nếu đã có MST trong hồ sơ, mặc định đã xác nhận mở ô điền
-      if (data.taxIdNumber && data.taxIdNumber.trim().length > 0) {
-        setIsTaxRegisteredConfirmed(true);
-      } else {
-        setIsTaxRegisteredConfirmed(false);
-      }
-    } catch (err: any) {
-      // Fallback an toàn: không thoát màn hình, lấy từ Auth Store
-      const authUser = useAuthStore.getState().user;
-      if (authUser) {
-        setFullName(authUser.fullName || '');
-        setCitizenId(authUser.citizenId || '');
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const validateForm = (): boolean => {
+  const validateForm = useCallback((): boolean => {
     const errs: { [key: string]: string } = {};
 
     if (!fullName.trim()) {
@@ -110,7 +115,7 @@ export const EditProfileScreen: React.FC = () => {
     if (dateOfBirth.trim()) {
       const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
       if (!dateRegex.test(dateOfBirth.trim())) {
-        errs.dateOfBirth = 'Ngày sinh phải có định dạng YYYY-MM-DD (Ví dụ: 1995-05-15).';
+        errs.dateOfBirth = 'Vui lòng nhập ngày sinh theo định dạng Năm-Tháng-Ngày (ví dụ: 1995-05-15).';
       }
     }
 
@@ -120,15 +125,15 @@ export const EditProfileScreen: React.FC = () => {
         errs.taxConfirmation =
           'Vui lòng tích xác nhận đã đăng ký mã số thuế với Cơ quan Thuế.';
       } else if (!/^\d{10}$|^\d{12}$/.test(cleanTaxId)) {
-        errs.taxIdNumber = 'Mã số thuế chỉ gồm 10 chữ số (MST cũ) hoặc 12 chữ số (số CCCD).';
+        errs.taxIdNumber = 'Mã số thuế chỉ gồm 10 chữ số (mã cũ) hoặc 12 chữ số (số căn cước).';
       }
     }
 
     setErrors(errs);
     return Object.keys(errs).length === 0;
-  };
+  }, [dateOfBirth, fullName, isTaxRegisteredConfirmed, phoneNumber, taxIdNumber]);
 
-  const handleSave = async () => {
+  const handleSave = useCallback(async () => {
     if (!validateForm()) {
       return;
     }
@@ -146,12 +151,13 @@ export const EditProfileScreen: React.FC = () => {
         dateOfBirth: cleanDob,
         address: cleanAddr,
         taxIdNumber: cleanTaxId,
-        isTaxRegisteredConfirmed: cleanTaxId && cleanTaxId.length === 12 ? isTaxRegisteredConfirmed : null,
+        isTaxRegisteredConfirmed:
+          cleanTaxId && cleanTaxId.length === 12 ? isTaxRegisteredConfirmed : null,
       };
 
       const updated = await profileApi.updateProfile(payload);
+      if (!isMountedRef.current) return;
 
-      // Đồng bộ thông tin tên vào useAuthStore để Header và HomeScreen phản ánh ngay
       const authUser = useAuthStore.getState().user;
       if (authUser) {
         useAuthStore.setState({
@@ -162,29 +168,33 @@ export const EditProfileScreen: React.FC = () => {
         });
       }
 
-      if (Platform.OS === 'web') {
-        window.alert('Cập nhật hồ sơ cá nhân thành công!');
-        navigation.goBack();
-      } else {
-        Alert.alert('Thành công', 'Cập nhật hồ sơ cá nhân thành công!', [
-          {
-            text: 'OK',
-            onPress: () => navigation.goBack(),
-          },
-        ]);
-      }
+      toast.success('Thông tin tài khoản của bạn đã được cập nhật.', 'Đã lưu hồ sơ cá nhân');
+      navigation.goBack();
     } catch (err: any) {
-      const respData = err.response?.data;
-      const errorMsg =
-        respData?.message || 'Đã xảy ra lỗi khi cập nhật hồ sơ. Vui lòng thử lại sau.';
-      Alert.alert('Không thể lưu', errorMsg);
+      if (!isMountedRef.current) return;
+      const friendly = toFriendlyError(err, {
+        fallbackTitle: 'Chưa lưu được hồ sơ',
+        fallbackMessage: 'Không thể cập nhật thông tin lúc này. Vui lòng kiểm tra lại và thử lại.',
+      });
+      toast.error(friendly.message, friendly.title);
     } finally {
-      setSubmitting(false);
+      if (isMountedRef.current) {
+        setSubmitting(false);
+      }
     }
-  };
+  }, [
+    address,
+    dateOfBirth,
+    fullName,
+    isTaxRegisteredConfirmed,
+    navigation,
+    phoneNumber,
+    taxIdNumber,
+    toast,
+    validateForm,
+  ]);
 
-  const handleCancel = () => {
-    // Kiểm tra xem có thay đổi nào chưa lưu
+  const handleCancel = useCallback(() => {
     const hasChanges =
       initialProfile &&
       (fullName !== (initialProfile.fullName || '') ||
@@ -194,14 +204,11 @@ export const EditProfileScreen: React.FC = () => {
         taxIdNumber !== (initialProfile.taxIdNumber || ''));
 
     if (hasChanges) {
-      Alert.alert('Hủy các thay đổi', 'Các thay đổi chưa được lưu sẽ bị mất. Bạn có chắc chắn muốn hủy?', [
-        { text: 'Tiếp tục sửa', style: 'cancel' },
-        { text: 'Hủy thay đổi', style: 'destructive', onPress: () => navigation.goBack() },
-      ]);
+      setDiscardDialogVisible(true);
     } else {
       navigation.goBack();
     }
-  };
+  }, [address, dateOfBirth, fullName, initialProfile, navigation, phoneNumber, taxIdNumber]);
 
   if (loading) {
     return (
@@ -210,8 +217,12 @@ export const EditProfileScreen: React.FC = () => {
           <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
             <Ionicons name="close" size={24} color={theme.colors.textPrimary} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>CHỈNH SỬA HỒ SƠ</Text>
-          <View style={styles.homeSlot}><HomeHeaderButton /></View>
+          <Text style={styles.headerTitle} numberOfLines={1}>
+            CHỈNH SỬA HỒ SƠ
+          </Text>
+          <View style={styles.homeSlot}>
+            <HomeHeaderButton />
+          </View>
         </View>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={theme.colors.primary} />
@@ -221,8 +232,6 @@ export const EditProfileScreen: React.FC = () => {
     );
   }
 
-  const isTax12Digits = taxIdNumber.trim().length === 12;
-
   return (
     <SafeAreaView style={styles.safeArea}>
       {/* Header */}
@@ -231,261 +240,315 @@ export const EditProfileScreen: React.FC = () => {
           style={styles.backButton}
           onPress={handleCancel}
           accessibilityRole="button"
-          accessibilityLabel="Hủy"
+          accessibilityLabel="Đóng"
         >
           <Ionicons name="close" size={24} color={theme.colors.textPrimary} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>CHỈNH SỬA HỒ SƠ</Text>
-        <View style={styles.homeSlot}><HomeHeaderButton /></View>
+        <Text style={styles.headerTitle} numberOfLines={1}>
+          CHỈNH SỬA HỒ SƠ
+        </Text>
+        <View style={styles.homeSlot}>
+          <HomeHeaderButton />
+        </View>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* Nút Quét lại CCCD */}
-        <TouchableOpacity
-          style={styles.scanCccdBtn}
-          onPress={() =>
-            navigation.navigate('ScanIdentity', buildEditProfileScanParams(citizenId))
-          }
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.keyboardView}
+      >
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
         >
-          <Ionicons name="scan" size={20} color={theme.colors.primary} />
-          <View style={{ marginLeft: 10 }}>
-            <Text style={styles.scanCccdTitle}>Quét lại căn cước công dân</Text>
-            <Text style={styles.scanCccdSubtitle}>Cập nhật nhanh thông tin từ giấy tờ</Text>
-          </View>
-        </TouchableOpacity>
-
-        <View style={styles.formCard}>
-          {/* Họ và tên */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>
-              Họ và tên <Text style={styles.required}>*</Text>
-            </Text>
-            <TextInput
-              style={[styles.input, errors.fullName && styles.inputError]}
-              value={fullName}
-              onChangeText={(val) => {
-                setFullName(val);
-                if (errors.fullName) setErrors((prev) => ({ ...prev, fullName: '' }));
-              }}
-              placeholder="Nhập họ và tên đầy đủ"
-              placeholderTextColor={theme.colors.textPlaceholder}
-            />
-            {errors.fullName ? <Text style={styles.errorText}>{errors.fullName}</Text> : null}
-          </View>
-
-          {/* Số CCCD (Bị khóa 🔒) */}
-          <View style={styles.inputGroup}>
-            <View style={styles.labelWithLock}>
-              <Text style={styles.label}>Số căn cước công dân</Text>
-              <Ionicons name="lock-closed" size={14} color={theme.colors.textSecondary} style={{ marginLeft: 6 }} />
-            </View>
-            <TextInput
-              style={[styles.input, styles.inputLocked]}
-              value={citizenId}
-              editable={false}
-              placeholder="Số căn cước công dân"
-            />
-            <Text style={styles.lockedNote}>
-              🔒 Không thể sửa số căn cước vì đã được dùng làm định danh tài khoản.
-            </Text>
-          </View>
-
-          {/* Ngày sinh */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Ngày sinh</Text>
-            <View style={styles.inputWithIcon}>
-              <TextInput
-                style={[styles.inputInner, errors.dateOfBirth && styles.inputError]}
-                value={dateOfBirth}
-                onChangeText={(val) => {
-                  setDateOfBirth(val);
-                  if (errors.dateOfBirth) setErrors((prev) => ({ ...prev, dateOfBirth: '' }));
-                }}
-                placeholder="YYYY-MM-DD (Ví dụ: 1995-05-15)"
-                placeholderTextColor={theme.colors.textPlaceholder}
-              />
-              <Ionicons name="calendar-outline" size={20} color={theme.colors.textSecondary} style={{ marginRight: 12 }} />
-            </View>
-            {errors.dateOfBirth ? (
-              <Text style={styles.errorText}>{errors.dateOfBirth}</Text>
-            ) : (
-              <Text style={styles.helperText}>Định dạng ngày: Năm-Tháng-Ngày (YYYY-MM-DD)</Text>
-            )}
-          </View>
-
-          {/* Địa chỉ */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Địa chỉ liên hệ</Text>
-            <TextInput
-              style={[styles.input, styles.textArea]}
-              value={address}
-              onChangeText={setAddress}
-              placeholder="Nhập số nhà, tên đường, phường/xã, quận/huyện, tỉnh/thành"
-              placeholderTextColor={theme.colors.textPlaceholder}
-              multiline
-              numberOfLines={2}
-            />
-          </View>
-
-          {/* Số điện thoại */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Số điện thoại</Text>
-            <TextInput
-              style={[styles.input, errors.phoneNumber && styles.inputError]}
-              value={phoneNumber}
-              onChangeText={(val) => {
-                setPhoneNumber(val);
-                if (errors.phoneNumber) setErrors((prev) => ({ ...prev, phoneNumber: '' }));
-              }}
-              placeholder="Ví dụ: 0901234567"
-              placeholderTextColor={theme.colors.textPlaceholder}
-              keyboardType="phone-pad"
-            />
-            {errors.phoneNumber ? <Text style={styles.errorText}>{errors.phoneNumber}</Text> : null}
-          </View>
-
-          {/* Mã số thuế (MST) & Checkbox xác nhận: Tích checkbox rồi mới cho điền */}
-          <View style={styles.inputGroup}>
-            <View style={styles.labelWithLock}>
-              <Text style={styles.label}>Mã số thuế cá nhân (MST)</Text>
-              {!isTaxRegisteredConfirmed && (
-                <Ionicons name="lock-closed" size={13} color={theme.colors.textSecondary} style={{ marginLeft: 6 }} />
-              )}
-            </View>
-
-            {/* Checkbox bắt buộc: Tích chọn trước rồi mới cho điền */}
-            <View style={[styles.taxConfirmationBox, isTaxRegisteredConfirmed && styles.taxConfirmationBoxActive]}>
-              <TouchableOpacity
-                style={[styles.checkbox, isTaxRegisteredConfirmed && styles.checkboxChecked]}
-                onPress={() => {
-                  const nextVal = !isTaxRegisteredConfirmed;
-                  setIsTaxRegisteredConfirmed(nextVal);
-                  if (errors.taxConfirmation) setErrors((prev) => ({ ...prev, taxConfirmation: '' }));
-                }}
-                accessibilityRole="checkbox"
-                accessibilityState={{ checked: isTaxRegisteredConfirmed }}
-                testID="taxConfirmationCheckbox"
-              >
-                {isTaxRegisteredConfirmed ? <Ionicons name="checkmark" size={16} color="#FFFFFF" /> : null}
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={{ flex: 1 }}
-                onPress={() => {
-                  const nextVal = !isTaxRegisteredConfirmed;
-                  setIsTaxRegisteredConfirmed(nextVal);
-                  if (errors.taxConfirmation) setErrors((prev) => ({ ...prev, taxConfirmation: '' }));
-                }}
-                testID="taxConfirmationLabel"
-              >
-                <Text style={styles.checkboxLabel}>
-                  Tôi xác nhận đã đăng ký mã số thuế trên cơ quan thuế <Text style={styles.required}>*</Text>
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {errors.taxConfirmation ? (
-              <Text style={styles.errorText} testID="taxConfirmationError">
-                {errors.taxConfirmation}
-              </Text>
-            ) : null}
-
-            {/* Ô nhập MST: Chỉ cho phép điền khi đã tích checkbox */}
+          <View style={styles.contentWrap}>
+            {/* Nút Quét lại CCCD */}
             <TouchableOpacity
-              activeOpacity={isTaxRegisteredConfirmed ? 1 : 0.8}
-              onPress={() => {
-                if (!isTaxRegisteredConfirmed) {
-                  setErrors((prev) => ({
-                    ...prev,
-                    taxConfirmation: 'Vui lòng tích chọn ô xác nhận ở trên để mở khóa ô điền Mã số thuế.',
-                  }));
-                }
-              }}
-              style={{ marginTop: 8 }}
+              style={styles.scanCccdBtn}
+              onPress={() =>
+                navigation.navigate('ScanIdentity', buildEditProfileScanParams(citizenId))
+              }
             >
-              <TextInput
-                style={[
-                  styles.input,
-                  !isTaxRegisteredConfirmed && styles.inputLocked,
-                  errors.taxIdNumber && styles.inputError,
-                ]}
-                value={taxIdNumber}
-                onChangeText={(val) => {
-                  setTaxIdNumber(val);
-                  if (errors.taxIdNumber) setErrors((prev) => ({ ...prev, taxIdNumber: '' }));
-                }}
-                placeholder={
-                  isTaxRegisteredConfirmed
-                    ? "Nhập 10 chữ số (cũ) hoặc 12 số CCCD"
-                    : "🔒 Tích xác nhận ở trên rồi mới cho điền MST"
-                }
-                placeholderTextColor={
-                  isTaxRegisteredConfirmed
-                    ? theme.colors.textPlaceholder
-                    : theme.colors.textSecondary
-                }
-                keyboardType="number-pad"
-                editable={isTaxRegisteredConfirmed}
-                autoFocus={autoFocusTaxId && isTaxRegisteredConfirmed}
-                testID="taxIdInput"
-              />
-            </TouchableOpacity>
-            {errors.taxIdNumber ? <Text style={styles.errorText}>{errors.taxIdNumber}</Text> : null}
-
-            {!isTaxRegisteredConfirmed ? (
-              <Text style={styles.lockedNote}>
-                🔒 Ô nhập mã số thuế đang khóa. Vui lòng tích ô xác nhận ở trên thì mới được điền.
-              </Text>
-            ) : (
-              <Text style={styles.taxInfoNote}>
-                💡 Theo Luật Quản lý Thuế mới, số CCCD (12 chữ số) hoặc MST cũ (10 chữ số) hợp lệ sau khi bạn đã đăng ký với Cơ quan Thuế.
-              </Text>
-            )}
-          </View>
-        </View>
-
-        {/* Cặp nút hành động: Hủy & Lưu thay đổi */}
-        <View style={styles.actionButtonsRow}>
-          <TouchableOpacity
-            style={styles.cancelBtn}
-            onPress={handleCancel}
-            disabled={submitting}
-            accessibilityRole="button"
-            accessibilityLabel="Hủy thay đổi"
-          >
-            <Text style={styles.cancelBtnText}>Hủy</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.saveBtn, submitting && styles.saveBtnDisabled]}
-            onPress={handleSave}
-            disabled={submitting}
-            accessibilityRole="button"
-            accessibilityLabel="Lưu thay đổi"
-            testID="saveProfileBtn"
-          >
-            {submitting ? (
-              <View style={styles.loadingRow}>
-                <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
-                <Text style={styles.saveBtnText}>Đang lưu...</Text>
+              <Ionicons name="scan" size={20} color={theme.colors.primary} />
+              <View style={styles.scanCccdTextCol}>
+                <Text style={styles.scanCccdTitle}>Quét lại căn cước công dân</Text>
+                <Text style={styles.scanCccdSubtitle}>Cập nhật nhanh thông tin từ giấy tờ</Text>
               </View>
-            ) : (
-              <Text style={styles.saveBtnText}>Lưu thay đổi</Text>
-            )}
-          </TouchableOpacity>
-        </View>
+            </TouchableOpacity>
 
-        <View style={{ height: 40 }} />
-      </ScrollView>
+            <View style={styles.formCard}>
+              {/* Họ và tên */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>
+                  Họ và tên <Text style={styles.required}>*</Text>
+                </Text>
+                <TextInput
+                  style={[styles.input, errors.fullName && styles.inputError]}
+                  value={fullName}
+                  onChangeText={(val) => {
+                    setFullName(val);
+                    if (errors.fullName) setErrors((prev) => ({ ...prev, fullName: '' }));
+                  }}
+                  placeholderTextColor={theme.colors.textPlaceholder}
+                />
+                {errors.fullName ? <Text style={styles.errorText}>{errors.fullName}</Text> : null}
+              </View>
+
+              {/* Số CCCD (Bị khóa) */}
+              <View style={styles.inputGroup}>
+                <View style={styles.labelWithLock}>
+                  <Text style={styles.label}>Số căn cước công dân</Text>
+                  <Ionicons
+                    name="lock-closed"
+                    size={14}
+                    color={theme.colors.textSecondary}
+                    style={styles.lockIcon}
+                  />
+                </View>
+                <TextInput
+                  style={[styles.input, styles.inputLocked]}
+                  value={citizenId}
+                  editable={false}
+                />
+                <Text style={styles.lockedNote}>
+                  Không thể thay đổi số căn cước công dân vì đây là mã định danh tài khoản.
+                </Text>
+              </View>
+
+              {/* Ngày sinh */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Ngày sinh</Text>
+                <View style={styles.inputWithIcon}>
+                  <TextInput
+                    style={[styles.inputInner, errors.dateOfBirth && styles.inputError]}
+                    value={dateOfBirth}
+                    onChangeText={(val) => {
+                      setDateOfBirth(val);
+                      if (errors.dateOfBirth) setErrors((prev) => ({ ...prev, dateOfBirth: '' }));
+                    }}
+                    placeholder="1995-05-15"
+                    placeholderTextColor={theme.colors.textPlaceholder}
+                  />
+                  <Ionicons
+                    name="calendar-outline"
+                    size={20}
+                    color={theme.colors.textSecondary}
+                    style={styles.calendarIcon}
+                  />
+                </View>
+                {errors.dateOfBirth ? (
+                  <Text style={styles.errorText}>{errors.dateOfBirth}</Text>
+                ) : (
+                  <Text style={styles.helperText}>Định dạng Năm-Tháng-Ngày (ví dụ: 1995-05-15)</Text>
+                )}
+              </View>
+
+              {/* Địa chỉ */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Địa chỉ liên hệ</Text>
+                <TextInput
+                  style={[styles.input, styles.textArea]}
+                  value={address}
+                  onChangeText={setAddress}
+                  placeholderTextColor={theme.colors.textPlaceholder}
+                  multiline
+                  numberOfLines={2}
+                />
+              </View>
+
+              {/* Số điện thoại */}
+              <View style={styles.inputGroup}>
+                <Text style={styles.label}>Số điện thoại</Text>
+                <TextInput
+                  style={[styles.input, errors.phoneNumber && styles.inputError]}
+                  value={phoneNumber}
+                  onChangeText={(val) => {
+                    setPhoneNumber(val);
+                    if (errors.phoneNumber) setErrors((prev) => ({ ...prev, phoneNumber: '' }));
+                  }}
+                  placeholder="0901234567"
+                  placeholderTextColor={theme.colors.textPlaceholder}
+                  keyboardType="phone-pad"
+                />
+                {errors.phoneNumber ? <Text style={styles.errorText}>{errors.phoneNumber}</Text> : null}
+              </View>
+
+              {/* Mã số thuế (MST) & Checkbox xác nhận */}
+              <View style={styles.inputGroup}>
+                <View style={styles.labelWithLock}>
+                  <Text style={styles.label}>Mã số thuế cá nhân</Text>
+                  {!isTaxRegisteredConfirmed && (
+                    <Ionicons
+                      name="lock-closed"
+                      size={13}
+                      color={theme.colors.textSecondary}
+                      style={styles.lockIcon}
+                    />
+                  )}
+                </View>
+
+                <View
+                  style={[
+                    styles.taxConfirmationBox,
+                    isTaxRegisteredConfirmed && styles.taxConfirmationBoxActive,
+                  ]}
+                >
+                  <TouchableOpacity
+                    style={[styles.checkbox, isTaxRegisteredConfirmed && styles.checkboxChecked]}
+                    onPress={() => {
+                      const nextVal = !isTaxRegisteredConfirmed;
+                      setIsTaxRegisteredConfirmed(nextVal);
+                      if (errors.taxConfirmation) {
+                        setErrors((prev) => ({ ...prev, taxConfirmation: '' }));
+                      }
+                    }}
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: isTaxRegisteredConfirmed }}
+                    testID="taxConfirmationCheckbox"
+                  >
+                    {isTaxRegisteredConfirmed ? (
+                      <Ionicons name="checkmark" size={16} color="#FFFFFF" />
+                    ) : null}
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.checkboxLabelWrap}
+                    onPress={() => {
+                      const nextVal = !isTaxRegisteredConfirmed;
+                      setIsTaxRegisteredConfirmed(nextVal);
+                      if (errors.taxConfirmation) {
+                        setErrors((prev) => ({ ...prev, taxConfirmation: '' }));
+                      }
+                    }}
+                    testID="taxConfirmationLabel"
+                  >
+                    <Text style={styles.checkboxLabel}>
+                      Tôi xác nhận đã đăng ký mã số thuế trên cơ quan thuế{' '}
+                      <Text style={styles.required}>*</Text>
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                {errors.taxConfirmation ? (
+                  <Text style={styles.errorText} testID="taxConfirmationError">
+                    {errors.taxConfirmation}
+                  </Text>
+                ) : null}
+
+                <TouchableOpacity
+                  activeOpacity={isTaxRegisteredConfirmed ? 1 : 0.8}
+                  onPress={() => {
+                    if (!isTaxRegisteredConfirmed) {
+                      setErrors((prev) => ({
+                        ...prev,
+                        taxConfirmation:
+                          'Vui lòng tích chọn ô xác nhận ở trên để mở khóa ô nhập Mã số thuế.',
+                      }));
+                    }
+                  }}
+                  style={styles.taxInputTouchWrap}
+                >
+                  <TextInput
+                    style={[
+                      styles.input,
+                      !isTaxRegisteredConfirmed && styles.inputLocked,
+                      errors.taxIdNumber && styles.inputError,
+                    ]}
+                    value={taxIdNumber}
+                    onChangeText={(val) => {
+                      setTaxIdNumber(val);
+                      if (errors.taxIdNumber) setErrors((prev) => ({ ...prev, taxIdNumber: '' }));
+                    }}
+                    placeholder={
+                      isTaxRegisteredConfirmed
+                        ? '10 hoặc 12 chữ số'
+                        : 'Tích xác nhận phía trên để nhập'
+                    }
+                    placeholderTextColor={
+                      isTaxRegisteredConfirmed
+                        ? theme.colors.textPlaceholder
+                        : theme.colors.textSecondary
+                    }
+                    keyboardType="number-pad"
+                    editable={isTaxRegisteredConfirmed}
+                    autoFocus={autoFocusTaxId && isTaxRegisteredConfirmed}
+                    testID="taxIdInput"
+                  />
+                </TouchableOpacity>
+                {errors.taxIdNumber ? (
+                  <Text style={styles.errorText}>{errors.taxIdNumber}</Text>
+                ) : null}
+
+                {!isTaxRegisteredConfirmed ? (
+                  <Text style={styles.lockedNote}>
+                    Ô nhập mã số thuế đang khóa. Vui lòng tích xác nhận ở trên trước khi điền.
+                  </Text>
+                ) : (
+                  <Text style={styles.taxInfoNote}>
+                    Theo quy định quản lý thuế hiện hành, số căn cước (12 chữ số) hoặc mã số thuế (10 chữ số) được sử dụng sau khi đăng ký với Cơ quan Thuế.
+                  </Text>
+                )}
+              </View>
+            </View>
+
+            {/* Cặp nút hành động */}
+            <View style={styles.actionButtonsRow}>
+              <TouchableOpacity
+                style={styles.cancelBtn}
+                onPress={handleCancel}
+                disabled={submitting}
+                accessibilityRole="button"
+                accessibilityLabel="Quay lại"
+              >
+                <Text style={styles.cancelBtnText}>Quay lại</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.saveBtn, submitting && styles.saveBtnDisabled]}
+                onPress={handleSave}
+                disabled={submitting}
+                accessibilityRole="button"
+                accessibilityLabel="Lưu thay đổi"
+                testID="saveProfileBtn"
+              >
+                {submitting ? (
+                  <View style={styles.loadingRow}>
+                    <ActivityIndicator size="small" color="#FFFFFF" style={styles.spinnerGap} />
+                    <Text style={styles.saveBtnText}>Đang lưu...</Text>
+                  </View>
+                ) : (
+                  <Text style={styles.saveBtnText}>Lưu thay đổi</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+
+      <Dialog
+        visible={discardDialogVisible}
+        title="Bỏ các thay đổi chưa lưu?"
+        message="Thông tin hồ sơ bạn vừa chỉnh sửa sẽ không được lưu nếu rời khỏi màn hình này."
+        destructive
+        secondaryLabel="Tiếp tục sửa"
+        primaryLabel="Bỏ thay đổi"
+        onSecondary={() => setDiscardDialogVisible(false)}
+        onPrimary={() => {
+          setDiscardDialogVisible(false);
+          navigation.goBack();
+        }}
+      />
     </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
-  // Ô phải header: nút về Trang chủ, giữ độ rộng cũ để tiêu đề vẫn ở giữa
   homeSlot: { width: 40, alignItems: 'flex-end', justifyContent: 'center' },
   safeArea: {
     flex: 1,
     backgroundColor: theme.colors.background,
+  },
+  keyboardView: {
+    flex: 1,
   },
   header: {
     flexDirection: 'row',
@@ -508,6 +571,8 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: theme.colors.primaryDark,
     letterSpacing: 0.5,
+    flex: 1,
+    textAlign: 'center',
   },
   loadingContainer: {
     flex: 1,
@@ -522,6 +587,12 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: theme.spacing.md,
     paddingVertical: theme.spacing.md,
+    paddingBottom: 48,
+  },
+  contentWrap: {
+    width: '100%',
+    maxWidth: 560,
+    alignSelf: 'center',
   },
   scanCccdBtn: {
     flexDirection: 'row',
@@ -532,6 +603,10 @@ const styles = StyleSheet.create({
     borderRadius: theme.borderRadius.md,
     padding: theme.spacing.md,
     marginBottom: theme.spacing.md,
+  },
+  scanCccdTextCol: {
+    marginLeft: 10,
+    flex: 1,
   },
   scanCccdTitle: {
     ...theme.typography.bodyMedium,
@@ -566,16 +641,24 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 6,
   },
+  lockIcon: {
+    marginLeft: 6,
+    marginBottom: 6,
+  },
+  calendarIcon: {
+    marginRight: 12,
+  },
   required: {
     color: theme.colors.error,
     fontWeight: 'bold',
   },
   input: {
-    height: 48,
+    minHeight: 48,
     borderWidth: 1,
     borderColor: theme.colors.border,
     borderRadius: theme.borderRadius.md,
     paddingHorizontal: 12,
+    paddingVertical: Platform.OS === 'ios' ? 12 : 8,
     backgroundColor: '#FFFFFF',
     fontSize: 15,
     color: theme.colors.textPrimary,
@@ -590,8 +673,9 @@ const styles = StyleSheet.create({
   },
   inputInner: {
     flex: 1,
-    height: 48,
+    minHeight: 48,
     paddingHorizontal: 12,
+    paddingVertical: Platform.OS === 'ios' ? 12 : 8,
     fontSize: 15,
     color: theme.colors.textPrimary,
   },
@@ -604,7 +688,7 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.error,
   },
   textArea: {
-    height: 70,
+    minHeight: 72,
     paddingTop: 10,
     textAlignVertical: 'top',
   },
@@ -632,7 +716,7 @@ const styles = StyleSheet.create({
     borderColor: '#E8DED1',
     borderRadius: theme.borderRadius.sm,
     padding: 10,
-    marginTop: 10,
+    marginTop: 4,
   },
   taxConfirmationBoxActive: {
     backgroundColor: '#FAF5EE',
@@ -654,10 +738,16 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.primary,
     borderColor: theme.colors.primary,
   },
+  checkboxLabelWrap: {
+    flex: 1,
+  },
   checkboxLabel: {
     ...theme.typography.bodySmall,
     color: theme.colors.textPrimary,
     lineHeight: 18,
+  },
+  taxInputTouchWrap: {
+    marginTop: 8,
   },
   taxInfoNote: {
     ...theme.typography.caption,
@@ -672,13 +762,14 @@ const styles = StyleSheet.create({
   },
   cancelBtn: {
     flex: 1,
-    height: 48,
+    minHeight: 48,
     borderRadius: theme.borderRadius.md,
     borderWidth: 1,
     borderColor: theme.colors.border,
     backgroundColor: theme.colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: 12,
   },
   cancelBtnText: {
     ...theme.typography.bodyLarge,
@@ -687,11 +778,12 @@ const styles = StyleSheet.create({
   },
   saveBtn: {
     flex: 2,
-    height: 48,
+    minHeight: 48,
     borderRadius: theme.borderRadius.md,
     backgroundColor: theme.colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: 16,
     ...theme.shadows.button,
   },
   saveBtnDisabled: {
@@ -705,5 +797,8 @@ const styles = StyleSheet.create({
   loadingRow: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  spinnerGap: {
+    marginRight: 8,
   },
 });

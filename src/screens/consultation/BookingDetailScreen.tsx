@@ -21,6 +21,7 @@ import { fonts } from '../../constants/fonts';
 import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
 import { Dialog } from '../../components/common/Dialog';
+import { useToast } from '../../components/ui/Toast';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { consultationApi } from '../../api/consultationApi';
@@ -95,6 +96,7 @@ export const BookingDetailScreen: React.FC = () => {
   const route = useRoute<RouteProp<RootStackParamList, 'BookingDetail'>>();
   const { bookingId, isExpertView: isExpertViewParam, autoPay } = route.params;
 
+  const { toast } = useToast();
   const currentUser = useAuthStore((s) => s.user);
   const userRole = (currentUser?.role || '').toLowerCase();
   const isExpertRole = userRole === 'expert' || userRole.includes('expert');
@@ -258,12 +260,22 @@ export const BookingDetailScreen: React.FC = () => {
     destructive?: boolean;
   } | null>(null);
 
+  const countdownIntervalMs = useMemo(() => {
+    if (!booking) return 0;
+    if (booking.status === 'PENDING_PAYMENT' && booking.holdExpiresAt) return 1000;
+    if (booking.status === 'AWAITING_EXPERT_APPROVAL' && booking.approvalDeadline) return 30000;
+    if (booking.status === 'CONFIRMED') return 30000;
+    return 0;
+  }, [booking?.status, booking?.holdExpiresAt, booking?.approvalDeadline]);
+
   useEffect(() => {
+    if (!countdownIntervalMs) return;
+    setCurrentTimeMs(Date.now());
     const timer = setInterval(() => {
       setCurrentTimeMs(Date.now());
-    }, 1000);
+    }, countdownIntervalMs);
     return () => clearInterval(timer);
-  }, []);
+  }, [countdownIntervalMs]);
 
   const fetchDetail = useCallback(async (silent: boolean = false) => {
     if (!silent) {
@@ -378,12 +390,7 @@ export const BookingDetailScreen: React.FC = () => {
       setBooking(updated);
       setCancelModalVisible(false);
       setCancelReason('');
-      setDialog({
-        title: 'Đã hủy lịch hẹn',
-        message: 'Bạn đã hủy lịch hẹn tư vấn thành công.',
-        primaryLabel: 'Đóng',
-        onPrimary: () => setDialog(null),
-      });
+      toast.success('Bạn đã hủy lịch hẹn tư vấn thành công.', 'Đã hủy lịch hẹn');
     } catch (err: any) {
       const friendly = toFriendlyConsultationError(
         err,
@@ -431,12 +438,7 @@ export const BookingDetailScreen: React.FC = () => {
         try {
           const updated = await consultationApi.acceptBooking(bookingId);
           setBooking(updated);
-          setDialog({
-            title: 'Thành công',
-            message: 'Bạn đã tiếp nhận ca tư vấn. Lịch hẹn chính thức được xác nhận.',
-            primaryLabel: 'Đóng',
-            onPrimary: () => setDialog(null),
-          });
+          toast.success('Bạn đã tiếp nhận ca tư vấn. Lịch hẹn chính thức được xác nhận.', 'Tiếp nhận thành công');
         } catch (err: any) {
           const friendly = toFriendlyConsultationError(
             err,
@@ -473,12 +475,7 @@ export const BookingDetailScreen: React.FC = () => {
       setBooking(updated);
       setRejectModalVisible(false);
       setRejectReason('');
-      setDialog({
-        title: 'Đã từ chối ca tư vấn',
-        message: 'Bạn đã từ chối ca tư vấn. Hệ thống tự động hoàn tiền 100% cho khách hàng.',
-        primaryLabel: 'Đóng',
-        onPrimary: () => setDialog(null),
-      });
+      toast.success('Bạn đã từ chối ca tư vấn. Hệ thống tự động hoàn tiền 100% cho khách hàng.', 'Đã từ chối');
     } catch (err: any) {
       const friendly = toFriendlyConsultationError(
         err,

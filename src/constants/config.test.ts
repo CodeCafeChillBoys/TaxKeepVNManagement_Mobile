@@ -56,10 +56,12 @@ describe('config auto-detection tests', () => {
     expect(getLocalApiBaseUrl()).toBe('https://api.taxkeep.vn');
   });
 
-  it('honors http deploy gateway URL from env over auto-detection', () => {
+  it('honors deployed public http IP from env over Metro LAN auto-detection', () => {
     mockConstants.expoConfig = { hostUri: '192.168.1.200:8081' };
-    process.env.EXPO_PUBLIC_API_URL = 'http://13.236.166.3:5000';
+    process.env.EXPO_PUBLIC_API_URL = 'http://13.236.166.3:5000/';
+    process.env.EXPO_PUBLIC_AI_URL = 'http://13.236.166.3:5000/ai/';
     expect(getLocalApiBaseUrl()).toBe('http://13.236.166.3:5000');
+    expect(getLocalAiBaseUrl()).toBe('http://13.236.166.3:5000/ai');
   });
 
   it('falls back to DEV_LAN_HOST when no host can be detected', () => {

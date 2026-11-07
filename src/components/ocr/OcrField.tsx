@@ -15,7 +15,7 @@ interface OcrFieldProps {
   keyboardType?: 'default' | 'numeric';
 }
 
-export const OcrField: React.FC<OcrFieldProps> = ({
+export const OcrField: React.FC<OcrFieldProps> = React.memo(({
   label,
   value,
   onChangeText,
@@ -55,14 +55,14 @@ export const OcrField: React.FC<OcrFieldProps> = ({
       />
 
       {isUnreadable ? (
-        <Text style={styles.unreadableHint}>Không đọc được, vui lòng nhập tay</Text>
+        <Text style={styles.unreadableHint}>Chưa đọc rõ từ ảnh chụp, vui lòng nhập bổ sung</Text>
       ) : null}
       {unusedHint ? (
-        <Text style={styles.unusedHint}>Không dùng trong luồng đăng ký</Text>
+        <Text style={styles.unusedHint}>Thông tin tham khảo trên giấy tờ</Text>
       ) : null}
     </View>
   );
-};
+});
 
 const styles = StyleSheet.create({
   wrap: {

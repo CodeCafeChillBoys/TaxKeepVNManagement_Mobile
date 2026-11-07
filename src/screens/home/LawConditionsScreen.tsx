@@ -12,17 +12,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
 import { RootNavigationProp } from '../../navigation/types';
-import { dependentDocumentApi } from '../../api/dependentDocumentApi';
+import { dependentDocumentApi, getDocTypeLabel } from '../../api/dependentDocumentApi';
 import { DrumHeader } from '../../components/brand/DrumHeader';
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
-
-/**
- * Màn hình: Điều kiện đăng kí (Figma Frame: iPhone 17 - 14)
- * Thiết kế chuẩn Figma:
- * - Header màu hoa văn trống đồng vàng be: "Điều kiện đăng kí"
- * - Hiển thị chi tiết toàn bộ 5 nhóm quy định luật và giấy tờ bắt buộc upload
- * - Không có thanh tìm kiếm, không có banner tự tạo, không có tab nhóm tùy biến
- */
 
 interface LawConditionSection {
   id: number;
@@ -40,7 +32,7 @@ const LAW_SECTIONS: LawConditionSection[] = [
   {
     id: 1,
     groupTitle: 'Nhóm 1: Con dưới 18 tuổi',
-    logicCondition: 'Độ tuổi tính theo ngày sinh < 18 tuổi.',
+    logicCondition: 'Độ tuổi tính theo ngày sinh dưới 18 tuổi.',
     docs: [
       {
         code: 'a',
@@ -55,7 +47,7 @@ const LAW_SECTIONS: LawConditionSection[] = [
   {
     id: 2,
     groupTitle: 'Nhóm 2: Con từ 18 tuổi trở lên đang đi học',
-    logicCondition: 'Độ tuổi < 18 tuổi và còn đang theo học các bậc giáo dục.',
+    logicCondition: 'Con từ đủ 18 tuổi trở lên và đang theo học các bậc giáo dục chính quy.',
     docs: [
       {
         code: 'a',
@@ -105,7 +97,7 @@ const LAW_SECTIONS: LawConditionSection[] = [
         subItems: [
           'Nếu là Vợ/Chồng: Giấy chứng nhận kết hôn.',
           'Nếu là Cha mẹ đẻ: Giấy khai sinh của người nộp thuế.',
-          'Nếu là Cha mẹ vợ/chồng: Giấy kết hôn của NNT + Giấy khai sinh của vợ/chồng.',
+          'Nếu là Cha mẹ vợ/chồng: Giấy kết hôn của người nộp thuế kèm Giấy khai sinh của vợ/chồng.',
           'Nếu là Cha mẹ nuôi: Quyết định công nhận việc nuôi con nuôi.',
         ],
       },
@@ -140,7 +132,7 @@ const LAW_SECTIONS: LawConditionSection[] = [
         code: 'd',
         text: 'Giấy tờ điều kiện lao động:',
         subItems: [
-          'Nếu trong độ tuổi lao động: Giấy xác nhận khuyết tật/ mất khả năng lao động.',
+          'Nếu trong độ tuổi lao động: Giấy xác nhận khuyết tật / mất khả năng lao động.',
           'Nếu ngoài độ tuổi lao động: Bản cam kết không có thu nhập hợp lệ.',
         ],
       },
@@ -154,19 +146,24 @@ export const LawConditionsScreen: React.FC = () => {
   const [openId, setOpenId] = useState<number>(1);
 
   useEffect(() => {
-    loadRules();
-  }, []);
+    let alive = true;
+    const loadRules = async () => {
+      try {
+        const rules = await dependentDocumentApi.getRules();
+        if (!alive || !rules || rules.length === 0) return;
 
-  const loadRules = async () => {
-    try {
-      const rules = await dependentDocumentApi.getRules();
-      if (rules && rules.length > 0) {
         const updated = LAW_SECTIONS.map((sec) => {
-          let matchedRules = rules.filter((r) => {
+          const matchedRules = rules.filter((r) => {
             if (sec.id === 1) return r.targetGroup === 'CHILD_UNDER_18';
             if (sec.id === 2) return r.targetGroup === 'CHILD_STUDYING';
             if (sec.id === 3) return r.targetGroup === 'CHILD_DISABLED';
-            if (sec.id === 4) return r.targetGroup === 'SPOUSE' || r.targetGroup === 'PARENT' || r.targetGroup === 'PARENT_IN_LAW';
+            if (sec.id === 4) {
+              return (
+                r.targetGroup === 'SPOUSE' ||
+                r.targetGroup === 'PARENT' ||
+                r.targetGroup === 'PARENT_IN_LAW'
+              );
+            }
             if (sec.id === 5) return r.targetGroup === 'OTHER_HELPLESS';
             return false;
           });
@@ -176,21 +173,30 @@ export const LawConditionsScreen: React.FC = () => {
               ...sec,
               docs: matchedRules.map((r, i) => ({
                 code: String.fromCharCode(97 + i),
-                text: `${r.description || r.docType}${r.isMandatory ? ' (Bắt buộc)' : ' (Tùy chọn)'}`,
+                text: `${r.description || getDocTypeLabel(r.docType)}${
+                  r.isMandatory ? ' (Bắt buộc)' : ' (Tùy chọn)'
+                }`,
               })),
             };
           }
           return sec;
         });
         setSections(updated);
+      } catch (err) {
+        if (__DEV__) {
+          console.warn('loadRules err in LawConditionsScreen:', err);
+        }
       }
-    } catch (err) {
-      console.warn('loadRules err in LawConditionsScreen:', err);
-    }
-  };
+    };
+
+    void loadRules();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right', 'bottom']}>
       <DrumHeader
         title="Điều kiện luật"
         onBack={() => navigation.goBack()}
@@ -202,65 +208,67 @@ export const LawConditionsScreen: React.FC = () => {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        <Text style={styles.lead}>
-          Năm nhóm giảm trừ gia cảnh. Mở một nhóm để xem điều kiện và giấy tờ cần nộp.
-        </Text>
-        <GoldDoubleRule style={styles.rule} />
+        <View style={styles.contentWrap}>
+          <Text style={styles.lead}>
+            Năm nhóm đối tượng giảm trừ gia cảnh theo quy định thuế TNCN. Chạm vào từng nhóm để xem điều kiện và hồ sơ minh chứng cần nộp.
+          </Text>
+          <GoldDoubleRule style={styles.rule} />
 
-        {sections.map((sec) => {
-          const open = openId === sec.id;
-          const shortTitle = sec.groupTitle.replace(/^Nhóm\s+\d+\s*:\s*/, '');
-          return (
-            <View key={sec.id} style={styles.section}>
-              <TouchableOpacity
-                style={styles.sectionHead}
-                onPress={() => setOpenId(open ? 0 : sec.id)}
-                accessibilityRole="button"
-                accessibilityState={{ expanded: open }}
-              >
-                <Text style={styles.index}>{String(sec.id).padStart(2, '0')}</Text>
-                <View style={styles.sectionTitles}>
-                  <Text style={styles.groupTitle}>{shortTitle}</Text>
-                  {!open && (sec.logicCondition || sec.includesText) ? (
-                    <Text style={styles.preview} numberOfLines={1}>
-                      {sec.logicCondition || sec.includesText}
-                    </Text>
-                  ) : null}
-                </View>
-                <Ionicons
-                  name={open ? 'chevron-up' : 'chevron-down'}
-                  size={18}
-                  color="#999999"
-                />
-              </TouchableOpacity>
+          {sections.map((sec) => {
+            const open = openId === sec.id;
+            const shortTitle = sec.groupTitle.replace(/^Nhóm\s+\d+\s*:\s*/, '');
+            return (
+              <View key={sec.id} style={styles.section}>
+                <TouchableOpacity
+                  style={styles.sectionHead}
+                  onPress={() => setOpenId(open ? 0 : sec.id)}
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: open }}
+                >
+                  <Text style={styles.index}>{String(sec.id).padStart(2, '0')}</Text>
+                  <View style={styles.sectionTitles}>
+                    <Text style={styles.groupTitle}>{shortTitle}</Text>
+                    {!open && (sec.logicCondition || sec.includesText) ? (
+                      <Text style={styles.preview} numberOfLines={1}>
+                        {sec.logicCondition || sec.includesText}
+                      </Text>
+                    ) : null}
+                  </View>
+                  <Ionicons
+                    name={open ? 'chevron-up' : 'chevron-down'}
+                    size={18}
+                    color="#999999"
+                  />
+                </TouchableOpacity>
 
-              {open ? (
-                <View style={styles.body}>
-                  {sec.logicCondition ? (
-                    <Text style={styles.note}>{sec.logicCondition}</Text>
-                  ) : null}
-                  {sec.includesText ? (
-                    <Text style={styles.note}>Gồm {sec.includesText}</Text>
-                  ) : null}
-                  <Text style={styles.docsLabel}>Giấy tờ cần nộp</Text>
-                  {sec.docs.map((doc) => (
-                    <View key={doc.code} style={styles.docItem}>
-                      <Text style={styles.docLetter}>{doc.code}</Text>
-                      <View style={styles.docCopy}>
-                        <Text style={styles.docText}>{doc.text}</Text>
-                        {doc.subItems?.map((sub, sIdx) => (
-                          <Text key={sIdx} style={styles.subItem}>
-                            {sub}
-                          </Text>
-                        ))}
+                {open ? (
+                  <View style={styles.body}>
+                    {sec.logicCondition ? (
+                      <Text style={styles.note}>{sec.logicCondition}</Text>
+                    ) : null}
+                    {sec.includesText ? (
+                      <Text style={styles.note}>Gồm {sec.includesText}</Text>
+                    ) : null}
+                    <Text style={styles.docsLabel}>Giấy tờ cần nộp</Text>
+                    {sec.docs.map((doc) => (
+                      <View key={doc.code} style={styles.docItem}>
+                        <Text style={styles.docLetter}>{doc.code}</Text>
+                        <View style={styles.docCopy}>
+                          <Text style={styles.docText}>{doc.text}</Text>
+                          {doc.subItems?.map((sub, sIdx) => (
+                            <Text key={sIdx} style={styles.subItem}>
+                              {sub}
+                            </Text>
+                          ))}
+                        </View>
                       </View>
-                    </View>
-                  ))}
-                </View>
-              ) : null}
-            </View>
-          );
-        })}
+                    ))}
+                  </View>
+                ) : null}
+              </View>
+            );
+          })}
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -278,6 +286,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 22,
     paddingTop: 8,
     paddingBottom: 40,
+  },
+  contentWrap: {
+    width: '100%',
+    maxWidth: 680,
+    alignSelf: 'center',
   },
   lead: {
     fontFamily: fonts.body,

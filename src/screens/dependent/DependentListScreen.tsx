@@ -39,7 +39,7 @@ import {
 import { ChangeGroupSheet } from '../../components/common/ChangeGroupSheet';
 import { Dialog } from '../../components/common/Dialog';
 import { MainTabBar } from '../../components/navigation/MainTabBar';
-import { groupCodeToIndex } from './dependentGroupUtils';
+import { buildProofDocumentsParams } from './proofDocumentsParams';
 import { ageAtEffectiveFrom } from './dependentEligibility';
 import {
   buildManualChangeGroupPlan,
@@ -249,22 +249,7 @@ export const DependentListScreen: React.FC = () => {
 
   const handleGoToProofDocuments = useCallback(
     (dep: DependentItem) => {
-      const groupIdx = groupCodeToIndex(dep.currentGroup);
-      navigation.navigate('ProofDocuments', {
-        groupIndex: groupIdx,
-        dependentId: dep.id,
-        dependentData: {
-          fullName: dep.fullName,
-          citizenId: dep.citizenId || '',
-          birthCertNumber: dep.birthCertNumber || '',
-          dateOfBirth: dep.birthDate,
-          relationship: dep.relationship || 'CHILD',
-          effectiveFromMonth: dep.effectiveFromMonth || '2026-01',
-          effectiveToMonth: dep.effectiveToMonth || '2026-12',
-          groupId: groupIdx + 1,
-          groupCode: dep.currentGroup,
-        },
-      });
+      navigation.navigate('ProofDocuments', buildProofDocumentsParams(dep));
     },
     [navigation]
   );

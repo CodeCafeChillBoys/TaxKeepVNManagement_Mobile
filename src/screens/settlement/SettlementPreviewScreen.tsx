@@ -28,7 +28,7 @@ export const SettlementPreviewScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
   const { toast } = useToast();
   const route = useRoute<Route>();
-  const { taxYear, cutoffDate, charityDeduction } = route.params;
+  const { taxYear, cutoffDate } = route.params;
 
   const isMountedRef = useRef(true);
   const [loading, setLoading] = useState(true);
@@ -48,11 +48,7 @@ export const SettlementPreviewScreen: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await taxSettlementApi.preview({
-        taxYear,
-        cutoffDate,
-        charityDeduction: charityDeduction ?? 0,
-      });
+      const data = await taxSettlementApi.preview({ taxYear, cutoffDate });
       if (!isMountedRef.current) return;
       setPreview(data);
     } catch (e: unknown) {
@@ -68,7 +64,7 @@ export const SettlementPreviewScreen: React.FC = () => {
         setLoading(false);
       }
     }
-  }, [taxYear, cutoffDate, charityDeduction]);
+  }, [taxYear, cutoffDate]);
 
   useFocusEffect(
     useCallback(() => {
@@ -80,7 +76,6 @@ export const SettlementPreviewScreen: React.FC = () => {
           const data = await taxSettlementApi.preview({
             taxYear,
             cutoffDate,
-            charityDeduction: charityDeduction ?? 0,
           });
           if (!alive || !isMountedRef.current) return;
           setPreview(data);
@@ -101,7 +96,7 @@ export const SettlementPreviewScreen: React.FC = () => {
       return () => {
         alive = false;
       };
-    }, [taxYear, cutoffDate, charityDeduction])
+    }, [taxYear, cutoffDate])
   );
 
   const onExport = useCallback(async () => {
@@ -112,7 +107,6 @@ export const SettlementPreviewScreen: React.FC = () => {
       const result = await taxSettlementApi.export({
         taxYear,
         cutoffDate,
-        charityDeduction: charityDeduction ?? 0,
         selectedIncomeSourceIds: selected.length ? selected : null,
       });
       if (!isMountedRef.current) return;
@@ -139,7 +133,7 @@ export const SettlementPreviewScreen: React.FC = () => {
         setExporting(false);
       }
     }
-  }, [charityDeduction, cutoffDate, navigation, preview, taxYear, toast]);
+  }, [cutoffDate, navigation, preview, taxYear, toast]);
 
   const hero = preview ? heroOutcome(preview) : null;
 
@@ -179,7 +173,10 @@ export const SettlementPreviewScreen: React.FC = () => {
         <>
           <ScrollView contentContainerStyle={styles.scroll} testID="settlementPreviewScroll">
             <View style={styles.containerInner}>
-              <SettlementResultBlocks preview={preview} />
+              <SettlementResultBlocks
+                preview={preview}
+                onOpenCharityVouchers={() => navigation.navigate('ExpenseList')}
+              />
             </View>
           </ScrollView>
           <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 16) }]}>

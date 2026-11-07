@@ -1097,7 +1097,7 @@ export const ExpertListScreen: React.FC = () => {
                 <ActivityIndicator size="small" color={theme.colors.primary} />
                 <Text style={styles.footerLoadingText}>Đang tải thêm chuyên gia...</Text>
               </View>
-            ) : null
+            ) : undefined
           }
         />
       )}

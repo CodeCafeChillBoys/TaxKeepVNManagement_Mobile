@@ -2593,7 +2593,9 @@ export const ExpertSlotsScreen: React.FC = () => {
         visible={deleteAllModalVisible}
         transparent
         animationType="fade"
-        onRequestClose={() => !bulkDeleting && setDeleteAllModalVisible(false)}
+        onRequestClose={() => {
+          if (!bulkDeleting) setDeleteAllModalVisible(false);
+        }}
       >
         <View style={styles.modalOverlay}>
           <View style={styles.deleteAllModalCard}>
@@ -2707,7 +2709,9 @@ export const ExpertSlotsScreen: React.FC = () => {
         visible={emergencyCancelModalVisible}
         transparent
         animationType="fade"
-        onRequestClose={() => !emergencySubmitting && setEmergencyCancelModalVisible(false)}
+        onRequestClose={() => {
+          if (!emergencySubmitting) setEmergencyCancelModalVisible(false);
+        }}
       >
         <View style={styles.modalOverlay}>
           <View style={styles.emergencyModalCard}>

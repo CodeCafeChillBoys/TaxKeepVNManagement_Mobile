@@ -34,7 +34,7 @@ jobs:
           java-version: '17'
 
       - name: 4. Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: 5. Cache Gradle Dependencies
         uses: actions/cache@v4
@@ -50,7 +50,7 @@ jobs:
         run: npm ci
 
       - name: 7. Expo Prebuild (Generate Native Android Project)
-        run: npx expo prebuild --platform android --clean
+        run: npx expo prebuild --platform android --clean --no-install
 
       - name: 8. Build Android APK (Release)
         working-directory: android

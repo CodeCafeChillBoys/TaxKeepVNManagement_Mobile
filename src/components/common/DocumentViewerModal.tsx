@@ -82,7 +82,7 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = React.mem
       statusBarTranslucent
     >
       <View style={styles.container}>
-        <StatusBar barStyle="light-content" backgroundColor="#0D0F12" />
+        <StatusBar barStyle="light-content" />
 
         {/* Top Header */}
         <View style={[styles.header, { paddingTop: topPad }]}>

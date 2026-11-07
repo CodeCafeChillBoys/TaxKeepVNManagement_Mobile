@@ -238,7 +238,7 @@ export const TaxChatScreen: React.FC = () => {
                     </TouchableOpacity>
                   ))}
                 </View>
-              ) : null
+              ) : undefined
             }
             ListFooterComponent={
               sending ? (
@@ -246,7 +246,7 @@ export const TaxChatScreen: React.FC = () => {
                   <ActivityIndicator size="small" color={theme.colors.primary} />
                   <Text style={styles.typingText}>AI đang trả lời…</Text>
                 </View>
-              ) : null
+              ) : undefined
             }
           />
         )}

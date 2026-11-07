@@ -5,6 +5,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useFonts } from 'expo-font';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { ToastProvider } from './src/components/ui/Toast';
+import { AppUpdateModal } from './src/components/common/AppUpdateModal';
 import { fontAssets } from './src/constants/fonts';
 import { theme } from './src/constants/theme';
 
@@ -28,6 +29,7 @@ export default function App() {
       <ToastProvider>
         <StatusBar style="dark" />
         <RootNavigator />
+        <AppUpdateModal />
       </ToastProvider>
     </SafeAreaProvider>
   );

@@ -49,11 +49,32 @@ jobs:
       - name: 6. Install Dependencies
         run: npm ci
 
+      - name: 6.5. Setup Production Environment Variables
+        run: |
+          echo "EXPO_PUBLIC_API_URL=http://13.236.166.3:5000" > .env
+          echo "EXPO_PUBLIC_AI_URL=http://13.236.166.3:5000/ai" >> .env
+          echo "EXPO_PUBLIC_BUILD_NUMBER=${{ github.run_number }}" >> .env
+
       - name: 7. Expo Prebuild (Generate Native Android Project)
+        env:
+          EXPO_PUBLIC_API_URL: http://13.236.166.3:5000
+          EXPO_PUBLIC_AI_URL: http://13.236.166.3:5000/ai
+          EXPO_PUBLIC_BUILD_NUMBER: ${{ github.run_number }}
         run: npx expo prebuild --platform android --clean --no-install
+
+      - name: 7.5. Configure Android Manifest (Cleartext & In-App Update Permission)
+        run: |
+          # Cho phép kết nối HTTP
+          sed -i 's/<application /<application android:usesCleartextTraffic="true" /' android/app/src/main/AndroidManifest.xml
+          # Cấp quyền cho phép cài đặt bản cập nhật đè lên APK cũ
+          sed -i '/android.permission.INTERNET/a \  <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>' android/app/src/main/AndroidManifest.xml
 
       - name: 8. Build Android APK (Release)
         working-directory: android
+        env:
+          EXPO_PUBLIC_API_URL: http://13.236.166.3:5000
+          EXPO_PUBLIC_AI_URL: http://13.236.166.3:5000/ai
+          EXPO_PUBLIC_BUILD_NUMBER: ${{ github.run_number }}
         run: |
           chmod +x ./gradlew
           ./gradlew assembleRelease --no-daemon
@@ -65,7 +86,7 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: 10. Upload APK to AWS S3
+      - name: 10. Upload APK & Version Metadata to AWS S3
         run: |
           # Tìm file APK được tạo ra trong thư mục outputs
           APK_PATH=$(find android/app/build/outputs/apk/release -name "*.apk" | head -n 1)
@@ -85,6 +106,20 @@ jobs:
           
           # Upload bản 'taxkeep-latest.apk' (để luôn có 1 link tải cố định)
           aws s3 cp "$APK_PATH" "s3://${{ secrets.AWS_S3_BUCKET }}/apks/$LATEST_NAME" --content-type "application/vnd.android.package-archive"
+
+          # Tạo file metadata version.json cho tính năng In-App Update tự động
+          cat <<EOF > version.json
+          {
+            "versionCode": ${{ github.run_number }},
+            "versionName": "1.0.${{ github.run_number }}",
+            "downloadUrl": "https://${{ secrets.AWS_S3_BUCKET }}.s3.${{ secrets.AWS_REGION }}.amazonaws.com/apks/taxkeep-latest.apk",
+            "releaseNotes": "Bản cập nhật mới với các cải tiến và sửa lỗi (Build #${{ github.run_number }}).",
+            "publishedAt": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          }
+          EOF
+
+          # Upload file version.json lên S3
+          aws s3 cp version.json "s3://${{ secrets.AWS_S3_BUCKET }}/apks/version.json" --content-type "application/json"
 
       - name: 11. Output Download URL
         run: |

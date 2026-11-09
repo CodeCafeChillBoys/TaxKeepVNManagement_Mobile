@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { theme } from '../../constants/theme';
+import { DrumHeader } from '../../components/brand/DrumHeader';
 import { useToast } from '../../components/ui/Toast';
 import { Dialog } from '../../components/common/Dialog';
 import { HomeHeaderButton } from '../../components/navigation/HomeHeaderButton';
@@ -32,7 +33,7 @@ import {
   DocumentViewerItem,
 } from '../../components/common/DocumentViewerModal';
 import { RootStackParamList, RootNavigationProp } from '../../navigation/types';
-import { resolveProofDocumentsChecklist } from './proofDocumentsParams';
+import { relationDocTypeFor, resolveProofDocumentsChecklist, selectNewUploads } from './proofDocumentsParams';
 
 type ProofDocumentsRouteProp = RouteProp<RootStackParamList, 'ProofDocuments'>;
 
@@ -281,7 +282,17 @@ export const ProofDocumentsScreen: React.FC = () => {
   const [dynamicDocs, setDynamicDocs] = useState<LawDocItem[] | null>(null);
 
   const currentGroupSpec = LAW_GROUP_SPECS[selectedGroupIdx];
-  const activeDocs = dynamicDocs && dynamicDocs.length > 0 ? dynamicDocs : currentGroupSpec.docs;
+  // Danh sách dự phòng khi chưa có quy tắc từ BE: ô "chứng minh quan hệ" Nhóm 4 đổi mã theo vợ/chồng hay cha/mẹ
+  // useMemo: activeDocs là dependency của effect đồng bộ serverDocs, mảng mới mỗi lần render sẽ gây vòng lặp
+  const relationship = (route.params?.dependentData as any)?.relationship as string | undefined;
+  const staticDocs = useMemo(
+    () =>
+      currentGroupSpec.docs.map((d) =>
+        d.key === 'g4_relation' ? { ...d, docType: relationDocTypeFor(relationship) } : d
+      ),
+    [currentGroupSpec, relationship]
+  );
+  const activeDocs = dynamicDocs && dynamicDocs.length > 0 ? dynamicDocs : staticDocs;
 
   useEffect(() => {
     loadInitialData();
@@ -578,7 +589,7 @@ export const ProofDocumentsScreen: React.FC = () => {
   // Lưu thông tin hồ sơ người phụ thuộc & giấy tờ minh chứng (thay thế Quét thông minh)
   const handleSaveAndContinue = async () => {
     const activeDocKeys = activeDocs.map((d) => d.key);
-    const entriesToUpload = Object.entries(selectedFiles).filter(([k]) => activeDocKeys.includes(k));
+    const entriesToUpload = selectNewUploads(selectedFiles, activeDocKeys);
 
     const dependentId =
       route.params?.dependentId ||
@@ -666,10 +677,16 @@ export const ProofDocumentsScreen: React.FC = () => {
   // Nộp hồ sơ minh chứng lên Backend API
   const handleUploadAll = async () => {
     const activeDocKeys = activeDocs.map((d) => d.key);
-    const chosenEntries = Object.entries(selectedFiles).filter(([k]) => activeDocKeys.includes(k));
+    const chosenEntries = selectNewUploads(selectedFiles, activeDocKeys);
 
     if (chosenEntries.length === 0) {
-      toast.warning('Vui lòng bấm vào ô khung bên dưới để chụp ảnh hoặc chọn tệp minh chứng.', 'Chưa chọn minh chứng');
+      const hasSaved = activeDocKeys.some((k) => selectedFiles[k]?.docId);
+      toast.warning(
+        hasSaved
+          ? 'Giấy tờ đã lưu trước đó vẫn được giữ. Bấm "Đổi ảnh khác" ở ô cần thay nếu muốn tải ảnh mới.'
+          : 'Vui lòng bấm vào ô khung bên dưới để chụp ảnh hoặc chọn tệp minh chứng.',
+        hasSaved ? 'Không có ảnh mới' : 'Chưa chọn minh chứng'
+      );
       return;
     }
 
@@ -721,21 +738,16 @@ export const ProofDocumentsScreen: React.FC = () => {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      {/* Header chuẩn Figma: Nền hoa văn quốc huy / trống đồng + Tiêu đề "Ảnh minh chứng" */}
-      <View style={styles.royalHeader}>
-        <TouchableOpacity
-          style={styles.backBtn}
-          onPress={() => navigation.goBack()}
-          accessibilityRole="button"
-          accessibilityLabel="Quay lại"
-          testID="proofBackBtn"
-        >
-          <Ionicons name="arrow-back" size={26} color="#1A1A1A" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Ảnh minh chứng</Text>
-        <View style={styles.homeSlot}><HomeHeaderButton /></View>
-      </View>
+    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+      {/* Header trống đồng dùng chung với màn Người phụ thuộc */}
+      <DrumHeader
+        title="Ảnh minh chứng"
+        onBack={() => {
+          if (navigation.canGoBack()) navigation.goBack();
+          else navigation.navigate('Home');
+        }}
+        backTestID="proofBackBtn"
+      />
 
       {/* Đã ẩn các tab nhóm khác theo yêu cầu - Chỉ hiển thị đúng nhóm người dùng đã chọn */}
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
@@ -1077,33 +1089,9 @@ export const ProofDocumentsScreen: React.FC = () => {
 
 const styles = StyleSheet.create({
   // Ô phải header: nút về Trang chủ, giữ độ rộng cũ để tiêu đề vẫn ở giữa
-  homeSlot: { width: 44, alignItems: 'flex-end', justifyContent: 'center' },
   safeArea: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
-  },
-  royalHeader: {
-    height: 64,
-    backgroundColor: '#EBE4D5',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#DDD5C4',
-  },
-  backBtn: {
-    width: 44,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerTitle: {
-    ...theme.typography.titleLarge,
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#1A1A1A',
-    textAlign: 'center',
+    backgroundColor: theme.colors.background,
   },
   groupTabContainer: {
     backgroundColor: '#FAF8F5',

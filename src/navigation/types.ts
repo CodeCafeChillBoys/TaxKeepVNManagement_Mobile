@@ -69,7 +69,6 @@ export type RootStackParamList = {
   SettlementPreview: {
     taxYear: number;
     cutoffDate?: string;
-    charityDeduction?: number;
   };
   SettlementSuccess: {
     dossierId: string;

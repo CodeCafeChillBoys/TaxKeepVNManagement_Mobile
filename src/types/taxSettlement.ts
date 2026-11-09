@@ -1,15 +1,14 @@
 /** Types cho luồng quyết toán thuế TNCN — khớp BE TaxSettlementDtos. */
 
+/** Từ thiện không gửi lên: BE tự tổng hợp từ chứng từ DONATION_VOUCHER đã xác nhận */
 export interface TaxSettlementPreviewRequest {
   taxYear: number;
   cutoffDate?: string | null;
-  charityDeduction?: number;
 }
 
 export interface TaxSettlementExportRequest {
   taxYear: number;
   cutoffDate?: string | null;
-  charityDeduction?: number;
   selectedIncomeSourceIds?: string[] | null;
   note?: string | null;
 }

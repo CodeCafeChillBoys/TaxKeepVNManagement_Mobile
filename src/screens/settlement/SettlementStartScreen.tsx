@@ -29,19 +29,10 @@ export const SettlementStartScreen: React.FC = () => {
   const [taxYear, setTaxYear] = useState(2026);
   const [showOptional, setShowOptional] = useState(false);
   const [cutoffDate, setCutoffDate] = useState('');
-  const [charityText, setCharityText] = useState('');
 
   const defaultCutoff = useMemo(() => `${taxYear}-12-31`, [taxYear]);
 
   const onPreview = useCallback(() => {
-    const charity = Number((charityText || '0').replace(/\./g, '').replace(/,/g, ''));
-    if (Number.isNaN(charity) || charity < 0) {
-      toast.warning(
-        'Vui lòng nhập số tiền đóng góp từ thiện lớn hơn hoặc bằng 0 đ.',
-        'Số tiền chưa hợp lệ'
-      );
-      return;
-    }
     const cutoff = cutoffDate.trim() || undefined;
     if (cutoff && !/^\d{4}-\d{2}-\d{2}$/.test(cutoff)) {
       toast.warning(
@@ -53,9 +44,8 @@ export const SettlementStartScreen: React.FC = () => {
     navigation.navigate('SettlementPreview', {
       taxYear,
       cutoffDate: cutoff,
-      charityDeduction: charity,
     });
-  }, [charityText, cutoffDate, defaultCutoff, navigation, taxYear, toast]);
+  }, [cutoffDate, defaultCutoff, navigation, taxYear, toast]);
 
   // Có nút Home thì nới 2 bên bằng nhau để tiêu đề vẫn ở giữa
   const sideStyle = [styles.side, showHome && styles.sideWide];
@@ -145,16 +135,9 @@ export const SettlementStartScreen: React.FC = () => {
                   autoCapitalize="none"
                   testID="settlementCutoffInput"
                 />
-                <Text style={styles.label}>Đóng góp từ thiện, nhân đạo (đ)</Text>
-                <TextInput
-                  style={styles.input}
-                  value={charityText}
-                  onChangeText={setCharityText}
-                  keyboardType="numeric"
-                  placeholder="VD: 1.000.000"
-                  placeholderTextColor={theme.colors.textPlaceholder}
-                  testID="settlementCharityInput"
-                />
+                <Text style={styles.hint}>
+                  Từ thiện, nhân đạo, khuyến học được tự động tổng hợp từ chứng từ từ thiện đã xác nhận, không cần nhập.
+                </Text>
               </View>
             ) : null}
 
@@ -222,6 +205,7 @@ const styles = StyleSheet.create({
   optionalToggle: { marginTop: 20, marginBottom: 4, alignSelf: 'flex-start', paddingVertical: 4 },
   optionalToggleText: { fontFamily: fonts.bodySemi, fontSize: 13, color: theme.colors.primary },
   optionalBox: { marginTop: 4 },
+  hint: { fontFamily: fonts.body, fontSize: 12, lineHeight: 18, color: theme.colors.textSecondary, marginTop: 12 },
   input: {
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,

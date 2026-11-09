@@ -47,6 +47,7 @@ import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
 import { MainTabBar } from '../../components/navigation/MainTabBar';
 import { useToast } from '../../components/ui/Toast';
 import { humanizeGroupCodes } from '../dependent/dependentGroupUtils';
+import { buildProofDocumentsParams } from '../dependent/proofDocumentsParams';
 import { formatPersonName } from '../../utils/formatPersonName';
 import { sanitizeUiMessage } from '../../utils/friendlyError';
 import { consultationApi } from '../../api/consultationApi';
@@ -470,10 +471,7 @@ export const HomeScreen: React.FC = () => {
         return;
       }
       if (item.dependent) {
-        navigation.navigate('ProofDocuments', {
-          dependentId: item.dependent.id,
-          groupIndex: 0,
-        });
+        navigation.navigate('ProofDocuments', buildProofDocumentsParams(item.dependent));
       }
     },
     [handleReminderUploadPress, navigation]

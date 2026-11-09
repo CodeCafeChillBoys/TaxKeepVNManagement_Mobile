@@ -168,7 +168,7 @@ tags:
 - waitForAnimationToEnd
 - takeScreenshot: screenshots/settlement-detail/09-glossary
 
-# ===== Kịch bản 2: từ thiện 1.000.000 — không chốt =====
+# ===== Kịch bản 2: từ thiện tự tổng hợp từ chứng từ (không nhập tay) — không chốt =====
 - tapOn:
     id: "settlementPreviewBack"
 - extendedWaitUntil:
@@ -176,11 +176,9 @@ tags:
       id: "settlementPreviewBtn"
     timeout: 15000
 - tapOn: "Tuỳ chọn"
-- tapOn:
+- assertVisible: ".*tự động tổng hợp từ chứng từ từ thiện.*"
+- assertNotVisible:
     id: "settlementCharityInput"
-- eraseText
-- inputText: "1000000"
-- hideKeyboard
 - tapOn:
     id: "settlementPreviewBtn"
 - extendedWaitUntil:
@@ -194,8 +192,8 @@ tags:
 - tapOn: "Giảm trừ"
 - waitForAnimationToEnd
 - takeScreenshot: screenshots/settlement-detail/10-deductions-charity
-- assertVisible: ".*Đóng góp từ thiện, nhân đạo.*"
-- assertVisible: ".*chứng từ.*"
+- assertVisible: ".*khuyến học.*"
+- assertVisible: ".*Xem/Thêm chứng từ.*"
 # Không bấm settlementOpenConfirm
 
 # ===== Kịch bản 3: chi tiết bản đã chốt =====

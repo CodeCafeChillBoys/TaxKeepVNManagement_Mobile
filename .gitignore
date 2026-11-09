@@ -13,10 +13,16 @@ expo-env.d.ts
 .kotlin/
 *.orig.*
 *.jks
+*.keystore
 *.p8
 *.p12
 *.key
 *.mobileprovision
+
+# Cấu hình dịch vụ / thông tin đăng nhập (không đưa lên git)
+google-services.json
+GoogleService-Info.plist
+credentials.json
 
 # Metro
 .metro-health-check*
@@ -51,6 +57,8 @@ yarn-error.*
 .agents/
 .minimax/
 .cursor/
+agent/
+skills-lock.json
 
 # Test & Automation artifacts (Playwright & Python)
 scripts/
@@ -78,6 +86,10 @@ yarn-error.log*
 .maestro/screenshots/withholding-voucher-r2/
 .maestro/screenshots/withholding-voucher-tc2r/
 .maestro/flows/_*.yaml
+.maestro/last-dossier-id.txt
+
+# Ảnh giấy tờ & dữ liệu OCR dùng thử (có thông tin định danh)
+assets/test-ocr/
 *.log.err
 
 # OS temporary files

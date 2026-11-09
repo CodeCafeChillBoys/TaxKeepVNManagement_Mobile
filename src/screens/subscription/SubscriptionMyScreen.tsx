@@ -14,7 +14,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
-import { Dialog } from '../../components/common/Dialog';
 import { RootNavigationProp } from '../../navigation/types';
 import { subscriptionApi } from '../../api/subscriptionApi';
 import {
@@ -73,8 +72,6 @@ export const SubscriptionMyScreen: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [confirmCancel, setConfirmCancel] = useState(false);
-  const [cancelling, setCancelling] = useState(false);
 
   const load = useCallback(async (pull = false) => {
     if (pull) setRefreshing(true);
@@ -99,19 +96,6 @@ export const SubscriptionMyScreen: React.FC = () => {
       void load();
     }, [load])
   );
-
-  const doCancel = async () => {
-    setCancelling(true);
-    try {
-      await subscriptionApi.cancel();
-      await load();
-    } catch (e: any) {
-      setError(e?.response?.data?.message || e?.message || 'Chưa thể hủy gói dịch vụ lúc này. Bạn vui lòng thử lại sau.');
-    } finally {
-      setConfirmCancel(false);
-      setCancelling(false);
-    }
-  };
 
   const isPaid = !!quota && quota.billingCycle !== 'free';
   const now = new Date();
@@ -223,21 +207,11 @@ export const SubscriptionMyScreen: React.FC = () => {
             {error ? <Text style={styles.errorInline}>{error}</Text> : null}
 
             {isPaid ? (
-              <>
-                <Text style={styles.note}>
-                  {`${friendlyPlanNoun(quota.planName, true)} được sử dụng đến hết ngày ${
-                    quota.expiresAt ? formatDateVi(new Date(quota.expiresAt)) : 'thời hạn đăng ký'
-                  }. Sau thời gian này, tài khoản sẽ tự động chuyển về gói Cơ bản. Bạn không cần thao tác hủy gói nếu muốn dùng đến hết hạn.`}
-                </Text>
-                <TouchableOpacity
-                  style={styles.cancel}
-                  onPress={() => setConfirmCancel(true)}
-                  accessibilityRole="button"
-                  testID="subscriptionMyCancel"
-                >
-                  <Text style={styles.cancelText}>Hủy gói trước thời hạn</Text>
-                </TouchableOpacity>
-              </>
+              <Text style={styles.note}>
+                {`${friendlyPlanNoun(quota.planName, true)} được sử dụng đến hết ngày ${
+                  quota.expiresAt ? formatDateVi(new Date(quota.expiresAt)) : 'thời hạn đăng ký'
+                }. Sau thời gian này, tài khoản sẽ tự động chuyển về gói Cơ bản.`}
+              </Text>
             ) : null}
 
             <TouchableOpacity
@@ -265,22 +239,6 @@ export const SubscriptionMyScreen: React.FC = () => {
         </>
       )}
 
-
-      <Dialog
-        visible={confirmCancel}
-        title={`Xác nhận hủy ${friendlyPlanNoun(quota?.planName ?? 'gói dịch vụ')}?`}
-        message={`Gói dịch vụ sẽ dừng hiệu lực ngay và tài khoản được chuyển về gói Cơ bản. ${
-          quota?.remainingDays != null ? `${quota.remainingDays} ngày sử dụng còn lại` : 'Thời gian sử dụng còn lại'
-        } sẽ không được hoàn phí. Bạn vẫn có thể tiếp tục sử dụng các quyền lợi của gói Cơ bản.`}
-        primaryLabel={cancelling ? 'Đang xử lý...' : 'Xác nhận hủy'}
-        secondaryLabel="Giữ lại gói"
-        destructive
-        onPrimary={() => {
-          if (!cancelling) void doCancel();
-        }}
-        onSecondary={() => setConfirmCancel(false)}
-        testID="subscriptionMyCancelDialog"
-      />
     </SafeAreaView>
   );
 };
@@ -341,8 +299,6 @@ const styles = StyleSheet.create({
 
   historyLink: { flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 44, marginTop: 10 },
   historyText: { flex: 1, fontFamily: fonts.bodySemi, fontSize: 14, color: theme.colors.primary },
-  cancel: { alignSelf: 'flex-start', minHeight: 44, justifyContent: 'center', marginTop: 4 },
-  cancelText: { fontFamily: fonts.bodySemi, fontSize: 14, color: theme.colors.error },
   note: { fontFamily: fonts.body, fontSize: 13, lineHeight: 19, color: theme.colors.textSecondary, marginTop: 14 },
   errorInline: { fontFamily: fonts.body, fontSize: 14, color: theme.colors.error, marginTop: 14 },
 

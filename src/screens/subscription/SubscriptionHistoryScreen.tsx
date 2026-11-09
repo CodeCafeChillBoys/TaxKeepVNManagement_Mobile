@@ -19,6 +19,7 @@ import { subscriptionApi } from '../../api/subscriptionApi';
 import {
   formatDateVi,
   formatPlanVnd,
+  friendlyPlanNoun,
   historyStatus,
   HistoryTone,
   paymentMethodLabel,
@@ -50,7 +51,11 @@ export const SubscriptionHistoryScreen: React.FC = () => {
     try {
       setItems(await subscriptionApi.getHistory());
     } catch (e: any) {
-      setError(e?.response?.data?.message || e?.message || 'Không tải được lịch sử gói. Kiểm tra kết nối mạng rồi tải lại.');
+      setError(
+        e?.response?.data?.message ||
+          e?.message ||
+          'Không thể tải lịch sử gói dịch vụ. Bạn vui lòng kiểm tra kết nối mạng rồi thử lại.'
+      );
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -72,13 +77,13 @@ export const SubscriptionHistoryScreen: React.FC = () => {
     // Đơn chưa thanh toán xong thì ngày bắt đầu là ngày tạo đơn
     const period =
       status.tone === 'pending' || status.tone === 'failed'
-        ? from && `Tạo đơn ${from}`
+        ? from && `Đăng ký ngày ${from}`
         : from && (to ? `${from} đến ${to}` : `Từ ${from}`);
 
     return (
       <View style={styles.row} testID={`subscriptionHistory_${item.id}`}>
         <View style={styles.rowHead}>
-          <Text style={styles.planName}>{planNoun(item.planName, true)}</Text>
+          <Text style={styles.planName}>{friendlyPlanNoun(item.planName, true)}</Text>
           <Text style={[styles.amount, status.tone === 'failed' && styles.amountStruck]}>
             {amount > 0 ? formatPlanVnd(amount) : 'Miễn phí'}
           </Text>
@@ -109,7 +114,7 @@ export const SubscriptionHistoryScreen: React.FC = () => {
         >
           <Ionicons name="arrow-back" size={24} color={theme.colors.textPrimary} />
         </TouchableOpacity>
-        <Text style={styles.title}>Lịch sử gói</Text>
+        <Text style={styles.title}>Lịch sử gói dịch vụ</Text>
         <View style={styles.side} />
       </View>
       <GoldDoubleRule />
@@ -122,7 +127,7 @@ export const SubscriptionHistoryScreen: React.FC = () => {
         <View style={styles.center}>
           <Text style={styles.error}>{error}</Text>
           <TouchableOpacity onPress={() => load()} accessibilityRole="button">
-            <Text style={styles.link}>Tải lại</Text>
+            <Text style={styles.link}>Thử lại</Text>
           </TouchableOpacity>
         </View>
       ) : (
@@ -136,10 +141,10 @@ export const SubscriptionHistoryScreen: React.FC = () => {
           }
           ListEmptyComponent={
             <View style={styles.empty}>
-              <Text style={styles.emptyTitle}>Chưa có lần mua gói nào</Text>
-              <Text style={styles.emptySub}>Các lần mua, nâng cấp và gia hạn gói sẽ hiện ở đây.</Text>
+              <Text style={styles.emptyTitle}>Chưa có lịch sử đăng ký gói</Text>
+              <Text style={styles.emptySub}>Các lần đăng ký, nâng cấp và gia hạn gói dịch vụ sẽ được lưu tại đây.</Text>
               <TouchableOpacity onPress={() => navigation.navigate('SubscriptionPlans')} accessibilityRole="button">
-                <Text style={styles.link}>Xem các gói</Text>
+                <Text style={styles.link}>Xem các gói dịch vụ</Text>
               </TouchableOpacity>
             </View>
           }

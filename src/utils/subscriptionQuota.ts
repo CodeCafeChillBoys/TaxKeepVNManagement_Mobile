@@ -16,12 +16,12 @@ export interface QuotaError {
 }
 
 const TITLES: Record<QuotaErrorCode, string> = {
-  AI_QUESTION_QUOTA_EXCEEDED: 'Hết lượt hỏi trợ lý AI',
+  AI_QUESTION_QUOTA_EXCEEDED: 'Hết lượt hỏi trợ lý thuế',
   OCR_QUOTA_EXCEEDED: 'Hết lượt quét chứng từ',
   INCOME_SOURCE_LIMIT_EXCEEDED: 'Đã đủ số nguồn thu nhập',
   DEPENDENT_LIMIT_EXCEEDED: 'Đã đủ số người phụ thuộc',
-  EXPORT_PDF_NOT_ALLOWED: 'Gói hiện tại chưa xuất được PDF',
-  EXPORT_ZIP_NOT_ALLOWED: 'Gói hiện tại chưa xuất được ZIP',
+  EXPORT_PDF_NOT_ALLOWED: 'Gói hiện tại chưa hỗ trợ tải tờ khai',
+  EXPORT_ZIP_NOT_ALLOWED: 'Gói hiện tại chưa hỗ trợ tải trọn bộ chứng từ',
 };
 
 export function quotaTitle(code: QuotaErrorCode): string {

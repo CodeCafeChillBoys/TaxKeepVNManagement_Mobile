@@ -26,6 +26,8 @@ import {
   formatDateVi,
   formatPlanVnd,
   freeMonthsOfYearly,
+  friendlyPlanName,
+  friendlyPlanNoun,
   PaymentMethod,
   planNoun,
   purchaseOutcome,
@@ -40,7 +42,7 @@ type Stage = 'form' | 'waiting' | 'done' | 'failed';
 
 const METHODS: { key: PaymentMethod; title: string; sub: string; icon: keyof typeof Ionicons.glyphMap }[] = [
   { key: 'WALLET', title: 'Ví TaxKeep', sub: '', icon: 'wallet-outline' },
-  { key: 'VNPAY', title: 'VNPay', sub: 'Thẻ ATM, Internet Banking, ví VNPay', icon: 'card-outline' },
+  { key: 'VNPAY', title: 'VNPay', sub: 'Thẻ ngân hàng, tài khoản ngân hàng, ví VNPay', icon: 'card-outline' },
   { key: 'VIETQR', title: 'Chuyển khoản VietQR', sub: 'Quét mã bằng ứng dụng ngân hàng', icon: 'qr-code-outline' },
 ];
 
@@ -127,7 +129,7 @@ export const SubscriptionCheckoutScreen: React.FC = () => {
         planId: plan.id,
         billingCycle: cycle,
         paymentMethod: isFree ? 'WALLET' : method,
-        returnUrl: onWeb ? `${config.webFrontendUrl}/${SUBSCRIPTION_RETURN_PATH}` : undefined,
+        returnUrl: `${config.webFrontendUrl}/payments/vnpay-return`,
       });
       setOrder(res);
       if (res.isCompleted) {
@@ -160,7 +162,7 @@ export const SubscriptionCheckoutScreen: React.FC = () => {
         >
           <Ionicons name="arrow-back" size={24} color={theme.colors.textPrimary} />
         </TouchableOpacity>
-        <Text style={styles.title}>{isFree ? 'Chuyển gói' : 'Thanh toán gói'}</Text>
+        <Text style={styles.title}>{isFree ? 'Chuyển gói dịch vụ' : 'Thanh toán gói dịch vụ'}</Text>
         <View style={styles.side} />
       </View>
       <GoldDoubleRule />
@@ -178,11 +180,11 @@ export const SubscriptionCheckoutScreen: React.FC = () => {
             size={64}
             color={ok ? theme.colors.success : theme.colors.error}
           />
-          <Text style={styles.resultTitle}>{ok ? `Đã kích hoạt ${planNoun(plan.name)}` : 'Thanh toán chưa thành công'}</Text>
+          <Text style={styles.resultTitle}>{ok ? `Đã kích hoạt ${friendlyPlanNoun(plan.name)} thành công` : 'Thanh toán chưa thành công'}</Text>
           <Text style={styles.resultSub}>
             {ok
-              ? `Gói có hiệu lực đến ${formatDateVi(expectedExpiry(cycle))}.`
-              : 'Đơn đã bị hủy hoặc thanh toán thất bại. Bạn chưa bị trừ tiền cho gói này.'}
+              ? `Gói có hiệu lực đến ngày ${formatDateVi(expectedExpiry(cycle))}.`
+              : 'Đơn đăng ký đã bị hủy hoặc thanh toán thất bại. Bạn chưa bị trừ tiền cho gói này.'}
           </Text>
           <TouchableOpacity style={styles.cta} onPress={ok ? backToPlans : () => setStage('form')} accessibilityRole="button">
             <Text style={styles.ctaText}>{ok ? 'Xem gói của tôi' : 'Thanh toán lại'}</Text>
@@ -203,8 +205,8 @@ export const SubscriptionCheckoutScreen: React.FC = () => {
             </Text>
             <Text style={styles.sheetSub}>
               {order.qrCode
-                ? 'Giữ nguyên số tiền và nội dung chuyển khoản để hệ thống nhận đúng đơn.'
-                : 'Trang VNPay đã mở trong trình duyệt. Thanh toán xong, quay lại app để kích hoạt gói.'}
+                ? 'Giữ nguyên số tiền và nội dung chuyển khoản để hệ thống ghi nhận đúng đơn.'
+                : 'Cổng thanh toán VNPay đã mở trong trình duyệt. Sau khi thanh toán xong, bạn quay lại ứng dụng để kích hoạt gói ngay.'}
             </Text>
 
             {order.qrCode ? (
@@ -226,7 +228,7 @@ export const SubscriptionCheckoutScreen: React.FC = () => {
               onPress={() => order.checkoutUrl && Linking.openURL(order.checkoutUrl)}
               accessibilityRole="button"
             >
-              <Text style={styles.secondaryText}>Mở lại trang VNPay</Text>
+              <Text style={styles.secondaryText}>Mở lại trang thanh toán VNPay</Text>
             </TouchableOpacity>
           ) : null}
         </ScrollView>
@@ -241,7 +243,7 @@ export const SubscriptionCheckoutScreen: React.FC = () => {
             {checking ? (
               <ActivityIndicator color={theme.colors.textOnPrimary} />
             ) : (
-              <Text style={styles.ctaText}>Tôi đã thanh toán, kiểm tra</Text>
+              <Text style={styles.ctaText}>Tôi đã thanh toán, kiểm tra ngay</Text>
             )}
           </TouchableOpacity>
         </View>
@@ -256,12 +258,12 @@ export const SubscriptionCheckoutScreen: React.FC = () => {
       {header}
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.sheet}>
-          <Text style={styles.planName}>{plan.name}</Text>
-          <Text style={styles.sheetSub}>{cycle === 'yearly' ? 'Thanh toán theo năm' : 'Thanh toán theo tháng'}</Text>
+          <Text style={styles.planName}>{friendlyPlanName(plan.name)}</Text>
+          <Text style={styles.sheetSub}>{cycle === 'yearly' ? 'Gói đăng ký theo năm' : 'Gói đăng ký theo tháng'}</Text>
           <View style={styles.rule} />
           <Row label="Thời hạn" value={cycle === 'yearly' ? '12 tháng' : '1 tháng'} />
           {freeMonths > 0 ? <Row label="Ưu đãi" value={`Tặng ${freeMonths} tháng`} /> : null}
-          <Row label="Hiệu lực đến" value={formatDateVi(expectedExpiry(cycle))} />
+          <Row label="Hiệu lực đến ngày" value={formatDateVi(expectedExpiry(cycle))} />
           <View style={styles.totalRow}>
             <Text style={styles.totalLabel}>Tổng thanh toán</Text>
             <Text style={styles.total}>{isFree ? '0đ' : formatPlanVnd(amount)}</Text>
@@ -270,8 +272,8 @@ export const SubscriptionCheckoutScreen: React.FC = () => {
 
         {currentPlanName && currentPlanName !== plan.name ? (
           <Text style={styles.warn}>
-            {planNoun(currentPlanName, true)} hiện tại sẽ kết thúc ngay khi {planNoun(plan.name)} được kích hoạt. Thời gian còn lại của
-            gói cũ không được hoàn tiền.
+            {friendlyPlanNoun(currentPlanName, true)} hiện tại sẽ kết thúc ngay khi {friendlyPlanNoun(plan.name)} được kích hoạt. Thời gian còn lại của
+            gói cũ không được hoàn phí.
           </Text>
         ) : null}
 

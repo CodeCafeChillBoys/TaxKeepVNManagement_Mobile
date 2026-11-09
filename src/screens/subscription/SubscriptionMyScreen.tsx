@@ -16,7 +16,14 @@ import { fonts } from '../../constants/fonts';
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
 import { RootNavigationProp } from '../../navigation/types';
 import { subscriptionApi } from '../../api/subscriptionApi';
-import { formatDateVi, planNoun, SubscriptionQuotaStatus, UNLIMITED, usageRatio } from '../../types/subscription';
+import {
+  formatDateVi,
+  friendlyPlanName,
+  friendlyPlanNoun,
+  SubscriptionQuotaStatus,
+  UNLIMITED,
+  usageRatio,
+} from '../../types/subscription';
 
 const UsageRow: React.FC<{ label: string; used: number; max: number; period?: string }> = ({
   label,
@@ -43,7 +50,9 @@ const UsageRow: React.FC<{ label: string; used: number; max: number; period?: st
         </View>
       ) : null}
       {max !== UNLIMITED && used > max ? (
-        <Text style={[styles.usagePeriod, styles.over]}>Vượt hạn mức gói: dữ liệu cũ vẫn giữ, chưa thêm mới được</Text>
+        <Text style={[styles.usagePeriod, styles.over]}>
+          Đã đạt mức tối đa của gói: dữ liệu đã lưu vẫn an toàn, tạm thời chưa thể thêm mới
+        </Text>
       ) : period ? (
         <Text style={styles.usagePeriod}>{period}</Text>
       ) : null}
@@ -71,7 +80,11 @@ export const SubscriptionMyScreen: React.FC = () => {
     try {
       setQuota(await subscriptionApi.getQuota());
     } catch (e: any) {
-      setError(e?.response?.data?.message || e?.message || 'Không tải được thông tin gói. Kiểm tra kết nối mạng rồi tải lại.');
+      setError(
+        e?.response?.data?.message ||
+          e?.message ||
+          'Không thể tải thông tin gói dịch vụ. Bạn vui lòng kiểm tra kết nối mạng rồi thử lại.'
+      );
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -86,11 +99,11 @@ export const SubscriptionMyScreen: React.FC = () => {
 
   const isPaid = !!quota && quota.billingCycle !== 'free';
   const now = new Date();
-  const monthLabel = `Tháng ${now.getMonth() + 1}/${now.getFullYear()}, đặt lại vào ngày 1 tháng sau`;
+  const monthLabel = `Tháng ${now.getMonth() + 1}/${now.getFullYear()} · Tự động làm mới vào ngày 1 tháng sau`;
 
   const booking: string[] = [];
-  if (quota?.bookingDiscountPercent) booking.push(`Giảm ${quota.bookingDiscountPercent}%`);
-  if (quota?.freeConsultationsPerYear) booking.push(`${quota.freeConsultationsPerYear} ca/năm miễn phí`);
+  if (quota?.bookingDiscountPercent) booking.push(`Giảm ${quota.bookingDiscountPercent}% chi phí`);
+  if (quota?.freeConsultationsPerYear) booking.push(`Miễn phí ${quota.freeConsultationsPerYear} buổi/năm`);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right', 'bottom']}>
@@ -117,7 +130,7 @@ export const SubscriptionMyScreen: React.FC = () => {
         <View style={styles.center}>
           <Text style={styles.error}>{error}</Text>
           <TouchableOpacity onPress={() => load()} accessibilityRole="button">
-            <Text style={styles.link}>Tải lại</Text>
+            <Text style={styles.link}>Thử lại</Text>
           </TouchableOpacity>
         </View>
       ) : (
@@ -129,36 +142,57 @@ export const SubscriptionMyScreen: React.FC = () => {
             }
           >
             <View style={styles.sheet} testID="subscriptionMySheet">
-              <Text style={styles.planName}>{quota.planName}</Text>
+              <Text style={styles.planName}>{friendlyPlanName(quota.planName)}</Text>
               <Text style={styles.sub}>
                 {isPaid
-                  ? `${quota.billingCycle === 'yearly' ? 'Thanh toán theo năm' : 'Thanh toán theo tháng'}${
-                      quota.expiresAt ? `, hết hạn ${formatDateVi(new Date(quota.expiresAt))}` : ''
+                  ? `${quota.billingCycle === 'yearly' ? 'Gói đăng ký theo năm' : 'Gói đăng ký theo tháng'}${
+                      quota.expiresAt ? ` · Hết hạn ngày ${formatDateVi(new Date(quota.expiresAt))}` : ''
                     }`
-                  : 'Gói miễn phí, không giới hạn thời gian'}
+                  : 'Gói miễn phí · Sử dụng dài lâu, không giới hạn thời gian'}
               </Text>
               {isPaid && quota.remainingDays != null ? (
-                <Text style={styles.days}>Còn {quota.remainingDays} ngày</Text>
+                <Text style={styles.days}>Còn {quota.remainingDays} ngày sử dụng</Text>
               ) : null}
 
               <View style={styles.rule} />
               <UsageRow
-                label="Câu hỏi trợ lý AI"
+                label="Lượt hỏi Trợ lý thuế"
                 used={quota.aiQuestionsUsed}
                 max={quota.maxAiQuestionsPerMonth}
                 period={monthLabel}
               />
-              <UsageRow label="Lượt quét OCR" used={quota.ocrScansUsed} max={quota.maxOcrScansPerMonth} period={monthLabel} />
-              <UsageRow label="Nguồn thu nhập" used={quota.currentIncomeSourcesCount} max={quota.maxIncomeSources} />
-              <UsageRow label="Người phụ thuộc" used={quota.currentDependentsCount} max={quota.maxDependents} />
+              <UsageRow
+                label="Lượt quét hóa đơn, chứng từ"
+                used={quota.ocrScansUsed}
+                max={quota.maxOcrScansPerMonth}
+                period={monthLabel}
+              />
+              <UsageRow
+                label="Số nguồn thu nhập"
+                used={quota.currentIncomeSourcesCount}
+                max={quota.maxIncomeSources}
+              />
+              <UsageRow
+                label="Số người phụ thuộc"
+                used={quota.currentDependentsCount}
+                max={quota.maxDependents}
+              />
 
               <View style={styles.rule} />
               {[
-                { label: 'Xuất PDF Mẫu 02/QTT-TNCN', value: quota.canExportPdf ? 'Có' : 'Chỉ xem', on: quota.canExportPdf },
-                { label: 'Xuất ZIP chứng từ', value: quota.canExportZip ? 'Có' : 'Không', on: quota.canExportZip },
                 {
-                  label: 'Đặt lịch chuyên gia',
-                  value: booking.length ? booking.join(', ') : 'Giá gốc',
+                  label: 'Tải tờ khai thuế (Mẫu 02/QTT-TNCN)',
+                  value: quota.canExportPdf ? 'Được tải về' : 'Chỉ xem trước',
+                  on: quota.canExportPdf,
+                },
+                {
+                  label: 'Tải trọn bộ hồ sơ chứng từ',
+                  value: quota.canExportZip ? 'Được tải về' : 'Chưa hỗ trợ',
+                  on: quota.canExportZip,
+                },
+                {
+                  label: 'Tư vấn cùng chuyên gia thuế',
+                  value: booking.length ? booking.join(' · ') : 'Theo giá chuẩn',
                   on: booking.length > 0,
                 },
               ].map((r) => (
@@ -173,11 +207,10 @@ export const SubscriptionMyScreen: React.FC = () => {
             {error ? <Text style={styles.errorInline}>{error}</Text> : null}
 
             {isPaid ? (
-              // BE đã bỏ API hủy gói: gói trả phí dùng đến hết hạn rồi tự chuyển về Basic
               <Text style={styles.note}>
-                {`${planNoun(quota.planName, true)} dùng đến hết ${
-                  quota.expiresAt ? formatDateVi(new Date(quota.expiresAt)) : 'thời hạn'
-                }, sau đó tài khoản tự chuyển về gói Basic.`}
+                {`${friendlyPlanNoun(quota.planName, true)} được sử dụng đến hết ngày ${
+                  quota.expiresAt ? formatDateVi(new Date(quota.expiresAt)) : 'thời hạn đăng ký'
+                }. Sau thời gian này, tài khoản sẽ tự động chuyển về gói Cơ bản.`}
               </Text>
             ) : null}
 
@@ -188,7 +221,7 @@ export const SubscriptionMyScreen: React.FC = () => {
               testID="subscriptionMyHistory"
             >
               <Ionicons name="time-outline" size={18} color={theme.colors.primary} />
-              <Text style={styles.historyText}>Lịch sử mua gói</Text>
+              <Text style={styles.historyText}>Lịch sử đăng ký gói</Text>
               <Ionicons name="chevron-forward" size={16} color={theme.colors.primary} />
             </TouchableOpacity>
           </ScrollView>
@@ -200,7 +233,7 @@ export const SubscriptionMyScreen: React.FC = () => {
               accessibilityRole="button"
               testID="subscriptionMyPlans"
             >
-              <Text style={styles.ctaText}>{isPaid ? 'Xem và đổi gói' : 'Nâng cấp gói'}</Text>
+              <Text style={styles.ctaText}>{isPaid ? 'Đổi sang gói khác' : 'Nâng cấp gói dịch vụ'}</Text>
             </TouchableOpacity>
           </View>
         </>

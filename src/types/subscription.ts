@@ -128,25 +128,25 @@ export interface PlanBenefit {
 
 export function planBenefits(plan: SubscriptionPlan): PlanBenefit[] {
   const booking: string[] = [];
-  if (plan.bookingDiscountPercent > 0) booking.push(`Giảm ${plan.bookingDiscountPercent}%`);
-  if (plan.freeConsultationsPerYear > 0) booking.push(`${plan.freeConsultationsPerYear} ca/năm miễn phí`);
+  if (plan.bookingDiscountPercent > 0) booking.push(`Giảm ${plan.bookingDiscountPercent}% chi phí`);
+  if (plan.freeConsultationsPerYear > 0) booking.push(`Miễn phí ${plan.freeConsultationsPerYear} buổi/năm`);
 
   return [
-    { label: 'Trợ lý AI', value: formatLimit(plan.maxAiQuestionsPerMonth, 'câu/tháng'), included: true },
+    { label: 'Trợ lý thuế', value: formatLimit(plan.maxAiQuestionsPerMonth, 'câu/tháng'), included: true },
     {
-      label: 'Lưu lịch sử chat AI',
-      value: plan.chatHistoryRetentionDays === UNLIMITED ? 'Vĩnh viễn' : `${plan.chatHistoryRetentionDays} ngày`,
+      label: 'Lưu lịch sử trao đổi',
+      value: plan.chatHistoryRetentionDays === UNLIMITED ? 'Dài lâu' : `${plan.chatHistoryRetentionDays} ngày`,
       included: true,
     },
-    { label: 'OCR chứng từ', value: formatLimit(plan.maxOcrScansPerMonth, 'lượt/tháng'), included: true },
-    { label: 'Nguồn thu nhập tối đa', value: formatLimit(plan.maxIncomeSources), included: true },
-    { label: 'Người phụ thuộc tối đa', value: formatLimit(plan.maxDependents), included: true },
-    { label: 'Đối soát dữ liệu & luật', value: 'Có', included: true },
-    { label: 'Xuất PDF Mẫu 02/QTT-TNCN', value: plan.canExportPdf ? 'Có' : 'Chỉ xem', included: plan.canExportPdf },
-    { label: 'Xuất ZIP chứng từ', value: plan.canExportZip ? 'Có' : 'Không', included: plan.canExportZip },
+    { label: 'Quét hóa đơn, chứng từ', value: formatLimit(plan.maxOcrScansPerMonth, 'lượt/tháng'), included: true },
+    { label: 'Số nguồn thu nhập tối đa', value: formatLimit(plan.maxIncomeSources), included: true },
+    { label: 'Số người phụ thuộc tối đa', value: formatLimit(plan.maxDependents), included: true },
+    { label: 'Đối soát dữ liệu & luật thuế', value: 'Có', included: true },
+    { label: 'Tải tờ khai thuế (Mẫu 02/QTT-TNCN)', value: plan.canExportPdf ? 'Được tải về' : 'Chỉ xem trước', included: plan.canExportPdf },
+    { label: 'Tải trọn bộ hồ sơ chứng từ', value: plan.canExportZip ? 'Được tải về' : 'Chưa hỗ trợ', included: plan.canExportZip },
     {
-      label: 'Đặt lịch chuyên gia',
-      value: booking.length ? booking.join(' · ') : 'Giá gốc',
+      label: 'Tư vấn cùng chuyên gia thuế',
+      value: booking.length ? booking.join(' · ') : 'Theo giá chuẩn',
       included: booking.length > 0,
     },
   ];
@@ -193,6 +193,39 @@ export function usageRatio(used: number, max: number): number | null {
 /** Tên gói trong câu: admin đặt tên "Gói Standard" hay "Standard" đều ra "gói Standard", không lặp chữ "gói" */
 export function planNoun(name: string, capitalize = false): string {
   const noun = `gói ${name.replace(/^gói\s+/i, '').trim()}`;
+  return capitalize ? `G${noun.slice(1)}` : noun;
+}
+
+/** Chuyển tên gói sang tiếng Việt thân thiện, không để từ tiếng Anh */
+export function friendlyPlanName(name?: string | null): string {
+  if (!name) return 'Gói dịch vụ';
+  const clean = name.trim();
+  const lower = clean.toLowerCase();
+  if (lower === 'basic' || lower === 'gói basic') return 'Gói Cơ bản';
+  if (lower === 'standard' || lower === 'gói standard') return 'Gói Tiêu chuẩn';
+  if (lower === 'pro' || lower === 'gói pro' || lower === 'professional') return 'Gói Chuyên nghiệp';
+  if (lower === 'premium' || lower === 'gói premium') return 'Gói Cao cấp';
+  if (lower === 'free' || lower === 'gói free') return 'Gói Miễn phí';
+  if (lower === 'enterprise' || lower === 'gói enterprise') return 'Gói Doanh nghiệp';
+
+  const withoutPrefix = clean.replace(/^gói\s+/i, '');
+  const lowerWithout = withoutPrefix.toLowerCase();
+  if (lowerWithout === 'basic') return 'Gói Cơ bản';
+  if (lowerWithout === 'standard') return 'Gói Tiêu chuẩn';
+  if (lowerWithout === 'pro' || lowerWithout === 'professional') return 'Gói Chuyên nghiệp';
+  if (lowerWithout === 'premium') return 'Gói Cao cấp';
+  if (lowerWithout === 'free') return 'Gói Miễn phí';
+  if (lowerWithout === 'enterprise') return 'Gói Doanh nghiệp';
+
+  return clean.startsWith('Gói ') || clean.startsWith('gói ')
+    ? `Gói ${withoutPrefix}`
+    : `Gói ${clean}`;
+}
+
+/** Tên gói tiếng Việt dùng trong câu (vd: "gói Cơ bản", "gói Cao cấp") */
+export function friendlyPlanNoun(name?: string | null, capitalize = false): string {
+  const friendly = friendlyPlanName(name);
+  const noun = `gói ${friendly.replace(/^gói\s+/i, '').trim()}`;
   return capitalize ? `G${noun.slice(1)}` : noun;
 }
 

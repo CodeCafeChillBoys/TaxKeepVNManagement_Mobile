@@ -148,29 +148,24 @@ export function getLocalAiBaseUrl(): string {
   return `http://localhost:${AI_PORT}`;
 }
 
+export const PRODUCTION_WEB_FRONTEND_URL = 'https://taxkeepvn.vercel.app';
+
 export function getLocalWebFrontendUrl(): string {
   const fromEnv = process.env.EXPO_PUBLIC_WEB_URL?.trim();
   if (fromEnv) {
     return fromEnv.replace(/\/+$/, '');
   }
 
-  // Trên trình duyệt Web, lấy trực tiếp window.location.origin (ví dụ: http://localhost:8081)
+  // Trên trình duyệt Web dev, giữ window.location.origin nếu đang chạy local dev
   if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.origin) {
-    return window.location.origin;
-  }
-
-  const autoHost = getAutoDetectedHost();
-  if (autoHost) {
-    if (autoHost === '10.0.2.2') {
-      return `http://10.0.2.2:${WEB_PORT}`;
+    const origin = window.location.origin;
+    if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
+      return origin;
     }
-    return `http://${autoHost}:${WEB_PORT}`;
   }
 
-  if (Platform.OS === 'android' || Platform.OS === 'ios') {
-    return `http://${DEV_LAN_HOST}:${WEB_PORT}`;
-  }
-  return `http://localhost:${WEB_PORT}`;
+  // Mặc định luôn trỏ về trang web frontend đã deploy trên Vercel
+  return PRODUCTION_WEB_FRONTEND_URL;
 }
 
 export const config = {

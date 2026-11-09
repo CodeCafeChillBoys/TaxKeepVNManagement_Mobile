@@ -9,7 +9,7 @@ import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { consultationApi } from '../../api/consultationApi';
 import { subscriptionApi } from '../../api/subscriptionApi';
-import { formatPlanVnd, parseQuery, UserSubscription } from '../../types/subscription';
+import { formatPlanVnd, friendlyPlanName, parseQuery, UserSubscription } from '../../types/subscription';
 
 type Route = RouteProp<RootStackParamList, 'SubscriptionPaymentResult'>;
 
@@ -58,7 +58,7 @@ export const SubscriptionPaymentResultScreen: React.FC = () => {
       {loading ? (
         <View style={styles.center}>
           <ActivityIndicator size="large" color={theme.colors.primary} />
-          <Text style={styles.sub}>Đang xác nhận thanh toán với VNPay</Text>
+          <Text style={styles.sub}>Đang xác nhận kết quả thanh toán</Text>
         </View>
       ) : (
         <View style={styles.center} testID={ok ? 'subscriptionPaymentSuccess' : 'subscriptionPaymentFailed'}>
@@ -68,17 +68,17 @@ export const SubscriptionPaymentResultScreen: React.FC = () => {
             color={ok ? theme.colors.success : theme.colors.error}
           />
           <Text style={styles.resultTitle}>
-            {ok ? `Đã kích hoạt ${mine?.planName ?? 'gói dịch vụ'}` : 'Thanh toán chưa thành công'}
+            {ok ? `Đã kích hoạt ${friendlyPlanName(mine?.planName)} thành công` : 'Thanh toán chưa thành công'}
           </Text>
           <Text style={styles.sub}>
             {ok
               ? `${amount ? `Đã thanh toán ${formatPlanVnd(amount)}. ` : ''}${
                   mine?.remainingDays != null ? `Gói còn ${mine.remainingDays} ngày sử dụng.` : ''
                 }`
-              : 'Giao dịch bị hủy hoặc thất bại nên gói chưa được kích hoạt. Bạn có thể chọn gói và thanh toán lại.'}
+              : 'Giao dịch chưa hoàn tất hoặc bị hủy nên gói chưa được kích hoạt. Bạn có thể chọn lại gói và thanh toán bất cứ lúc nào.'}
           </Text>
           <TouchableOpacity style={styles.cta} onPress={goPlans} accessibilityRole="button" testID="subscriptionPaymentDone">
-            <Text style={styles.ctaText}>{ok ? 'Xem gói của tôi' : 'Quay lại gói dịch vụ'}</Text>
+            <Text style={styles.ctaText}>{ok ? 'Xem gói của tôi' : 'Quay lại danh sách gói'}</Text>
           </TouchableOpacity>
         </View>
       )}

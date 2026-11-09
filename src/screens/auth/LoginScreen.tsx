@@ -7,6 +7,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   TouchableOpacity,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -141,6 +142,11 @@ export const LoginScreen: React.FC = () => {
           </View>
 
           <View style={styles.brandBlock}>
+            <Image
+              source={require('../../../assets/icon.png')}
+              style={styles.brandLogo}
+              resizeMode="contain"
+            />
             <Text style={styles.brandTitle}>TaxKeep VN</Text>
             <Text style={styles.brandSubtitle}>Kê khai và giảm trừ gia cảnh</Text>
             <GoldDoubleRule style={styles.brandRule} />
@@ -238,9 +244,14 @@ const styles = StyleSheet.create({
   },
   brandBlock: {
     alignItems: 'center',
-    marginTop: 64,
+    marginTop: 28,
     gap: 8,
     paddingHorizontal: 20,
+  },
+  brandLogo: {
+    width: 84,
+    height: 84,
+    marginBottom: 4,
   },
   brandTitle: {
     ...theme.typography.appTitle,

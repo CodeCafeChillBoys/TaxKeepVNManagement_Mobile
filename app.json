@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "FE",
-    "slug": "FE",
+    "name": "TaxKeep VN",
+    "slug": "taxkeep-vn",
     "scheme": "taxkeep",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -13,7 +13,7 @@
     "android": {
       "package": "vn.taxkeep.management",
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#8B1E1E",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"

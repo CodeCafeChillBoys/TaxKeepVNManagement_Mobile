@@ -2,6 +2,8 @@ import {
   expectedExpiry,
   formatDateVi,
   formatLimit,
+  friendlyPlanName,
+  friendlyPlanNoun,
   historyStatus,
   freeMonthsOfYearly,
   planBenefits,
@@ -69,13 +71,13 @@ describe('subscription formatters', () => {
 
   it('maps plan fields to benefit rows', () => {
     const b = Object.fromEntries(planBenefits(basic).map((x) => [x.label, x.value]));
-    expect(b['Lưu lịch sử chat AI']).toBe('30 ngày');
-    expect(b['Xuất PDF Mẫu 02/QTT-TNCN']).toBe('Chỉ xem');
-    expect(b['Đặt lịch chuyên gia']).toBe('Giá gốc');
+    expect(b['Lưu lịch sử trao đổi']).toBe('30 ngày');
+    expect(b['Tải tờ khai thuế (Mẫu 02/QTT-TNCN)']).toBe('Chỉ xem trước');
+    expect(b['Tư vấn cùng chuyên gia thuế']).toBe('Theo giá chuẩn');
 
     const p = Object.fromEntries(planBenefits(premium).map((x) => [x.label, x.value]));
-    expect(p['Lưu lịch sử chat AI']).toBe('Vĩnh viễn');
-    expect(p['Đặt lịch chuyên gia']).toBe('Giảm 10% · 1 ca/năm miễn phí');
+    expect(p['Lưu lịch sử trao đổi']).toBe('Dài lâu');
+    expect(p['Tư vấn cùng chuyên gia thuế']).toBe('Giảm 10% chi phí · Miễn phí 1 buổi/năm');
   });
 });
 
@@ -129,6 +131,14 @@ describe('planNoun', () => {
     expect(planNoun('Gói Standard')).toBe('gói Standard');
     expect(planNoun('Premium')).toBe('gói Premium');
     expect(planNoun('gói Basic', true)).toBe('Gói Basic');
+  });
+
+  it('translates English plan names to friendly Vietnamese', () => {
+    expect(friendlyPlanName('Basic')).toBe('Gói Cơ bản');
+    expect(friendlyPlanName('Gói Standard')).toBe('Gói Tiêu chuẩn');
+    expect(friendlyPlanName('Premium')).toBe('Gói Cao cấp');
+    expect(friendlyPlanNoun('Standard')).toBe('gói Tiêu chuẩn');
+    expect(friendlyPlanNoun('gói Basic', true)).toBe('Gói Cơ bản');
   });
 });
 

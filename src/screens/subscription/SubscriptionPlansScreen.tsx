@@ -11,6 +11,8 @@ import { subscriptionApi } from '../../api/subscriptionApi';
 import {
   BillingCycle,
   freeMonthsOfYearly,
+  friendlyPlanName,
+  friendlyPlanNoun,
   planBenefits,
   planNoun,
   planPrice,
@@ -81,19 +83,19 @@ export const SubscriptionPlansScreen: React.FC = () => {
             <Ionicons name="checkmark-circle" size={16} color={theme.colors.primaryDark} />
             <Text style={styles.currentText}>Gói bạn đang dùng</Text>
             {current?.remainingDays != null ? (
-              <Text style={styles.currentDays}>Còn {current.remainingDays} ngày</Text>
+              <Text style={styles.currentDays}>Còn {current.remainingDays} ngày sử dụng</Text>
             ) : null}
           </View>
         ) : null}
 
-        <Text style={styles.planName}>{plan.name}</Text>
+        <Text style={styles.planName}>{friendlyPlanName(plan.name)}</Text>
         {plan.description ? <Text style={styles.desc}>{plan.description}</Text> : null}
 
         <View style={styles.priceRow}>
           <Text style={styles.price}>{price.amount}</Text>
           {price.suffix ? <Text style={styles.priceSuffix}>{price.suffix}</Text> : null}
         </View>
-        {freeMonths > 0 ? <Text style={styles.gift}>Đã gồm {freeMonths} tháng tặng khi mua theo năm</Text> : null}
+        {freeMonths > 0 ? <Text style={styles.gift}>Tặng thêm {freeMonths} tháng khi đăng ký theo năm</Text> : null}
 
         <View style={styles.rule} />
 
@@ -190,7 +192,7 @@ export const SubscriptionPlansScreen: React.FC = () => {
                   <View style={styles.tabNameRow}>
                     {current?.planId === p.id ? <View style={styles.tabDot} /> : null}
                     <Text style={[styles.tabName, active && styles.tabNameActive]} numberOfLines={1}>
-                      {p.name}
+                      {friendlyPlanName(p.name)}
                     </Text>
                   </View>
                   <Text style={styles.tabPrice} numberOfLines={1}>
@@ -217,9 +219,9 @@ export const SubscriptionPlansScreen: React.FC = () => {
               return (
                 <View style={styles.footer}>
                   <Text style={styles.footerNote}>
-                    {`Bạn đang dùng ${current?.planName}${
-                      current?.remainingDays != null ? `, còn ${current.remainingDays} ngày` : ''
-                    }. Khi hết hạn, tài khoản tự chuyển về ${selected.name}.`}
+                    {`Bạn đang dùng ${friendlyPlanName(current?.planName)}${
+                      current?.remainingDays != null ? `, còn ${current.remainingDays} ngày sử dụng` : ''
+                    }. Khi hết hạn, tài khoản sẽ tự động chuyển về ${friendlyPlanName(selected.name)}.`}
                   </Text>
                 </View>
               );
@@ -241,7 +243,7 @@ export const SubscriptionPlansScreen: React.FC = () => {
                   <Text style={styles.ctaText}>
                     {isCurrent
                       ? `Chuyển sang thanh toán ${cycle === 'yearly' ? 'theo năm' : 'theo tháng'}`
-                      : `Chọn ${planNoun(selected.name)}`}
+                      : `Chọn ${friendlyPlanNoun(selected.name)}`}
                   </Text>
                 </TouchableOpacity>
               </View>

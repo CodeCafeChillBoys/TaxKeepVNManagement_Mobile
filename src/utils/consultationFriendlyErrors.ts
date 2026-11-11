@@ -1,3 +1,5 @@
+import { messageForErrorCode } from './apiErrorCatalog';
+
 /**
  * Chuyển đổi mã lỗi và thông điệp kỹ thuật từ máy chủ sang ngôn ngữ tiếng Việt
  * tự nhiên, chuyên nghiệp và lịch sự cho người nộp thuế và chuyên gia.
@@ -243,7 +245,14 @@ export function toFriendlyConsultationError(
     };
   }
 
-  // 4. Làm sạch thông điệp tiếng Việt từ Backend nếu có
+  // 4. BE trả mã đã biết nhưng câu kèm theo là tiếng Anh hoặc chỉ là mã
+  const mapped = messageForErrorCode(upperCode);
+  const hasVietnamese = /[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/i.test(rawMsg);
+  if (mapped && !hasVietnamese) {
+    return { title: defaultTitle, message: mapped };
+  }
+
+  // 5. Làm sạch thông điệp tiếng Việt từ Backend nếu có
   if (rawMsg.trim()) {
     const cleaned = cleanRawTechnicalStrings(rawMsg);
     if (cleaned && !cleaned.toLowerCase().includes('request failed with status code')) {

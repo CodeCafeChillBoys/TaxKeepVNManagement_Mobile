@@ -3,6 +3,7 @@ import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 import { config, getLocalApiBaseUrl } from '../constants/config';
 import { emitQuotaExceeded, quotaErrorFrom } from '../utils/subscriptionQuota';
+import { pickApiErrorMessage } from '../utils/apiErrorCatalog';
 
 // Hỗ trợ lưu token an toàn: trên thiết bị dùng SecureStore, trên Web dùng localStorage
 export const storageHelper = {
@@ -87,12 +88,14 @@ apiClient.interceptors.response.use(
   (response) => response,
   async (error) => {
     // Trích xuất thông điệp tiếng Việt cụ thể từ backend nếu có
+    const data = error.response?.data;
     const beMessage =
-      error.response?.data?.message ||
-      error.response?.data?.title ||
-      (typeof error.response?.data === 'string' ? error.response.data : null);
-    if (beMessage && typeof beMessage === 'string' && beMessage.trim()) {
-      error.message = beMessage.trim();
+      (data && typeof data === 'object' ? data.message || data.title : null) ||
+      (typeof data === 'string' ? data : null);
+    const errorCode = data && typeof data === 'object' ? data.errorCode : undefined;
+    const picked = pickApiErrorMessage(errorCode, typeof beMessage === 'string' ? beMessage : '', '');
+    if (picked) {
+      error.message = picked;
     }
 
     if (error.response?.status === 401) {

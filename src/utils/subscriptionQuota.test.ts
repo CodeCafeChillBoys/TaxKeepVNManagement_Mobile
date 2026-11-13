@@ -14,9 +14,9 @@ describe('quotaErrorFrom', () => {
   it('delivers events to the registered listener until unsubscribed', () => {
     const seen: string[] = [];
     const off = onQuotaExceeded((e) => seen.push(e.code));
-    emitQuotaExceeded({ code: 'DEPENDENT_LIMIT_EXCEEDED', message: 'x' });
+    emitQuotaExceeded({ code: 'OCR_QUOTA_EXCEEDED', message: 'x' });
     off();
-    emitQuotaExceeded({ code: 'DEPENDENT_LIMIT_EXCEEDED', message: 'x' });
-    expect(seen).toEqual(['DEPENDENT_LIMIT_EXCEEDED']);
+    emitQuotaExceeded({ code: 'OCR_QUOTA_EXCEEDED', message: 'x' });
+    expect(seen).toEqual(['OCR_QUOTA_EXCEEDED']);
   });
 });

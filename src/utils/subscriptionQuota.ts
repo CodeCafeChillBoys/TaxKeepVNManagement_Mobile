@@ -2,8 +2,6 @@
 export const QUOTA_ERROR_CODES = [
   'AI_QUESTION_QUOTA_EXCEEDED',
   'OCR_QUOTA_EXCEEDED',
-  'INCOME_SOURCE_LIMIT_EXCEEDED',
-  'DEPENDENT_LIMIT_EXCEEDED',
   'EXPORT_PDF_NOT_ALLOWED',
   'EXPORT_ZIP_NOT_ALLOWED',
 ] as const;
@@ -18,8 +16,6 @@ export interface QuotaError {
 const TITLES: Record<QuotaErrorCode, string> = {
   AI_QUESTION_QUOTA_EXCEEDED: 'Hết lượt hỏi trợ lý thuế',
   OCR_QUOTA_EXCEEDED: 'Hết lượt quét chứng từ',
-  INCOME_SOURCE_LIMIT_EXCEEDED: 'Đã đủ số nguồn thu nhập',
-  DEPENDENT_LIMIT_EXCEEDED: 'Đã đủ số người phụ thuộc',
   EXPORT_PDF_NOT_ALLOWED: 'Gói hiện tại chưa hỗ trợ tải tờ khai',
   EXPORT_ZIP_NOT_ALLOWED: 'Gói hiện tại chưa hỗ trợ tải trọn bộ chứng từ',
 };

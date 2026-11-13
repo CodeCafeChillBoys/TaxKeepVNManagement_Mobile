@@ -25,8 +25,6 @@ const premium: SubscriptionPlan = {
   maxAiQuestionsPerMonth: -1,
   chatHistoryRetentionDays: -1,
   maxOcrScansPerMonth: 100,
-  maxIncomeSources: -1,
-  maxDependents: -1,
   canExportPdf: true,
   canExportZip: true,
   bookingDiscountPercent: 10,
@@ -45,8 +43,6 @@ const basic: SubscriptionPlan = {
   maxAiQuestionsPerMonth: 20,
   chatHistoryRetentionDays: 30,
   maxOcrScansPerMonth: 5,
-  maxIncomeSources: 1,
-  maxDependents: 3,
   canExportPdf: false,
   canExportZip: false,
   bookingDiscountPercent: 0,
@@ -74,6 +70,9 @@ describe('subscription formatters', () => {
     expect(b['Lưu lịch sử trao đổi']).toBe('30 ngày');
     expect(b['Tải tờ khai thuế (Mẫu 02/QTT-TNCN)']).toBe('Chỉ xem trước');
     expect(b['Tư vấn cùng chuyên gia thuế']).toBe('Theo giá chuẩn');
+    // BE đã bỏ giới hạn nguồn thu nhập / người phụ thuộc theo gói
+    expect(b['Số nguồn thu nhập tối đa']).toBeUndefined();
+    expect(b['Số người phụ thuộc tối đa']).toBeUndefined();
 
     const p = Object.fromEntries(planBenefits(premium).map((x) => [x.label, x.value]));
     expect(p['Lưu lịch sử trao đổi']).toBe('Dài lâu');

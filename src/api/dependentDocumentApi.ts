@@ -333,7 +333,9 @@ export const dependentDocumentApi = {
       }
       return [];
     } catch (err: any) {
-      if (__DEV__) {
+      const status = err?.response?.status;
+      const errorCode = err?.response?.data?.errors?.errorCode;
+      if (__DEV__ && status !== 403 && errorCode !== 'FORBIDDEN') {
         console.warn('getAgeTransitionReminders error:', err?.response?.data || err?.message);
       }
       return [];

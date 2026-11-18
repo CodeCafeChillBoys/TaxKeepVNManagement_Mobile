@@ -23,6 +23,7 @@ import { fonts } from '../../constants/fonts';
 import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
 import { Dialog } from '../../components/common/Dialog';
+import { MainTabBar } from '../../components/navigation/MainTabBar';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { useDebounce } from '../../hooks/useDebounce';
@@ -1371,6 +1372,8 @@ export const WalletScreen: React.FC = () => {
           )
         )}
       </ScrollView>
+
+      <MainTabBar active="Wallet" />
 
       {/* ── MODAL RÚT TIỀN ── */}
       <Modal visible={withdrawModalVisible} transparent animationType="slide" onRequestClose={() => setWithdrawModalVisible(false)}>

@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Image, StyleSheet, ViewStyle } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useThemeStore, DARK_COLORS } from '../../stores/useThemeStore';
 
 type Props = {
   /** full = login; soft = home root tabs */
@@ -12,14 +13,16 @@ type Props = {
  * Hoa văn trống đồng mờ dần xuống nền — theo Đánh giá UI §6c.
  */
 export function DrumPatternBackdrop({ variant = 'full', style }: Props) {
+  const isDark = useThemeStore((s) => s.isDark);
   const height = variant === 'full' ? 420 : 380;
   const topOffset = variant === 'full' ? -110 : -160;
   const size = variant === 'full' ? 580 : 540;
-  const opacity = variant === 'full' ? 0.8 : 0.75;
-  const fadeColors =
-    variant === 'full'
-      ? (['#ECE9C2', '#ECE9C2', '#FFFFFF'] as const)
-      : (['#ECE9C2', '#ECE9C2', '#F8F5EE'] as const);
+  const opacity = isDark ? 0.22 : variant === 'full' ? 0.8 : 0.75;
+  const fadeColors = isDark
+    ? (['#2A2318', '#1F1B15', DARK_COLORS.background] as const)
+    : variant === 'full'
+    ? (['#ECE9C2', '#ECE9C2', '#FFFFFF'] as const)
+    : (['#ECE9C2', '#ECE9C2', '#F8F5EE'] as const);
   const fadeLocations = variant === 'full' ? ([0, 0.42, 1] as const) : ([0, 0.38, 1] as const);
 
   return (
@@ -45,7 +48,9 @@ export function DrumPatternBackdrop({ variant = 'full', style }: Props) {
       />
       <LinearGradient
         colors={
-          variant === 'full'
+          isDark
+            ? ['transparent', 'transparent', DARK_COLORS.background]
+            : variant === 'full'
             ? ['transparent', 'transparent', '#FFFFFF']
             : ['transparent', 'transparent', '#F8F5EE']
         }

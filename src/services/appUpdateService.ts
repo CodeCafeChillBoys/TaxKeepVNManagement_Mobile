@@ -23,6 +23,11 @@ export const CURRENT_BUILD_NUMBER = Number(
  * Kiểm tra xem có phiên bản mới hơn trên server S3 hay không.
  */
 export async function checkForAppUpdate(): Promise<AppVersionInfo | null> {
+  // Bỏ qua khi đang chạy local / development (Expo Go / Metro)
+  if (__DEV__) {
+    return null;
+  }
+
   // Chỉ kiểm tra trên Android máy thật hoặc release build
   if (Platform.OS !== 'android' && Platform.OS !== 'ios') {
     return null;

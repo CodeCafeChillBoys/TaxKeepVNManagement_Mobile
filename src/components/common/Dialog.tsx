@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
+import { useThemeStore } from '../../stores/useThemeStore';
 
 interface DialogProps {
   visible: boolean;
@@ -43,6 +44,7 @@ export const Dialog: React.FC<DialogProps> = React.memo(({
   destructive = false,
   testID,
 }) => {
+  useThemeStore((s) => s.mode);
   if (!visible) return null;
 
   return (

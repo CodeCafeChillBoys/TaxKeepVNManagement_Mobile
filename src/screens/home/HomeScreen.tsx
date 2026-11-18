@@ -2,6 +2,7 @@ import React, { useState, useCallback, useMemo, memo } from 'react';
 import {
   View,
   Text,
+  Image,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
@@ -13,12 +14,12 @@ import {
   Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect, RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
 import { useAuthStore } from '../../stores/useAuthStore';
-import { RootNavigationProp } from '../../navigation/types';
+import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import {
   dependentDocumentApi,
   AgeReminderItemDto,
@@ -53,6 +54,8 @@ import { sanitizeUiMessage } from '../../utils/friendlyError';
 import { consultationApi } from '../../api/consultationApi';
 import type { UpcomingMeetingReminderDto } from '../../types/consultation';
 import { formatVietnameseDate, formatTimeRange } from '../../types/consultation';
+
+const CONSULT_BANNER_IMAGE = require('../../../assets/brand/consult-banner.jpg');
 
 const DEADLINE_COLORS = {
   normal: theme.colors.primaryDark,
@@ -181,6 +184,7 @@ const NotificationRow = memo(function NotificationRow({
 
 export const HomeScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
+  const route = useRoute<RouteProp<RootStackParamList, 'Home'>>();
   const { toast } = useToast();
   const user = useAuthStore((s) => s.user);
   const userRole = (user?.role || '').toLowerCase();
@@ -336,6 +340,13 @@ export const HomeScreen: React.FC = () => {
       setLoadingNotifs(false);
     }
   }, []);
+
+  React.useEffect(() => {
+    if (route.params?.openNotifications) {
+      navigation.setParams({ openNotifications: undefined });
+      void handleOpenNotifications();
+    }
+  }, [handleOpenNotifications, navigation, route.params?.openNotifications]);
 
   const handleRefreshNotifications = useCallback(async () => {
     setRefreshingNotifs(true);
@@ -516,7 +527,7 @@ export const HomeScreen: React.FC = () => {
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.avatar}
-          onPress={() => navigation.navigate('Profile')}
+          onPress={() => navigation.navigate('Profile', { initialTab: 'personal' })}
           activeOpacity={0.8}
           accessibilityLabel="Hồ sơ cá nhân"
         >
@@ -813,53 +824,20 @@ export const HomeScreen: React.FC = () => {
             ) : null}
 
             {/* Banner tư vấn chuyên gia thuế */}
-            <View style={styles.consultBannerCard} testID="homeConsultBanner">
-              <View style={styles.consultBannerHeader}>
-                <View style={styles.consultBannerTag}>
-                  <Ionicons name="ribbon" size={12} color="#FFFFFF" />
-                  <Text style={styles.consultBannerTagText}>TƯ VẤN CHUYÊN GIA</Text>
-                </View>
-                <TouchableOpacity
-                  onPress={() => navigation.navigate('MyBookings', {})}
-                  style={styles.myBookingsLink}
-                  accessibilityRole="button"
-                  accessibilityLabel="Lịch hẹn của tôi"
-                >
-                  <Ionicons name="calendar-outline" size={13} color={theme.colors.primary} />
-                  <Text style={styles.myBookingsLinkText}>Lịch hẹn của tôi</Text>
-                </TouchableOpacity>
-              </View>
-              <Text style={styles.consultBannerTitle}>Đặt lịch tư vấn thuế cùng chuyên gia</Text>
-              <Text style={styles.consultBannerSubtitle}>
-                Hỗ trợ giải đáp chuyên sâu về thuế TNCN, quyết toán & hoàn thuế với đội ngũ chuyên gia đã xác
-                thực chứng chỉ hành nghề.
-              </Text>
-              <View style={styles.consultBannerBtnRow}>
-                <TouchableOpacity
-                  style={styles.consultBannerPrimaryBtn}
-                  onPress={() => navigation.navigate('ExpertList')}
-                  activeOpacity={0.85}
-                  accessibilityRole="button"
-                  accessibilityLabel="Tìm và đặt lịch ngay"
-                >
-                  <Ionicons name="search" size={15} color="#FFFFFF" />
-                  <Text style={styles.consultBannerPrimaryBtnText}>Tìm & Đặt lịch</Text>
-                </TouchableOpacity>
-
-                {!isExpert && (
-                  <TouchableOpacity
-                    style={styles.consultBannerSecondaryBtn}
-                    onPress={() => navigation.navigate('ExpertApplication')}
-                    activeOpacity={0.85}
-                    accessibilityRole="button"
-                    accessibilityLabel="Trở thành chuyên gia"
-                  >
-                    <Ionicons name="ribbon-outline" size={15} color={theme.colors.primary} />
-                    <Text style={styles.consultBannerSecondaryBtnText}>Đăng ký chuyên gia</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            </View>
+            <TouchableOpacity
+              style={styles.consultBannerCard}
+              onPress={() => navigation.navigate('ExpertList')}
+              activeOpacity={0.9}
+              testID="homeConsultBanner"
+              accessibilityRole="button"
+              accessibilityLabel="Tư vấn cùng chuyên gia thuế - Đặt lịch tư vấn ngay"
+            >
+              <Image
+                source={CONSULT_BANNER_IMAGE}
+                style={styles.consultBannerImage}
+                resizeMode="cover"
+              />
+            </TouchableOpacity>
 
             <View style={styles.shortcutGrid} testID="homeShortcutGrid">
               <TouchableOpacity
@@ -955,7 +933,11 @@ export const HomeScreen: React.FC = () => {
         </TouchableOpacity>
       </View>
 
-      <MainTabBar active="Home" />
+      <MainTabBar
+        active={notifModalVisible ? 'Notifications' : 'Home'}
+        onOpenNotifications={handleOpenNotifications}
+        unreadCount={unreadCount}
+      />
 
       <Modal
         visible={notifModalVisible}
@@ -1301,10 +1283,15 @@ const styles = StyleSheet.create({
     marginTop: 18,
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
-    padding: 14,
-    borderWidth: 1.5,
+    overflow: 'hidden',
+    borderWidth: 1,
     borderColor: '#E8D5B5',
     ...theme.shadows.card,
+  },
+  consultBannerImage: {
+    width: '100%',
+    height: undefined,
+    aspectRatio: 1024 / 341,
   },
   upcomingCard: {
     marginTop: 18,

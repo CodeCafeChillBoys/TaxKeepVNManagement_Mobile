@@ -1,4 +1,4 @@
-import React, { useState, useCallback, memo } from 'react';
+import React, { useState, useCallback, useEffect, memo } from 'react';
 import {
   View,
   Text,
@@ -10,62 +10,111 @@ import {
   Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect, RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
 import { profileApi, UserProfileResponse } from '../../api/profileApi';
-import { RootNavigationProp } from '../../navigation/types';
+import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { useAuthStore } from '../../stores/useAuthStore';
+import { useThemeStore, DARK_COLORS, LIGHT_COLORS } from '../../stores/useThemeStore';
 import { MainTabBar } from '../../components/navigation/MainTabBar';
 import { DrumHeader } from '../../components/brand/DrumHeader';
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
 import { formatPersonName } from '../../utils/formatPersonName';
 import { Dialog } from '../../components/common/Dialog';
 import { toFriendlyErrorMessage } from '../../utils/friendlyError';
+import { sanitizeProfileAddress } from '../../constants/vietnamProvinces';
 
-const Field = memo(function Field({ label, value }: { label: string; value?: string | null }) {
+type ProfileTab = 'personal' | 'settings';
+
+const Field = memo(function Field({
+  label,
+  value,
+  isDark,
+}: {
+  label: string;
+  value?: string | null;
+  isDark?: boolean;
+}) {
+  const palette = isDark ? DARK_COLORS : LIGHT_COLORS;
   return (
-    <View style={styles.fieldRow}>
-      <Text style={styles.fieldLabel}>{label}</Text>
-      <Text style={styles.fieldValue}>{value || 'Chưa cập nhật'}</Text>
+    <View style={[styles.fieldRow, { borderBottomColor: palette.border }]}>
+      <Text style={[styles.fieldLabel, { color: palette.textSecondary }]}>{label}</Text>
+      <Text style={[styles.fieldValue, { color: palette.textPrimary }]}>
+        {value || 'Chưa cập nhật'}
+      </Text>
     </View>
   );
 });
 
 const LinkRow = memo(function LinkRow({
   label,
+  icon,
   onPress,
   testID,
   last,
+  isDark,
 }: {
   label: string;
+  icon?: keyof typeof Ionicons.glyphMap;
   onPress: () => void;
   testID: string;
   last?: boolean;
+  isDark?: boolean;
 }) {
+  const palette = isDark ? DARK_COLORS : LIGHT_COLORS;
   return (
     <TouchableOpacity
-      style={[styles.linkRow, last && styles.linkRowLast]}
+      style={[
+        styles.linkRow,
+        { borderBottomColor: palette.border },
+        last && styles.linkRowLast,
+      ]}
       onPress={onPress}
       testID={testID}
       accessibilityRole="button"
     >
-      <Text style={styles.linkLabel}>{label}</Text>
-      <Ionicons name="chevron-forward" size={16} color="#999999" />
+      <View style={styles.linkLeft}>
+        {icon ? (
+          <View
+            style={[
+              styles.linkIconBox,
+              { backgroundColor: isDark ? '#2A2622' : '#F5EFE6' },
+            ]}
+          >
+            <Ionicons name={icon} size={18} color={palette.primary} />
+          </View>
+        ) : null}
+        <Text style={[styles.linkLabel, { color: palette.textPrimary }]}>{label}</Text>
+      </View>
+      <Ionicons name="chevron-forward" size={16} color={palette.textSecondary} />
     </TouchableOpacity>
   );
 });
 
 export const ProfileScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
+  const route = useRoute<RouteProp<RootStackParamList, 'Profile'>>();
   const logout = useAuthStore((s) => s.logout);
   const authUser = useAuthStore((s) => s.user);
+  const { mode: themeMode, isDark, setMode } = useThemeStore();
+  const palette = isDark ? DARK_COLORS : LIGHT_COLORS;
+
+  const [activeTab, setActiveTab] = useState<ProfileTab>(
+    route.params?.initialTab ?? 'settings'
+  );
   const [profile, setProfile] = useState<UserProfileResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [showLogoutDialog, setShowLogoutDialog] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (route.params?.initialTab) {
+      setActiveTab(route.params.initialTab);
+    }
+  }, [route.params?.initialTab]);
 
   const currentRole = (profile?.userRole || authUser?.role || '').toLowerCase();
   const isExpert = currentRole === 'expert' || currentRole.includes('expert');
@@ -156,14 +205,20 @@ export const ProfileScreen: React.FC = () => {
   }, [navigation]);
 
   const displayName = formatPersonName(profile?.fullName) || 'Người nộp thuế';
+  const headerTitle = activeTab === 'personal' ? 'Cá nhân' : 'Cài đặt';
 
   if (loading && !refreshing) {
     return (
-      <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
-        <DrumHeader title="Tài khoản" onBack={goBack} />
+      <SafeAreaView
+        style={[styles.safeArea, { backgroundColor: palette.background }]}
+        edges={['top', 'left', 'right']}
+      >
+        <DrumHeader title={headerTitle} onBack={goBack} />
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={theme.colors.primary} />
-          <Text style={styles.loadingText}>Đang tải hồ sơ...</Text>
+          <ActivityIndicator size="large" color={palette.primary} />
+          <Text style={[styles.loadingText, { color: palette.textSecondary }]}>
+            Đang tải hồ sơ...
+          </Text>
         </View>
         <MainTabBar active="Profile" />
       </SafeAreaView>
@@ -171,9 +226,12 @@ export const ProfileScreen: React.FC = () => {
   }
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+    <SafeAreaView
+      style={[styles.safeArea, { backgroundColor: palette.background }]}
+      edges={['top', 'left', 'right']}
+    >
       <DrumHeader
-        title="Tài khoản"
+        title={headerTitle}
         onBack={goBack}
         right={
           <TouchableOpacity
@@ -182,7 +240,7 @@ export const ProfileScreen: React.FC = () => {
             accessibilityRole="button"
             accessibilityLabel="Chỉnh sửa hồ sơ"
           >
-            <Text style={styles.editHeaderText}>Sửa</Text>
+            <Text style={[styles.editHeaderText, { color: palette.primary }]}>Sửa</Text>
           </TouchableOpacity>
         }
       />
@@ -195,127 +253,347 @@ export const ProfileScreen: React.FC = () => {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={() => void fetchProfile(true)}
-            colors={[theme.colors.primary]}
+            colors={[palette.primary]}
           />
         }
       >
         <View style={styles.contentWrap}>
-          <Text style={styles.heroName}>{displayName}</Text>
-          <Text style={styles.heroStatus}>
+          <Text style={[styles.heroName, { color: palette.primaryDark }]}>{displayName}</Text>
+          <Text style={[styles.heroStatus, { color: isDark ? palette.gold : '#5A4A22' }]}>
             {profile?.isVerified ? 'Đã xác thực' : 'Chưa xác thực'}
           </Text>
-          {error ? <Text style={styles.warningSubtitle}>{error}</Text> : null}
+          {error ? (
+            <Text style={[styles.warningSubtitle, { color: palette.primary }]}>{error}</Text>
+          ) : null}
           {!profile?.isVerified ? (
-            <Text style={styles.warningSubtitle}>
+            <Text style={[styles.warningSubtitle, { color: palette.primary }]}>
               Một số tính năng sẽ bị hạn chế đến khi tài khoản được xác thực.
             </Text>
           ) : null}
           <GoldDoubleRule style={styles.rule} />
 
-          <Text style={styles.sectionTitle}>Cá nhân</Text>
-          <Field label="Họ và tên" value={displayName} />
-          <Field label="Số căn cước" value={profile?.citizenId} />
-          <Field label="Ngày sinh" value={profile?.dateOfBirth} />
-          <Field label="Địa chỉ" value={profile?.address} />
-
-          <Text style={styles.sectionTitle}>Tài khoản</Text>
-          <Field label="Email" value={profile?.email} />
-          <Field label="Số điện thoại" value={profile?.phoneNumber} />
-          <View style={styles.fieldRow}>
-            <Text style={styles.fieldLabel}>Mã số thuế</Text>
-            {profile?.taxIdNumber ? (
-              <Text style={styles.fieldValue}>{profile.taxIdNumber}</Text>
-            ) : (
-              <TouchableOpacity
-                onPress={() => handleEdit(true)}
-                accessibilityRole="button"
-                accessibilityLabel="Bổ sung mã số thuế"
+          {/* ── Bộ chuyển đổi 2 Tab riêng biệt: Cá nhân | Cài đặt ── */}
+          <View
+            style={[
+              styles.tabSwitchContainer,
+              {
+                backgroundColor: isDark ? '#1F1C19' : '#EFEBE2',
+                borderColor: palette.border,
+              },
+            ]}
+          >
+            <TouchableOpacity
+              style={[
+                styles.tabSwitchBtn,
+                activeTab === 'personal' && [
+                  styles.tabSwitchBtnActive,
+                  { backgroundColor: palette.primary },
+                ],
+              ]}
+              activeOpacity={0.85}
+              onPress={() => setActiveTab('personal')}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: activeTab === 'personal' }}
+              testID="profileTabPersonal"
+            >
+              <Ionicons
+                name="person-outline"
+                size={16}
+                color={activeTab === 'personal' ? '#FFFFFF' : palette.textSecondary}
+              />
+              <Text
+                style={[
+                  styles.tabSwitchText,
+                  { color: activeTab === 'personal' ? '#FFFFFF' : palette.textSecondary },
+                ]}
               >
-                <Text style={styles.link}>Bổ sung</Text>
-              </TouchableOpacity>
-            )}
+                Cá nhân
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.tabSwitchBtn,
+                activeTab === 'settings' && [
+                  styles.tabSwitchBtnActive,
+                  { backgroundColor: palette.primary },
+                ],
+              ]}
+              activeOpacity={0.85}
+              onPress={() => setActiveTab('settings')}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: activeTab === 'settings' }}
+              testID="profileTabSettings"
+            >
+              <Ionicons
+                name="settings-outline"
+                size={16}
+                color={activeTab === 'settings' ? '#FFFFFF' : palette.textSecondary}
+              />
+              <Text
+                style={[
+                  styles.tabSwitchText,
+                  { color: activeTab === 'settings' ? '#FFFFFF' : palette.textSecondary },
+                ]}
+              >
+                Cài đặt
+              </Text>
+            </TouchableOpacity>
           </View>
 
-          <Text style={styles.sectionTitle}>Tư vấn & Chuyên gia</Text>
-          <LinkRow
-            label="Lịch hẹn tư vấn của tôi"
-            onPress={() => navigation.navigate('MyBookings', {})}
-            testID="quickLinkMyBookings"
-          />
-          {isExpert ? (
+          {activeTab === 'personal' ? (
             <>
-              <LinkRow
-                label="Quản lý ca tư vấn (Chuyên gia)"
-                onPress={() => navigation.navigate('ExpertBookings', {})}
-                testID="quickLinkExpertBookings"
-              />
-              <LinkRow
-                label="Ví điện tử TaxKeep"
-                onPress={() => navigation.navigate('Wallet', { walletType: 'EXPERT' })}
-                testID="quickLinkExpertWallet"
-              />
-              <LinkRow
-                label="Lịch làm việc của chuyên gia"
-                onPress={() => navigation.navigate('ExpertSlots')}
-                testID="quickLinkExpertSlots"
-              />
+              {/* ── TAB CÁ NHÂN ── */}
+              <View
+                style={[
+                  styles.cardBlock,
+                  {
+                    backgroundColor: palette.surface,
+                    borderColor: palette.border,
+                  },
+                ]}
+              >
+                <Field label="Họ và tên:" value={displayName} isDark={isDark} />
+                <Field label="Số căn cước:" value={profile?.citizenId} isDark={isDark} />
+                <Field label="Ngày sinh:" value={profile?.dateOfBirth} isDark={isDark} />
+                <Field
+                  label="Địa chỉ:"
+                  value={sanitizeProfileAddress(profile?.address, profile?.citizenId)}
+                  isDark={isDark}
+                />
+                <Field label="Email:" value={profile?.email} isDark={isDark} />
+                <Field label="Số điện thoại:" value={profile?.phoneNumber} isDark={isDark} />
+                <View style={[styles.fieldRow, styles.linkRowLast]}>
+                  <Text style={[styles.fieldLabel, { color: palette.textSecondary }]}>
+                    Mã số thuế:
+                  </Text>
+                  {profile?.taxIdNumber ? (
+                    <Text style={[styles.fieldValue, { color: palette.textPrimary }]}>
+                      {profile.taxIdNumber}
+                    </Text>
+                  ) : (
+                    <TouchableOpacity
+                      onPress={() => handleEdit(true)}
+                      accessibilityRole="button"
+                      accessibilityLabel="Bổ sung mã số thuế"
+                    >
+                      <Text style={[styles.link, { color: palette.primary }]}>Bổ sung</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+
+              <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>Tiện ích</Text>
+              <View
+                style={[
+                  styles.cardBlock,
+                  {
+                    backgroundColor: palette.surface,
+                    borderColor: palette.border,
+                  },
+                ]}
+              >
+                <LinkRow
+                  label="Người phụ thuộc"
+                  icon="people-outline"
+                  onPress={() => navigation.navigate('DependentList')}
+                  testID="quickLinkDependentList"
+                  isDark={isDark}
+                />
+                <LinkRow
+                  label="Nơi chi trả"
+                  icon="business-outline"
+                  onPress={() => navigation.navigate('IncomeSourceList')}
+                  testID="quickLinkIncomeSource"
+                  isDark={isDark}
+                />
+                <LinkRow
+                  label="Lịch hẹn tư vấn của tôi"
+                  icon="calendar-outline"
+                  onPress={() => navigation.navigate('MyBookings', {})}
+                  testID="quickLinkMyBookings"
+                  isDark={isDark}
+                />
+                {isExpert ? (
+                  <>
+                    <LinkRow
+                      label="Quản lý ca tư vấn (Chuyên gia)"
+                      icon="briefcase-outline"
+                      onPress={() => navigation.navigate('ExpertBookings', {})}
+                      testID="quickLinkExpertBookings"
+                      isDark={isDark}
+                    />
+                    <LinkRow
+                      label="Ví điện tử TaxKeep"
+                      icon="wallet-outline"
+                      onPress={() => navigation.navigate('Wallet', { walletType: 'EXPERT' })}
+                      testID="quickLinkExpertWallet"
+                      isDark={isDark}
+                    />
+                    <LinkRow
+                      label="Lịch làm việc của chuyên gia"
+                      icon="time-outline"
+                      onPress={() => navigation.navigate('ExpertSlots')}
+                      testID="quickLinkExpertSlots"
+                      isDark={isDark}
+                    />
+                  </>
+                ) : (
+                  <LinkRow
+                    label="Ví điện tử TaxKeep"
+                    icon="wallet-outline"
+                    onPress={() => navigation.navigate('Wallet', { walletType: 'USER' })}
+                    testID="quickLinkUserWallet"
+                    isDark={isDark}
+                  />
+                )}
+                <LinkRow
+                  label={isExpert ? 'Hồ sơ chuyên gia thuế' : 'Đăng ký làm chuyên gia thuế'}
+                  icon="school-outline"
+                  onPress={() => navigation.navigate('ExpertApplication')}
+                  testID="quickLinkExpertApplication"
+                  last
+                  isDark={isDark}
+                />
+              </View>
             </>
           ) : (
-            <LinkRow
-              label="Ví điện tử TaxKeep"
-              onPress={() => navigation.navigate('Wallet', { walletType: 'USER' })}
-              testID="quickLinkUserWallet"
-            />
+            <>
+              {/* ── TAB CÀI ĐẶT ── */}
+              <View
+                style={[
+                  styles.cardBlock,
+                  {
+                    backgroundColor: palette.surface,
+                    borderColor: palette.border,
+                  },
+                ]}
+              >
+                <LinkRow
+                  label="Chỉnh sửa hồ sơ cá nhân"
+                  icon="person-outline"
+                  onPress={() => handleEdit(false)}
+                  testID="quickLinkEditProfile"
+                  isDark={isDark}
+                />
+                <LinkRow
+                  label="Đổi mật khẩu"
+                  icon="lock-closed-outline"
+                  onPress={() => navigation.navigate('ChangePassword')}
+                  testID="quickLinkChangePassword"
+                  isDark={isDark}
+                />
+                <LinkRow
+                  label="Gói thành viên"
+                  icon="ribbon-outline"
+                  onPress={() => navigation.navigate('SubscriptionMy')}
+                  testID="quickLinkSubscriptionMy"
+                  isDark={isDark}
+                />
+
+                {/* Chế độ giao diện Sáng / Tối */}
+                <View style={styles.themeRow} testID="themeToggleRow">
+                  <View style={styles.linkLeft}>
+                    <View
+                      style={[
+                        styles.linkIconBox,
+                        { backgroundColor: isDark ? '#2A2622' : '#F5EFE6' },
+                      ]}
+                    >
+                      <Ionicons
+                        name={isDark ? 'moon-outline' : 'sunny-outline'}
+                        size={18}
+                        color={palette.primary}
+                      />
+                    </View>
+                    <Text style={[styles.linkLabel, { color: palette.textPrimary }]}>
+                      Chế độ giao diện
+                    </Text>
+                  </View>
+
+                  <View
+                    style={[
+                      styles.themeSegmentWrap,
+                      {
+                        backgroundColor: isDark ? '#141210' : '#F3EFE6',
+                        borderColor: palette.border,
+                      },
+                    ]}
+                  >
+                    <TouchableOpacity
+                      style={[
+                        styles.themeSegmentBtn,
+                        themeMode === 'light' && [
+                          styles.themeSegmentBtnActive,
+                          { backgroundColor: palette.primary },
+                        ],
+                      ]}
+                      activeOpacity={0.8}
+                      onPress={() => void setMode('light')}
+                      accessibilityRole="button"
+                      accessibilityLabel="Chế độ sáng"
+                      testID="themeModeLightBtn"
+                    >
+                      <Ionicons
+                        name="sunny"
+                        size={14}
+                        color={themeMode === 'light' ? '#FFFFFF' : palette.textSecondary}
+                      />
+                      <Text
+                        style={[
+                          styles.themeSegmentText,
+                          { color: themeMode === 'light' ? '#FFFFFF' : palette.textSecondary },
+                        ]}
+                      >
+                        Sáng
+                      </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={[
+                        styles.themeSegmentBtn,
+                        themeMode === 'dark' && [
+                          styles.themeSegmentBtnActive,
+                          { backgroundColor: palette.primary },
+                        ],
+                      ]}
+                      activeOpacity={0.8}
+                      onPress={() => void setMode('dark')}
+                      accessibilityRole="button"
+                      accessibilityLabel="Chế độ tối"
+                      testID="themeModeDarkBtn"
+                    >
+                      <Ionicons
+                        name="moon"
+                        size={13}
+                        color={themeMode === 'dark' ? '#FFFFFF' : palette.textSecondary}
+                      />
+                      <Text
+                        style={[
+                          styles.themeSegmentText,
+                          { color: themeMode === 'dark' ? '#FFFFFF' : palette.textSecondary },
+                        ]}
+                      >
+                        Tối
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+
+              <TouchableOpacity
+                style={styles.logoutBtn}
+                activeOpacity={0.85}
+                onPress={handleLogout}
+                accessibilityRole="button"
+                accessibilityLabel="Đăng xuất"
+                testID="profileLogoutBtn"
+              >
+                <Ionicons name="log-out-outline" size={18} color={palette.error} />
+                <Text style={[styles.logoutBtnText, { color: palette.error }]}>Đăng xuất</Text>
+              </TouchableOpacity>
+            </>
           )}
-          <LinkRow
-            label={isExpert ? 'Hồ sơ chuyên gia thuế' : 'Đăng ký làm chuyên gia thuế'}
-            onPress={() => navigation.navigate('ExpertApplication')}
-            testID="quickLinkExpertApplication"
-          />
-
-          <Text style={styles.sectionTitle}>Liên kết</Text>
-          <LinkRow
-            label="Gói của tôi"
-            onPress={() => navigation.navigate('SubscriptionMy')}
-            testID="quickLinkSubscriptionMy"
-          />
-          <LinkRow
-            label="Đổi mật khẩu"
-            onPress={() => navigation.navigate('ChangePassword')}
-            testID="quickLinkChangePassword"
-          />
-          <LinkRow
-            label="Người phụ thuộc"
-            onPress={() => navigation.navigate('DependentList')}
-            testID="quickLinkDependentList"
-          />
-          <LinkRow
-            label="Nơi chi trả"
-            onPress={() => navigation.navigate('IncomeSourceList')}
-            testID="quickLinkIncomeSource"
-            last
-          />
-
-          <TouchableOpacity
-            style={styles.primaryEditBtn}
-            activeOpacity={0.85}
-            onPress={() => handleEdit(false)}
-            accessibilityRole="button"
-            accessibilityLabel="Chỉnh sửa hồ sơ"
-          >
-            <Text style={styles.primaryEditBtnText}>Chỉnh sửa hồ sơ</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.logoutBtn}
-            activeOpacity={0.85}
-            onPress={handleLogout}
-            accessibilityRole="button"
-            accessibilityLabel="Đăng xuất"
-            testID="profileLogoutBtn"
-          >
-            <Text style={styles.logoutBtnText}>Đăng xuất</Text>
-          </TouchableOpacity>
         </View>
       </ScrollView>
       <MainTabBar active="Profile" />
@@ -404,7 +682,32 @@ const styles = StyleSheet.create({
   },
   rule: {
     marginTop: 16,
-    marginBottom: 8,
+    marginBottom: 14,
+  },
+  tabSwitchContainer: {
+    flexDirection: 'row',
+    borderRadius: 10,
+    borderWidth: 1,
+    padding: 4,
+    gap: 6,
+    marginBottom: 16,
+  },
+  tabSwitchBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  tabSwitchBtnActive: {
+    ...theme.shadows.button,
+  },
+  tabSwitchText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 14,
+    lineHeight: 18,
   },
   sectionTitle: {
     fontFamily: fonts.serifBold,
@@ -412,19 +715,25 @@ const styles = StyleSheet.create({
     lineHeight: 24,
     color: theme.colors.textPrimary,
     marginTop: 18,
-    marginBottom: 4,
+    marginBottom: 8,
+  },
+  cardBlock: {
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    ...theme.shadows.card,
   },
   fieldRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: 16,
-    paddingVertical: 11,
+    paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
   },
   fieldLabel: {
-    width: 112,
+    width: 118,
     flexShrink: 0,
     fontFamily: fonts.body,
     fontSize: 14,
@@ -458,6 +767,19 @@ const styles = StyleSheet.create({
   linkRowLast: {
     borderBottomWidth: 0,
   },
+  linkLeft: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  linkIconBox: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   linkLabel: {
     flex: 1,
     fontFamily: fonts.body,
@@ -465,24 +787,43 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     color: theme.colors.textPrimary,
   },
-  primaryEditBtn: {
-    minHeight: 52,
-    borderRadius: 10,
-    backgroundColor: theme.colors.primary,
+  themeRow: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 28,
-    paddingHorizontal: 16,
+    justifyContent: 'space-between',
+    gap: 12,
+    paddingVertical: 12,
   },
-  primaryEditBtnText: {
-    fontFamily: fonts.bodyBold,
-    fontSize: 16,
-    lineHeight: 20,
-    color: '#FFFFFF',
+  themeSegmentWrap: {
+    flexDirection: 'row',
+    borderRadius: 8,
+    borderWidth: 1,
+    padding: 2,
+    gap: 2,
+  },
+  themeSegmentBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  themeSegmentBtnActive: {
+    ...theme.shadows.button,
+  },
+  themeSegmentText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 12,
+    lineHeight: 16,
   },
   logoutBtn: {
+    flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 16,
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 20,
+    paddingVertical: 14,
     cursor: Platform.OS === 'web' ? ('pointer' as any) : undefined,
   },
   logoutBtnText: {

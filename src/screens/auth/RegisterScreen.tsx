@@ -16,22 +16,37 @@ import { Ionicons } from '@expo/vector-icons';
 import { registerSchema, RegisterFormData } from '../../utils/validation';
 import { CustomInput } from '../../components/common/CustomInput';
 import { CustomButton } from '../../components/common/CustomButton';
+import { ProvinceSelect } from '../../components/common/ProvinceSelect';
 import { PasswordStrengthBar } from '../../components/common/PasswordStrengthBar';
 import { HeaderMotif } from '../../components/common/HeaderMotif';
 import { Dialog } from '../../components/common/Dialog';
 import { TermsCheckbox } from '../../components/auth/TermsCheckbox';
 import { useToast } from '../../components/ui/Toast';
 import { theme } from '../../constants/theme';
+import { matchVietnamProvince } from '../../constants/vietnamProvinces';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { authApi } from '../../api/authApi';
 import { applyRegisterOcrResult } from './applyRegisterOcrResult';
 import { sanitizeUiMessage, toFriendlyError } from '../../utils/friendlyError';
+
+const VALID_REGISTER_FIELDS = new Set<keyof RegisterFormData>([
+  'fullName',
+  'citizenId',
+  'dateOfBirth',
+  'email',
+  'phoneNumber',
+  'address',
+  'password',
+  'confirmPassword',
+  'agreeTerms',
+]);
 
 export const RegisterScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
   const route = useRoute<RouteProp<RootStackParamList, 'Register'>>();
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
+  const [registeredEmail, setRegisteredEmail] = useState<string | null>(null);
   const [leaveDestination, setLeaveDestination] = useState<(() => void) | null>(null);
   const isMountedRef = useRef(true);
 
@@ -56,7 +71,6 @@ export const RegisterScreen: React.FC = () => {
       dateOfBirth: '',
       email: '',
       phoneNumber: '',
-      taxIdNumber: '',
       address: '',
       password: '',
       confirmPassword: '',
@@ -72,20 +86,28 @@ export const RegisterScreen: React.FC = () => {
     if (!result) return;
 
     const plan = applyRegisterOcrResult(result);
+    const matchedProvince = matchVietnamProvince(plan.fields.address) || '';
+
     setValue('fullName', plan.fields.fullName, { shouldValidate: true, shouldDirty: true });
     setValue('citizenId', plan.fields.citizenId, { shouldValidate: true, shouldDirty: true });
     setValue('dateOfBirth', plan.fields.dateOfBirth, { shouldValidate: true, shouldDirty: true });
-    setValue('address', plan.fields.address, { shouldValidate: true, shouldDirty: true });
-
-    if (plan.citizenIdError) {
-      setError('citizenId', {
-        type: 'server',
-        message: sanitizeUiMessage(plan.citizenIdError, 'Số căn cước công dân này đã được đăng ký.'),
-      });
-    }
+    setValue('address', matchedProvince, { shouldValidate: true, shouldDirty: true });
 
     navigation.setParams({ ocrResult: undefined });
-    toast.success(plan.alertMessage, plan.alertTitle);
+
+    if (plan.citizenIdError) {
+      const errMsg = sanitizeUiMessage(
+        plan.citizenIdError,
+        'Số CCCD này đã được đăng ký.'
+      );
+      setError('citizenId', {
+        type: 'server',
+        message: errMsg,
+      });
+      toast.warning(errMsg, 'Số CCCD đã được đăng ký');
+    } else {
+      toast.success(plan.alertMessage, plan.alertTitle);
+    }
   }, [navigation, route.params?.ocrResult, setError, setValue, toast]);
 
   const handleLeavePage = useCallback(
@@ -103,61 +125,114 @@ export const RegisterScreen: React.FC = () => {
     async (data: RegisterFormData) => {
       setLoading(true);
       try {
-        await authApi.register(data);
+        const res = await authApi.register(data);
         if (!isMountedRef.current) return;
 
-        toast.success(
-          'Vui lòng kiểm tra hộp thư điện tử để kích hoạt tài khoản.',
-          'Đăng ký tài khoản thành công'
-        );
-        navigation.replace('VerifyPending', { email: data.email });
+        const targetEmail = res?.data?.email || data.email.trim().toLowerCase();
+        if (res?.data?.requiresEmailVerification !== false) {
+          setRegisteredEmail(targetEmail);
+        } else {
+          toast.success(
+            'Tài khoản đã được tạo. Vui lòng đăng nhập.',
+            'Đăng ký thành công'
+          );
+          navigation.replace('Login');
+        }
       } catch (error: any) {
         if (!isMountedRef.current) return;
         const status = error?.response?.status;
         const responseData = error?.response?.data;
+        const errorCode = String(
+          responseData?.errors?.errorCode || responseData?.errorCode || ''
+        ).toUpperCase();
+        const serverMsg = String(responseData?.message || '');
 
-        if (status === 400 && responseData?.errors) {
+        if (errorCode === 'CITIZEN_ID_ALREADY_EXISTS') {
+          setError('citizenId', {
+            type: 'server',
+            message: 'Số CCCD này đã được đăng ký.',
+          });
+          toast.error(
+            'Số CCCD này đã được đăng ký. Vui lòng đăng nhập.',
+            'Đăng ký thất bại'
+          );
+        } else if (errorCode === 'EMAIL_ALREADY_EXISTS') {
+          setError('email', {
+            type: 'server',
+            message: 'Email này đã được sử dụng.',
+          });
+          toast.error(
+            'Email này đã được sử dụng. Vui lòng dùng email khác.',
+            'Đăng ký thất bại'
+          );
+        } else if (errorCode === 'INVALID_CITIZEN_ID') {
+          setError('citizenId', {
+            type: 'server',
+            message: 'Số CCCD phải gồm 12 chữ số.',
+          });
+          toast.error('Số CCCD không hợp lệ.', 'Thông tin chưa hợp lệ');
+        } else if (status === 400 && responseData?.errors && typeof responseData.errors === 'object') {
           const fieldErrors = responseData.errors;
+          let hasMappedField = false;
+
           Object.keys(fieldErrors).forEach((key) => {
+            if (key === 'errorCode') return;
             const fieldName = (key.charAt(0).toLowerCase() + key.slice(1)) as keyof RegisterFormData;
+            if (!VALID_REGISTER_FIELDS.has(fieldName)) return;
+
+            const rawVal = fieldErrors[key];
+            const firstMsg = Array.isArray(rawVal) ? rawVal[0] : typeof rawVal === 'string' ? rawVal : '';
             setError(fieldName, {
               type: 'server',
-              message: sanitizeUiMessage(fieldErrors[key]?.[0], 'Thông tin nhập chưa hợp lệ.'),
+              message: sanitizeUiMessage(firstMsg, 'Thông tin chưa hợp lệ.'),
             });
+            hasMappedField = true;
           });
+
+          toast.error(
+            sanitizeUiMessage(
+              serverMsg,
+              hasMappedField
+                ? 'Vui lòng kiểm tra lại các trường báo đỏ.'
+                : 'Thông tin đăng ký chưa hợp lệ.'
+            ),
+            'Thông tin chưa hợp lệ'
+          );
         } else if (status === 409) {
-          const msg = String(responseData?.message || 'Thông tin đăng ký đã tồn tại trên hệ thống.');
-          const lower = msg.toLowerCase();
+          const lower = serverMsg.toLowerCase();
           if (lower.includes('email')) {
             setError('email', {
               type: 'server',
-              message: 'Địa chỉ email này đã được sử dụng. Vui lòng chọn email khác.',
+              message: 'Email này đã được sử dụng.',
             });
+            toast.error('Email này đã được sử dụng.', 'Đăng ký thất bại');
           } else if (lower.includes('căn cước') || lower.includes('cccd') || lower.includes('citizen')) {
             setError('citizenId', {
               type: 'server',
-              message: 'Số căn cước công dân này đã được đăng ký.',
+              message: 'Số CCCD này đã được đăng ký.',
             });
+            toast.error('Số CCCD này đã được đăng ký.', 'Đăng ký thất bại');
           } else if (lower.includes('điện thoại') || lower.includes('phone')) {
             setError('phoneNumber', {
               type: 'server',
               message: 'Số điện thoại này đã được sử dụng.',
             });
+            toast.error('Số điện thoại này đã được sử dụng.', 'Đăng ký thất bại');
           } else {
             toast.warning(
-              sanitizeUiMessage(msg, 'Thông tin đăng ký đã tồn tại trên hệ thống.'),
-              'Thông tin đã được đăng ký'
+              sanitizeUiMessage(serverMsg, 'Thông tin đăng ký đã tồn tại.'),
+              'Thông tin đã tồn tại'
             );
           }
         } else if (status === 429) {
           toast.warning(
-            'Bạn đã gửi yêu cầu đăng ký nhiều lần liên tiếp. Vui lòng đợi ít phút rồi thử lại.',
-            'Gửi yêu cầu quá nhanh'
+            'Thao tác quá nhanh. Vui lòng đợi ít phút rồi thử lại.',
+            'Quá nhiều yêu cầu'
           );
         } else {
           const friendly = toFriendlyError(error, {
-            fallbackTitle: 'Chưa thể tạo tài khoản',
-            fallbackMessage: 'Kết nối tạm thời gián đoạn. Vui lòng kiểm tra mạng và thử lại.',
+            fallbackTitle: 'Đăng ký thất bại',
+            fallbackMessage: 'Không thể kết nối máy chủ. Vui lòng kiểm tra mạng.',
           });
           toast.error(friendly.message, friendly.title);
         }
@@ -187,6 +262,68 @@ export const RegisterScreen: React.FC = () => {
           keyboardShouldPersistTaps="handled"
         >
           <View style={styles.contentWrap}>
+            {registeredEmail ? (
+              <View style={styles.formCard}>
+                <View style={{ alignItems: 'center', paddingVertical: 12 }}>
+                  <View
+                    style={{
+                      width: 68,
+                      height: 68,
+                      borderRadius: 34,
+                      backgroundColor: theme.colors.successBackground,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      marginBottom: 14,
+                    }}
+                  >
+                    <Ionicons name="mail-unread-outline" size={36} color={theme.colors.success} />
+                  </View>
+                  <Text
+                    style={{
+                      ...theme.typography.titleLarge,
+                      color: theme.colors.primaryDark,
+                      textAlign: 'center',
+                      marginBottom: 10,
+                    }}
+                  >
+                    ✉️ Đăng ký thành công!
+                  </Text>
+                  <Text
+                    style={{
+                      ...theme.typography.bodyMedium,
+                      color: theme.colors.textSecondary,
+                      textAlign: 'center',
+                      lineHeight: 22,
+                      marginBottom: 22,
+                    }}
+                  >
+                    Chúng tôi đã gửi một liên kết xác minh đến địa chỉ email{' '}
+                    <Text style={{ fontWeight: '700', color: theme.colors.textPrimary }}>
+                      {registeredEmail}
+                    </Text>
+                    . Vui lòng kiểm tra hộp thư (cả mục Spam) để kích hoạt tài khoản của bạn.
+                  </Text>
+
+                  <CustomButton
+                    title="Quay lại Đăng nhập"
+                    onPress={() => navigation.replace('Login')}
+                    style={{ width: '100%' }}
+                  />
+
+                  <TouchableOpacity
+                    style={{ marginTop: 14, paddingVertical: 6 }}
+                    onPress={() =>
+                      navigation.navigate('VerifyEmail', { email: registeredEmail })
+                    }
+                  >
+                    <Text style={styles.loginLinkHighlight}>
+                      Chưa nhận được email hoặc muốn nhập mã xác minh?
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              <>
             {/* Card Quét CCCD nhanh */}
             <TouchableOpacity
               activeOpacity={0.85}
@@ -225,6 +362,7 @@ export const RegisterScreen: React.FC = () => {
                   <CustomInput
                     label="Họ và tên"
                     required
+                    placeholder="Nguyễn Văn A"
                     onBlur={onBlur}
                     onChangeText={onChange}
                     value={value}
@@ -243,9 +381,9 @@ export const RegisterScreen: React.FC = () => {
                     required
                     keyboardType="numeric"
                     maxLength={12}
-                    placeholder="12 chữ số"
+                    placeholder="Nhập 12 chữ số CCCD"
                     onBlur={onBlur}
-                    onChangeText={onChange}
+                    onChangeText={(text) => onChange(text.replace(/\D/g, '').slice(0, 12))}
                     value={value}
                     error={errors.citizenId?.message}
                   />
@@ -260,7 +398,7 @@ export const RegisterScreen: React.FC = () => {
                   <CustomInput
                     label="Ngày sinh"
                     placeholder="1995-05-12"
-                    helperText="Định dạng Năm-Tháng-Ngày (từ 18 tuổi trở lên)"
+                    helperText="Định dạng Năm-Tháng-Ngày (từ 18 tuổi)"
                     onBlur={onBlur}
                     onChangeText={onChange}
                     value={value}
@@ -280,7 +418,6 @@ export const RegisterScreen: React.FC = () => {
                     keyboardType="email-address"
                     autoCapitalize="none"
                     placeholder="ten@email.com"
-                    helperText="Dùng làm tên đăng nhập và nhận thư kích hoạt"
                     onBlur={onBlur}
                     onChangeText={onChange}
                     value={value}
@@ -301,44 +438,24 @@ export const RegisterScreen: React.FC = () => {
                     maxLength={10}
                     placeholder="09xxxxxxxx"
                     onBlur={onBlur}
-                    onChangeText={onChange}
+                    onChangeText={(text) => onChange(text.replace(/\D/g, '').slice(0, 10))}
                     value={value}
                     error={errors.phoneNumber?.message}
                   />
                 )}
               />
 
-              {/* Mã số thuế */}
-              <Controller
-                control={control}
-                name="taxIdNumber"
-                render={({ field: { onChange, onBlur, value } }) => (
-                  <CustomInput
-                    label="Mã số thuế"
-                    keyboardType="numeric"
-                    maxLength={13}
-                    placeholder="10 hoặc 13 chữ số"
-                    helperText="Có thể bổ sung sau trong hồ sơ cá nhân"
-                    onBlur={onBlur}
-                    onChangeText={onChange}
-                    value={value}
-                    error={errors.taxIdNumber?.message}
-                  />
-                )}
-              />
-
-              {/* Địa chỉ */}
+              {/* Địa chỉ thường trú (Dropdown 34 Tỉnh/Thành phố sau sáp nhập) */}
               <Controller
                 control={control}
                 name="address"
                 render={({ field: { onChange, onBlur, value } }) => (
-                  <CustomInput
+                  <ProvinceSelect
                     label="Địa chỉ thường trú"
-                    multiline
-                    numberOfLines={2}
-                    onBlur={onBlur}
-                    onChangeText={onChange}
+                    placeholder="Chọn Tỉnh / Thành phố"
                     value={value}
+                    onChange={onChange}
+                    onBlur={onBlur}
                     error={errors.address?.message}
                   />
                 )}
@@ -372,6 +489,7 @@ export const RegisterScreen: React.FC = () => {
                     label="Xác nhận mật khẩu"
                     required
                     isPassword
+                    placeholder="Nhập lại mật khẩu"
                     onBlur={onBlur}
                     onChangeText={onChange}
                     value={value}
@@ -412,6 +530,8 @@ export const RegisterScreen: React.FC = () => {
                 </TouchableOpacity>
               </View>
             </View>
+              </>
+            )}
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -419,7 +539,7 @@ export const RegisterScreen: React.FC = () => {
       <Dialog
         visible={leaveDestination !== null}
         title="Hủy thông tin đang nhập?"
-        message="Thông tin đăng ký chưa được gửi đi. Nếu rời khỏi màn hình này, dữ liệu vừa nhập sẽ không được lưu."
+        message="Dữ liệu đăng ký chưa được lưu. Bạn có chắc muốn rời màn hình này?"
         destructive
         secondaryLabel="Tiếp tục nhập"
         primaryLabel="Rời màn hình"

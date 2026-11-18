@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
+import { useThemeStore } from '../../stores/useThemeStore';
 
 interface CustomInputProps extends TextInputProps {
   label?: string;
@@ -33,6 +34,7 @@ export const CustomInput: React.FC<CustomInputProps> = React.memo(({
 }) => {
   const [showPassword, setShowPassword] = useState(!isPassword);
   const [isFocused, setIsFocused] = useState(false);
+  useThemeStore((s) => s.mode);
 
   return (
     <View style={[styles.container, containerStyle]}>

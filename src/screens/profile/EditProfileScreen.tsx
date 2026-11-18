@@ -16,8 +16,13 @@ import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { HomeHeaderButton } from '../../components/navigation/HomeHeaderButton';
 import { Dialog } from '../../components/common/Dialog';
+import { ProvinceSelect } from '../../components/common/ProvinceSelect';
 import { useToast } from '../../components/ui/Toast';
 import { profileApi, UserProfileResponse } from '../../api/profileApi';
+import {
+  matchVietnamProvince,
+  sanitizeProfileAddress,
+} from '../../constants/vietnamProvinces';
 import { RootStackParamList, RootNavigationProp } from '../../navigation/types';
 import { useAuthStore } from '../../stores/useAuthStore';
 import {
@@ -57,11 +62,12 @@ export const EditProfileScreen: React.FC = () => {
         setLoading(true);
         const data = await profileApi.getProfile();
         if (!isMountedRef.current) return;
-        setInitialProfile(data);
+        const cleanAddress = sanitizeProfileAddress(data.address, data.citizenId);
+        setInitialProfile({ ...data, address: cleanAddress });
         setFullName(data.fullName || '');
         setCitizenId(data.citizenId || '');
         setDateOfBirth(data.dateOfBirth || '');
-        setAddress(data.address || '');
+        setAddress(cleanAddress);
         setPhoneNumber(data.phoneNumber || '');
         setTaxIdNumber(data.taxIdNumber || '');
         setIsTaxRegisteredConfirmed(Boolean(data.taxIdNumber && data.taxIdNumber.trim().length > 0));
@@ -89,12 +95,15 @@ export const EditProfileScreen: React.FC = () => {
     const result = route.params?.ocrResult;
     if (!result) return;
     const plan = applyEditProfileOcrResult(result);
+    const matchedProvince =
+      matchVietnamProvince(plan.fields.address) ||
+      sanitizeProfileAddress(plan.fields.address, citizenId);
     setFullName(plan.fields.fullName);
     setDateOfBirth(plan.fields.dateOfBirth);
-    setAddress(plan.fields.address);
+    setAddress(matchedProvince);
     navigation.setParams({ ocrResult: undefined });
     toast.success(plan.alertMessage, plan.alertTitle);
-  }, [navigation, route.params?.ocrResult, toast]);
+  }, [citizenId, navigation, route.params?.ocrResult, toast]);
 
   const validateForm = useCallback((): boolean => {
     const errs: { [key: string]: string } = {};
@@ -343,18 +352,13 @@ export const EditProfileScreen: React.FC = () => {
                 )}
               </View>
 
-              {/* Địa chỉ */}
-              <View style={styles.inputGroup}>
-                <Text style={styles.label}>Địa chỉ liên hệ</Text>
-                <TextInput
-                  style={[styles.input, styles.textArea]}
-                  value={address}
-                  onChangeText={setAddress}
-                  placeholderTextColor={theme.colors.textPlaceholder}
-                  multiline
-                  numberOfLines={2}
-                />
-              </View>
+              {/* Địa chỉ thường trú / liên hệ (Dropdown 34 Tỉnh/Thành phố sau sáp nhập) */}
+              <ProvinceSelect
+                label="Địa chỉ thường trú"
+                placeholder="Chọn Tỉnh / Thành phố"
+                value={address}
+                onChange={setAddress}
+              />
 
               {/* Số điện thoại */}
               <View style={styles.inputGroup}>

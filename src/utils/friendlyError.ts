@@ -65,9 +65,26 @@ export function toFriendlyError(
     typeof titleOrOptions === 'string' ? messageArg : titleOrOptions.fallbackMessage ?? messageArg;
   const anyErr = err as any;
   const status: number | undefined = anyErr?.response?.status ?? anyErr?.status;
-  const code = String(anyErr?.code || anyErr?.response?.data?.errorCode || '').toUpperCase();
+  const code = String(
+    anyErr?.code ||
+      anyErr?.response?.data?.errorCode ||
+      anyErr?.response?.data?.errors?.errorCode ||
+      ''
+  ).toUpperCase();
 
   if (status === 401) {
+    if (code === 'INVALID_CREDENTIALS') {
+      return {
+        title: 'Đăng nhập thất bại',
+        message: 'Số CCCD hoặc mật khẩu không đúng.',
+      };
+    }
+    if (code === 'ACCOUNT_SUSPENDED') {
+      return {
+        title: 'Tài khoản bị khóa',
+        message: 'Tài khoản đang bị tạm khóa. Vui lòng liên hệ hỗ trợ.',
+      };
+    }
     return {
       title: 'Phiên đăng nhập đã hết hạn',
       message: 'Vui lòng đăng nhập lại để tiếp tục kê khai và tra cứu hồ sơ thuế.',

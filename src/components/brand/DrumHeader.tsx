@@ -5,6 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { fonts } from '../../constants/fonts';
 import { theme } from '../../constants/theme';
 import { HomeHeaderButton, useShowHomeButton } from '../navigation/HomeHeaderButton';
+import { useThemeStore, DARK_COLORS, LIGHT_COLORS } from '../../stores/useThemeStore';
 
 type Props = {
   title: string;
@@ -16,27 +17,32 @@ type Props = {
 /** Dải trống đồng mờ xuống nền kem — header của màn tra cứu và màn gốc tab. */
 export function DrumHeader({ title, onBack, backTestID, right }: Props) {
   const showHome = useShowHomeButton();
-  // Lùi bên trái · Home (+ nút riêng của màn) bên phải; 2 bên rộng bằng nhau để tiêu đề nằm giữa
+  const isDark = useThemeStore((s) => s.isDark);
+  const palette = isDark ? DARK_COLORS : LIGHT_COLORS;
   const sideWidth = showHome && right ? 88 : 44;
   return (
     <View style={styles.root}>
       <LinearGradient
-        colors={['#ECE9C2', '#ECE9C2', '#F8F5EE']}
+        colors={
+          isDark
+            ? ['#2A2318', '#1F1B15', palette.background]
+            : ['#ECE9C2', '#ECE9C2', '#F8F5EE']
+        }
         locations={[0, 0.35, 1]}
         style={StyleSheet.absoluteFill}
       />
       <Image
         source={require('../../../assets/brand/trong-dong-header.png')}
-        style={styles.drum}
+        style={[styles.drum, isDark && { opacity: 0.25 }]}
         resizeMode="contain"
       />
       <LinearGradient
-        colors={['transparent', 'transparent', '#F8F5EE']}
+        colors={['transparent', 'transparent', palette.background]}
         locations={[0, 0.28, 0.7]}
         style={StyleSheet.absoluteFill}
         pointerEvents="none"
       />
-      <View style={styles.row}>
+      <View style={[styles.row, { backgroundColor: palette.background }]}>
         <View style={[styles.side, styles.sideLeft, { width: sideWidth }]}>
           <TouchableOpacity
             style={styles.iconBtn}
@@ -45,10 +51,10 @@ export function DrumHeader({ title, onBack, backTestID, right }: Props) {
             accessibilityLabel="Quay lại"
             testID={backTestID}
           >
-            <Ionicons name="arrow-back" size={24} color={theme.colors.textPrimary} />
+            <Ionicons name="arrow-back" size={24} color={palette.textPrimary} />
           </TouchableOpacity>
         </View>
-        <Text style={styles.title} numberOfLines={1}>
+        <Text style={[styles.title, { color: palette.textPrimary }]} numberOfLines={1}>
           {title}
         </Text>
         <View style={[styles.side, styles.sideRight, { width: sideWidth }]}>

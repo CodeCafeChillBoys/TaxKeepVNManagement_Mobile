@@ -4,9 +4,12 @@ import { OcrDependentFill, OcrFormFill, ScanIdentitySource } from '../types/ocr'
 export type RootStackParamList = {
   Login: undefined;
   Register: { ocrResult?: OcrFormFill } | undefined;
-  VerifyPending: { email: string };
-  Home: undefined;
+  VerifyEmail: { token?: string; email?: string } | undefined;
+  ForgotPassword: { email?: string } | undefined;
+  ResetPassword: { token?: string } | undefined;
+  Home: { openNotifications?: boolean } | undefined;
   Profile: undefined;
+  Settings: undefined;
   EditProfile: { autoFocusTaxId?: boolean; ocrResult?: OcrFormFill } | undefined;
   ScanIdentity: {
     source: ScanIdentitySource;

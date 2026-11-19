@@ -86,14 +86,16 @@ export const ChangePasswordScreen: React.FC = () => {
 
       const successMsg = sanitizeUiMessage(
         res.message,
-        'Mật khẩu mới đã được áp dụng. Các thiết bị khác đã được đăng xuất an toàn.'
+        'Đổi mật khẩu thành công.'
       );
       toast.success(successMsg, 'Đổi mật khẩu thành công');
       navigation.goBack();
     } catch (err: any) {
       if (!isMountedRef.current) return;
       const resp = err?.response?.data;
-      const errorCode = resp?.errorCode;
+      const errorCode = String(
+        resp?.errors?.errorCode || resp?.errorCode || ''
+      ).toUpperCase();
       const msg = String(resp?.message || '');
 
       if (
@@ -101,7 +103,8 @@ export const ChangePasswordScreen: React.FC = () => {
         errorCode === 'INCORRECT_CURRENT_PASSWORD' ||
         msg.includes('hiện tại')
       ) {
-        setErrors((prev) => ({ ...prev, currentPassword: 'Mật khẩu hiện tại không chính xác.' }));
+        setErrors((prev) => ({ ...prev, currentPassword: 'Mật khẩu hiện tại không đúng.' }));
+        toast.error('Mật khẩu hiện tại không đúng.', 'Đổi mật khẩu thất bại');
       } else if (
         errorCode === 'SAME_PASSWORD' ||
         errorCode === 'PASSWORD_CANNOT_BE_IDENTICAL' ||
@@ -109,14 +112,16 @@ export const ChangePasswordScreen: React.FC = () => {
       ) {
         setErrors((prev) => ({
           ...prev,
-          newPassword: 'Mật khẩu mới không được trùng với mật khẩu hiện tại.',
+          newPassword: 'Mật khẩu mới không được trùng mật khẩu hiện tại.',
         }));
+        toast.error('Mật khẩu mới không được trùng mật khẩu hiện tại.', 'Đổi mật khẩu thất bại');
       } else if (errorCode === 'NEW_PASSWORDS_DO_NOT_MATCH' || msg.includes('khớp')) {
         setErrors((prev) => ({ ...prev, confirmNewPassword: 'Mật khẩu xác nhận không khớp.' }));
+        toast.error('Mật khẩu xác nhận không khớp.', 'Đổi mật khẩu thất bại');
       } else {
         const friendly = toFriendlyError(err, {
-          fallbackTitle: 'Chưa đổi được mật khẩu',
-          fallbackMessage: 'Không thể cập nhật mật khẩu lúc này. Vui lòng kiểm tra lại và thử lại.',
+          fallbackTitle: 'Đổi mật khẩu thất bại',
+          fallbackMessage: 'Không thể cập nhật mật khẩu lúc này. Vui lòng thử lại.',
         });
         toast.error(friendly.message, friendly.title);
       }

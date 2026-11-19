@@ -1,5 +1,6 @@
 import { apiClient, storageHelper } from './apiClient';
 import { config } from '../constants/config';
+import { sanitizeProfileAddress } from '../constants/vietnamProvinces';
 
 export interface UserProfileResponse {
   userId: string;
@@ -106,8 +107,15 @@ export const profileApi = {
     try {
       const response = await apiClient.get<ApiResponse<UserProfileResponse>>('/api/profile');
       if (response.data?.data) {
-        await saveCachedProfile(response.data.data);
-        return response.data.data;
+        const cleaned: UserProfileResponse = {
+          ...response.data.data,
+          address: sanitizeProfileAddress(
+            response.data.data.address,
+            response.data.data.citizenId
+          ),
+        };
+        await saveCachedProfile(cleaned);
+        return cleaned;
       }
     } catch (e1: any) {}
 
@@ -115,13 +123,24 @@ export const profileApi = {
     try {
       const response = await apiClient.get<ApiResponse<UserProfileResponse>>('/api/v1/profile');
       if (response.data?.data) {
-        await saveCachedProfile(response.data.data);
-        return response.data.data;
+        const cleaned: UserProfileResponse = {
+          ...response.data.data,
+          address: sanitizeProfileAddress(
+            response.data.data.address,
+            response.data.data.citizenId
+          ),
+        };
+        await saveCachedProfile(cleaned);
+        return cleaned;
       }
     } catch (e2: any) {}
 
     // 3. Đọc từ bộ nhớ máy nếu chưa kết nối được
-    return await getCachedProfile();
+    const cached = await getCachedProfile();
+    return {
+      ...cached,
+      address: sanitizeProfileAddress(cached.address, cached.citizenId),
+    };
   },
 
   // Cập nhật thông tin cá nhân (họ tên, SĐT, địa chỉ, ngày sinh, MST cá nhân)

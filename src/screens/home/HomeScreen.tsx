@@ -1,7 +1,9 @@
-import React, { useState, useCallback, useMemo, memo } from 'react';
+import React, { useState, useCallback, useMemo, useRef, useEffect, memo } from 'react';
 import {
   View,
   Text,
+  Image,
+  TextInput,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
@@ -13,12 +15,12 @@ import {
   Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { useNavigation, useRoute, useFocusEffect, RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
 import { useAuthStore } from '../../stores/useAuthStore';
-import { RootNavigationProp } from '../../navigation/types';
+import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import {
   dependentDocumentApi,
   AgeReminderItemDto,
@@ -53,6 +55,149 @@ import { sanitizeUiMessage } from '../../utils/friendlyError';
 import { consultationApi } from '../../api/consultationApi';
 import type { UpcomingMeetingReminderDto } from '../../types/consultation';
 import { formatVietnameseDate, formatTimeRange } from '../../types/consultation';
+import { storageHelper } from '../../api/apiClient';
+import { normalizeVietnameseText } from '../../constants/vietnamProvinces';
+
+const CONSULT_BANNER_IMAGE = require('../../../assets/brand/consult-banner.jpg');
+const EXPERT_PARTNER_BANNER_IMAGE = require('../../../assets/brand/expert-partner-banner.jpg');
+const FAVORITE_UTILITIES_STORAGE_KEY = 'taxkeep_favorite_utilities';
+
+type HomeUtilityItem = {
+  id: string;
+  label: string;
+  keywords: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  inServiceGroup?: boolean;
+  testID?: string;
+  onNavigate: (nav: RootNavigationProp, isExpert: boolean) => void;
+};
+
+const ALL_HOME_UTILITIES: HomeUtilityItem[] = [
+  {
+    id: 'tax_registration',
+    label: 'Khai báo người phụ thuộc',
+    keywords: 'khai bao npt nguoi phu thuoc giam tru gia canh',
+    icon: 'person-add-outline',
+    inServiceGroup: true,
+    testID: 'homeTaxRegistrationCard',
+    onNavigate: (nav) => nav.navigate('TaxRegistration'),
+  },
+  {
+    id: 'settlement_start',
+    label: 'Quyết toán thuế',
+    keywords: 'quyet toan thue tncn hoan thue to khai',
+    icon: 'calculator-outline',
+    inServiceGroup: true,
+    testID: 'homeSettlementCard',
+    onNavigate: (nav) => nav.navigate('SettlementStart'),
+  },
+  {
+    id: 'expense_list',
+    label: 'Hóa đơn chứng từ',
+    keywords: 'hoa don chung tu khau tru tai lieu',
+    icon: 'receipt-outline',
+    inServiceGroup: true,
+    testID: 'homeExpenseListCard',
+    onNavigate: (nav) => nav.navigate('ExpenseList'),
+  },
+  {
+    id: 'expert_list',
+    label: 'Tư vấn chuyên gia',
+    keywords: 'tu van chuyen gia dat lich hoi dap',
+    icon: 'chatbubbles-outline',
+    inServiceGroup: true,
+    testID: 'homeExpertListCard',
+    onNavigate: (nav) => nav.navigate('ExpertList'),
+  },
+  {
+    id: 'income_source',
+    label: 'Nơi chi trả',
+    keywords: 'noi chi tra nguon thu nhap cong ty luong',
+    icon: 'business-outline',
+    inServiceGroup: true,
+    testID: 'homeIncomeSourceCard',
+    onNavigate: (nav) => nav.navigate('IncomeSourceList'),
+  },
+  {
+    id: 'my_bookings',
+    label: 'Lịch hẹn tư vấn',
+    keywords: 'lich hen tu van cuoc hop chuyen gia',
+    icon: 'calendar-outline',
+    inServiceGroup: true,
+    testID: 'homeMyBookingsCard',
+    onNavigate: (nav) => nav.navigate('MyBookings', {}),
+  },
+  {
+    id: 'law_conditions',
+    label: 'Điều kiện luật',
+    keywords: 'dieu kien luat thue quy dinh van ban',
+    icon: 'book-outline',
+    inServiceGroup: true,
+    testID: 'homeLawConditionsCard',
+    onNavigate: (nav) => nav.navigate('LawConditions'),
+  },
+  {
+    id: 'profile_cccd',
+    label: 'Hồ sơ cá nhân',
+    keywords: 'ho so ca nhan the can cuoc cccd dinh danh',
+    icon: 'id-card-outline',
+    onNavigate: (nav) => nav.navigate('Profile'),
+  },
+  {
+    id: 'dependent_list',
+    label: 'Người phụ\nthuộc',
+    keywords: 'danh sach nguoi phu thuoc con cai cha me',
+    icon: 'heart-outline',
+    onNavigate: (nav) => nav.navigate('DependentList'),
+  },
+  {
+    id: 'expense_upload',
+    label: 'Tải lên\nchứng từ',
+    keywords: 'tai len upload chung tu quet ocr',
+    icon: 'cloud-upload-outline',
+    onNavigate: (nav) => nav.navigate('ExpenseUpload'),
+  },
+  {
+    id: 'wallet_taxkeep',
+    label: 'Ví điện tử\nTaxKeep',
+    keywords: 'vi dien tu taxkeep nap tien rut tien so du',
+    icon: 'wallet-outline',
+    onNavigate: (nav, isExp) =>
+      nav.navigate('Wallet', { walletType: isExp ? 'EXPERT' : 'USER' }),
+  },
+  {
+    id: 'tax_chat_ai',
+    label: 'Trợ lý\nTaxKeep VN',
+    keywords: 'tro ly taxkeep vn ai thue chatbot hoi dap tu van tu dong',
+    icon: 'sparkles-outline',
+    onNavigate: (nav) => nav.navigate('TaxChat'),
+  },
+  {
+    id: 'subscription_my',
+    label: 'Gói thành\nviên',
+    keywords: 'goi thanh vien nang cap dich vu',
+    icon: 'ribbon-outline',
+    onNavigate: (nav) => nav.navigate('SubscriptionMy'),
+  },
+  {
+    id: 'settings',
+    label: 'Cài đặt',
+    keywords: 'cai dat giao dien sang toi doi mat khau huong dan dieu khoan su dung',
+    icon: 'settings-outline',
+    onNavigate: (nav) => nav.navigate('Settings'),
+  },
+];
+
+const DEFAULT_FAVORITE_IDS = [
+  'profile_cccd',
+  'settlement_start',
+  'expense_list',
+  'income_source',
+  'my_bookings',
+  'dependent_list',
+];
+
+const SERVICE_GROUP_ITEMS = ALL_HOME_UTILITIES.filter((u) => u.inServiceGroup);
 
 const DEADLINE_COLORS = {
   normal: theme.colors.primaryDark,
@@ -181,6 +326,7 @@ const NotificationRow = memo(function NotificationRow({
 
 export const HomeScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
+  const route = useRoute<RouteProp<RootStackParamList, 'Home'>>();
   const { toast } = useToast();
   const user = useAuthStore((s) => s.user);
   const userRole = (user?.role || '').toLowerCase();
@@ -202,6 +348,111 @@ export const HomeScreen: React.FC = () => {
   const [promptAnswered, setPromptAnswered] = useState(false);
   const [upcomingMeeting, setUpcomingMeeting] = useState<UpcomingMeetingReminderDto | null>(null);
   const [joiningMeeting, setJoiningMeeting] = useState<boolean>(false);
+  const [bannerSlideIndex, setBannerSlideIndex] = useState<number>(0);
+  const [bannerCardWidth, setBannerCardWidth] = useState<number>(0);
+  const bannerScrollRef = useRef<any>(null);
+
+  const [favoriteIds, setFavoriteIds] = useState<string[]>(DEFAULT_FAVORITE_IDS);
+  const [editFavoritesVisible, setEditFavoritesVisible] = useState<boolean>(false);
+  const [draftFavoriteIds, setDraftFavoriteIds] = useState<string[]>(DEFAULT_FAVORITE_IDS);
+  const [searchModalVisible, setSearchModalVisible] = useState<boolean>(false);
+  const [searchQuery, setSearchQuery] = useState<string>('');
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const raw = await storageHelper.getItem(FAVORITE_UTILITIES_STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            const validIds = parsed.filter((id) =>
+              ALL_HOME_UTILITIES.some((u) => u.id === id)
+            );
+            if (validIds.length > 0) {
+              setFavoriteIds(validIds);
+            }
+          }
+        }
+      } catch {}
+    })();
+  }, []);
+
+  const favoriteUtilities = useMemo(
+    () =>
+      favoriteIds
+        .map((id) => ALL_HOME_UTILITIES.find((u) => u.id === id))
+        .filter((u): u is HomeUtilityItem => Boolean(u)),
+    [favoriteIds]
+  );
+
+  const filteredSearchUtilities = useMemo(() => {
+    const q = normalizeVietnameseText(searchQuery);
+    if (!q) return ALL_HOME_UTILITIES;
+    return ALL_HOME_UTILITIES.filter((item) => {
+      const labelNorm = normalizeVietnameseText(item.label.replace(/\n/g, ' '));
+      return labelNorm.includes(q) || item.keywords.includes(q);
+    });
+  }, [searchQuery]);
+
+  const handleOpenEditFavorites = useCallback(() => {
+    setDraftFavoriteIds(favoriteIds);
+    setEditFavoritesVisible(true);
+  }, [favoriteIds]);
+
+  const handleToggleDraftFavorite = useCallback((id: string) => {
+    setDraftFavoriteIds((prev) => {
+      if (prev.includes(id)) {
+        if (prev.length <= 1) return prev;
+        return prev.filter((item) => item !== id);
+      }
+      return [...prev, id];
+    });
+  }, []);
+
+  const handleSaveFavorites = useCallback(async () => {
+    setFavoriteIds(draftFavoriteIds);
+    setEditFavoritesVisible(false);
+    try {
+      await storageHelper.setItem(
+        FAVORITE_UTILITIES_STORAGE_KEY,
+        JSON.stringify(draftFavoriteIds)
+      );
+    } catch {}
+  }, [draftFavoriteIds]);
+
+  const goToBannerSlide = useCallback(
+    (index: number) => {
+      setBannerSlideIndex(index);
+      if (bannerCardWidth > 0 && bannerScrollRef.current) {
+        bannerScrollRef.current.scrollTo({
+          x: index * bannerCardWidth,
+          animated: true,
+        });
+      }
+    },
+    [bannerCardWidth]
+  );
+
+  useEffect(() => {
+    if (isExpert) {
+      setBannerSlideIndex(0);
+      return;
+    }
+    if (bannerCardWidth <= 0) return;
+
+    const timer = setInterval(() => {
+      setBannerSlideIndex((prev) => {
+        const next = prev === 0 ? 1 : 0;
+        bannerScrollRef.current?.scrollTo({
+          x: next * bannerCardWidth,
+          animated: true,
+        });
+        return next;
+      });
+    }, 5500);
+
+    return () => clearInterval(timer);
+  }, [bannerCardWidth, isExpert]);
 
   useFocusEffect(
     useCallback(() => {
@@ -336,6 +587,13 @@ export const HomeScreen: React.FC = () => {
       setLoadingNotifs(false);
     }
   }, []);
+
+  React.useEffect(() => {
+    if (route.params?.openNotifications) {
+      navigation.setParams({ openNotifications: undefined });
+      void handleOpenNotifications();
+    }
+  }, [handleOpenNotifications, navigation, route.params?.openNotifications]);
 
   const handleRefreshNotifications = useCallback(async () => {
     setRefreshingNotifs(true);
@@ -531,13 +789,16 @@ export const HomeScreen: React.FC = () => {
         </View>
 
         <TouchableOpacity
-          style={styles.bellBtn}
-          onPress={handleOpenNotifications}
-          testID="notificationBellBtn"
-          accessibilityLabel="Thông báo hệ thống"
+          style={styles.searchHeaderBtn}
+          onPress={() => {
+            setSearchQuery('');
+            setSearchModalVisible(true);
+          }}
+          testID="homeSearchUtilityBtn"
+          accessibilityRole="button"
+          accessibilityLabel="Tìm kiếm tiện ích"
         >
-          <Ionicons name="notifications-outline" size={24} color={theme.colors.textPrimary} />
-          {unreadCount > 0 ? <View style={styles.unreadDotHeader} /> : null}
+          <Ionicons name="search-outline" size={22} color={theme.colors.textPrimary} />
         </TouchableOpacity>
       </View>
 
@@ -812,150 +1073,229 @@ export const HomeScreen: React.FC = () => {
               </View>
             ) : null}
 
-            {/* Banner tư vấn chuyên gia thuế */}
-            <View style={styles.consultBannerCard} testID="homeConsultBanner">
-              <View style={styles.consultBannerHeader}>
-                <View style={styles.consultBannerTag}>
-                  <Ionicons name="ribbon" size={12} color="#FFFFFF" />
-                  <Text style={styles.consultBannerTagText}>TƯ VẤN CHUYÊN GIA</Text>
-                </View>
+            {/* Slide Banner: Tư vấn chuyên gia thuế & Đăng ký làm chuyên gia thuế (khi !isExpert) */}
+            <View
+              style={styles.consultBannerWrap}
+              onLayout={(e) => {
+                const w = Math.round(e.nativeEvent.layout.width);
+                if (w > 0 && w !== bannerCardWidth) {
+                  setBannerCardWidth(w);
+                }
+              }}
+            >
+              {isExpert ? (
                 <TouchableOpacity
-                  onPress={() => navigation.navigate('MyBookings', {})}
-                  style={styles.myBookingsLink}
-                  accessibilityRole="button"
-                  accessibilityLabel="Lịch hẹn của tôi"
-                >
-                  <Ionicons name="calendar-outline" size={13} color={theme.colors.primary} />
-                  <Text style={styles.myBookingsLinkText}>Lịch hẹn của tôi</Text>
-                </TouchableOpacity>
-              </View>
-              <Text style={styles.consultBannerTitle}>Đặt lịch tư vấn thuế cùng chuyên gia</Text>
-              <Text style={styles.consultBannerSubtitle}>
-                Hỗ trợ giải đáp chuyên sâu về thuế TNCN, quyết toán & hoàn thuế với đội ngũ chuyên gia đã xác
-                thực chứng chỉ hành nghề.
-              </Text>
-              <View style={styles.consultBannerBtnRow}>
-                <TouchableOpacity
-                  style={styles.consultBannerPrimaryBtn}
+                  style={styles.consultBannerCard}
                   onPress={() => navigation.navigate('ExpertList')}
-                  activeOpacity={0.85}
+                  activeOpacity={0.9}
+                  testID="homeConsultBanner"
                   accessibilityRole="button"
-                  accessibilityLabel="Tìm và đặt lịch ngay"
+                  accessibilityLabel="Tư vấn cùng chuyên gia thuế - Đặt lịch tư vấn ngay"
                 >
-                  <Ionicons name="search" size={15} color="#FFFFFF" />
-                  <Text style={styles.consultBannerPrimaryBtnText}>Tìm & Đặt lịch</Text>
+                  <Image
+                    source={CONSULT_BANNER_IMAGE}
+                    style={styles.consultBannerImage}
+                    resizeMode="cover"
+                  />
                 </TouchableOpacity>
-
-                {!isExpert && (
-                  <TouchableOpacity
-                    style={styles.consultBannerSecondaryBtn}
-                    onPress={() => navigation.navigate('ExpertApplication')}
-                    activeOpacity={0.85}
-                    accessibilityRole="button"
-                    accessibilityLabel="Trở thành chuyên gia"
+              ) : (
+                <>
+                  <View
+                    style={[
+                      styles.consultBannerCard,
+                      bannerCardWidth > 0 && {
+                        height: Math.round(
+                          bannerCardWidth * (bannerSlideIndex === 0 ? 341 / 1024 : 576 / 1024)
+                        ),
+                      },
+                    ]}
+                    testID="homeConsultBanner"
                   >
-                    <Ionicons name="ribbon-outline" size={15} color={theme.colors.primary} />
-                    <Text style={styles.consultBannerSecondaryBtnText}>Đăng ký chuyên gia</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
+                    <ScrollView
+                      ref={bannerScrollRef}
+                      horizontal
+                      pagingEnabled
+                      showsHorizontalScrollIndicator={false}
+                      scrollEventThrottle={16}
+                      onMomentumScrollEnd={(e) => {
+                        if (bannerCardWidth > 0) {
+                          const idx = Math.round(
+                            e.nativeEvent.contentOffset.x / bannerCardWidth
+                          );
+                          setBannerSlideIndex(idx === 1 ? 1 : 0);
+                        }
+                      }}
+                    >
+                      {/* Slide 1: Tư vấn cùng chuyên gia thuế */}
+                      <TouchableOpacity
+                        style={[
+                          styles.bannerSlideItem,
+                          bannerCardWidth > 0 && { width: bannerCardWidth },
+                        ]}
+                        onPress={() => navigation.navigate('ExpertList')}
+                        activeOpacity={0.9}
+                        accessibilityRole="button"
+                        accessibilityLabel="Tư vấn cùng chuyên gia thuế - Đặt lịch tư vấn ngay"
+                        testID="homeConsultBannerSlide1"
+                      >
+                        <Image
+                          source={CONSULT_BANNER_IMAGE}
+                          style={styles.consultBannerImage}
+                          resizeMode="cover"
+                        />
+                      </TouchableOpacity>
+
+                      {/* Slide 2: Đăng ký làm chuyên gia thuế */}
+                      <TouchableOpacity
+                        style={[
+                          styles.bannerSlideItem,
+                          bannerCardWidth > 0 && { width: bannerCardWidth },
+                        ]}
+                        onPress={() => navigation.navigate('ExpertApplication')}
+                        activeOpacity={0.9}
+                        accessibilityRole="button"
+                        accessibilityLabel="Đăng ký làm chuyên gia thuế TaxKeep VN"
+                        testID="homeConsultBannerSlide2"
+                      >
+                        <Image
+                          source={EXPERT_PARTNER_BANNER_IMAGE}
+                          style={styles.partnerBannerImage}
+                          resizeMode="cover"
+                        />
+                      </TouchableOpacity>
+                    </ScrollView>
+                  </View>
+
+                  {/* Chấm chỉ báo chuyển slide */}
+                  <View style={styles.bannerDotsRow}>
+                    <TouchableOpacity
+                      onPress={() => goToBannerSlide(0)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Slide 1: Tư vấn cùng chuyên gia thuế"
+                    >
+                      <View
+                        style={[
+                          styles.bannerDot,
+                          bannerSlideIndex === 0 && styles.bannerDotActive,
+                        ]}
+                      />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => goToBannerSlide(1)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Slide 2: Đăng ký làm chuyên gia thuế"
+                    >
+                      <View
+                        style={[
+                          styles.bannerDot,
+                          bannerSlideIndex === 1 && styles.bannerDotActive,
+                        ]}
+                      />
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
             </View>
 
-            <View style={styles.shortcutGrid} testID="homeShortcutGrid">
-              <TouchableOpacity
-                style={[styles.shortcutCell, styles.shortcutBorderRight, styles.shortcutBorderBottom]}
-                onPress={() => navigation.navigate('TaxRegistration')}
-                testID="homeTaxRegistrationCard"
-                accessibilityRole="button"
-                accessibilityLabel="Khai báo NPT"
+            {/* ── NHÓM DỊCH VỤ (Logo icon hình tròn đỏ) ── */}
+            <View style={styles.serviceGroupSection} testID="homeShortcutGrid">
+              <Text style={styles.serviceGroupTitle}>Nhóm dịch vụ</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.serviceGroupScroll}
               >
-                <Ionicons name="person-add-outline" size={20} color={theme.colors.primary} />
-                <Text style={styles.shortcutLabel}>Khai báo NPT</Text>
-              </TouchableOpacity>
+                {SERVICE_GROUP_ITEMS.map((item) => (
+                  <TouchableOpacity
+                    key={item.id}
+                    style={styles.serviceCircleItem}
+                    activeOpacity={0.8}
+                    onPress={() => item.onNavigate(navigation, isExpert)}
+                    testID={item.testID}
+                    accessibilityRole="button"
+                    accessibilityLabel={item.label.replace(/\n/g, ' ')}
+                  >
+                    <View style={styles.serviceCircleOuter}>
+                      <View style={styles.serviceCircleRed}>
+                        <View style={styles.serviceCircleCrescent} />
+                        <Ionicons name={item.icon} size={26} color="#FFFFFF" />
+                      </View>
+                    </View>
+                    <Text style={styles.serviceCircleLabel} numberOfLines={3}>
+                      {item.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
 
-              <TouchableOpacity
-                style={[styles.shortcutCell, styles.shortcutBorderBottom]}
-                onPress={() => navigation.navigate('LawConditions')}
-                testID="homeLawConditionsCard"
-                accessibilityRole="button"
-                accessibilityLabel="Điều kiện luật"
-              >
-                <Ionicons name="book-outline" size={20} color={theme.colors.primary} />
-                <Text style={styles.shortcutLabel}>Điều kiện luật</Text>
-              </TouchableOpacity>
+            {/* ── TIỆN ÍCH YÊU THÍCH (Lưới 3 cột có nút Chỉnh sửa theo ảnh mẫu 2) ── */}
+            <View style={styles.favoriteSection} testID="homeFavoriteUtilities">
+              <View style={styles.favoriteHeaderRow}>
+                <Text style={styles.serviceGroupTitle}>Tiện ích yêu thích</Text>
+                <TouchableOpacity
+                  style={styles.favoriteEditBtn}
+                  onPress={handleOpenEditFavorites}
+                  activeOpacity={0.75}
+                  accessibilityRole="button"
+                  accessibilityLabel="Chỉnh sửa tiện ích yêu thích"
+                  testID="homeEditFavoritesBtn"
+                >
+                  <Text style={styles.favoriteEditText}>Chỉnh sửa</Text>
+                  <View style={styles.favoriteEditIconWrap}>
+                    <Ionicons name="pencil-outline" size={15} color="#D61F26" />
+                    <View style={styles.favoriteEditUnderline} />
+                  </View>
+                </TouchableOpacity>
+              </View>
 
-              <TouchableOpacity
-                style={[styles.shortcutCell, styles.shortcutBorderRight, styles.shortcutBorderBottom]}
-                onPress={() => navigation.navigate('IncomeSourceList')}
-                testID="homeIncomeSourceCard"
-                accessibilityRole="button"
-                accessibilityLabel="Nơi chi trả"
-              >
-                <Ionicons name="business-outline" size={20} color={theme.colors.primary} />
-                <Text style={styles.shortcutLabel}>Nơi chi trả</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.shortcutCell, styles.shortcutBorderBottom]}
-                onPress={() => navigation.navigate('ExpenseList')}
-                testID="homeExpenseListCard"
-                accessibilityRole="button"
-                accessibilityLabel="Hóa đơn chứng từ"
-              >
-                <Ionicons name="receipt-outline" size={20} color={theme.colors.primary} />
-                <Text style={styles.shortcutLabel}>Hóa đơn chứng từ</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.shortcutCell, styles.shortcutBorderRight, styles.shortcutBorderBottom]}
-                onPress={() => navigation.navigate('ExpertList')}
-                testID="homeExpertListCard"
-                accessibilityRole="button"
-                accessibilityLabel="Tư vấn chuyên gia"
-              >
-                <Ionicons name="chatbubbles-outline" size={20} color={theme.colors.primary} />
-                <Text style={styles.shortcutLabel}>Tư vấn chuyên gia</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.shortcutCell, styles.shortcutBorderBottom]}
-                onPress={() => navigation.navigate('MyBookings', {})}
-                testID="homeMyBookingsCard"
-                accessibilityRole="button"
-                accessibilityLabel="Lịch hẹn tư vấn"
-              >
-                <Ionicons name="calendar-outline" size={20} color={theme.colors.primary} />
-                <Text style={styles.shortcutLabel}>Lịch hẹn tư vấn</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[styles.shortcutCell, styles.shortcutFullWidth]}
-                onPress={() => navigation.navigate('SettlementStart')}
-                testID="homeSettlementCard"
-                accessibilityRole="button"
-                accessibilityLabel="Quyết toán thuế"
-              >
-                <Ionicons name="calculator-outline" size={20} color={theme.colors.primary} />
-                <Text style={styles.shortcutLabel}>Quyết toán thuế</Text>
-              </TouchableOpacity>
+              <View style={styles.favoriteGrid}>
+                {favoriteUtilities.map((item) => (
+                  <TouchableOpacity
+                    key={item.id}
+                    style={styles.favoriteCell}
+                    activeOpacity={0.8}
+                    onPress={() => item.onNavigate(navigation, isExpert)}
+                    accessibilityRole="button"
+                    accessibilityLabel={item.label.replace(/\n/g, ' ')}
+                    testID={`homeFav_${item.id}`}
+                  >
+                    <View style={styles.favoriteEmblem}>
+                      <View style={styles.favoriteEmblemRedArc} />
+                      <View style={styles.favoriteEmblemGoldCard}>
+                        <Ionicons name={item.icon} size={22} color="#B91C1C" />
+                      </View>
+                    </View>
+                    <Text style={styles.favoriteLabel} numberOfLines={3}>
+                      {item.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
             </View>
           </View>
         </ScrollView>
 
-        {/* Nút nổi mở trợ lý tra cứu thuế */}
+        {/* Nút nổi mở Trợ lý TaxKeep VN */}
         <TouchableOpacity
           style={styles.chatFab}
           onPress={() => navigation.navigate('TaxChat')}
           testID="homeTaxChatFab"
           accessibilityRole="button"
-          accessibilityLabel="Trợ lý hỏi đáp thuế"
+          accessibilityLabel="Trợ lý TaxKeep VN"
         >
           <Ionicons name="chatbubbles" size={20} color={theme.colors.textOnPrimary} />
-          <Text style={styles.chatFabText}>Hỏi đáp thuế</Text>
+          <Text style={styles.chatFabText}>Trợ lý TaxKeep VN</Text>
         </TouchableOpacity>
       </View>
 
-      <MainTabBar active="Home" />
+      <MainTabBar
+        active={notifModalVisible ? 'Notifications' : 'Home'}
+        onOpenNotifications={handleOpenNotifications}
+        unreadCount={unreadCount}
+      />
 
       <Modal
         visible={notifModalVisible}
@@ -1070,6 +1410,166 @@ export const HomeScreen: React.FC = () => {
         onRequestClose={() => answerSettlementPrompt('DISMISSED')}
         testID="homeSettlementPromptDialog"
       />
+
+      {/* ── MODAL TÌM KIẾM TIỆN ÍCH ── */}
+      <Modal
+        visible={searchModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSearchModalVisible(false)}
+      >
+        <View style={styles.utilityModalBackdrop}>
+          <View style={styles.utilityModalSheet}>
+            <View style={styles.utilityModalHeader}>
+              <Text style={styles.utilityModalTitle}>Tìm kiếm tiện ích</Text>
+              <TouchableOpacity
+                onPress={() => setSearchModalVisible(false)}
+                style={styles.utilityModalCloseBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Đóng"
+              >
+                <Ionicons name="close" size={22} color={theme.colors.textPrimary} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.utilitySearchInputBox}>
+              <Ionicons name="search-outline" size={18} color={theme.colors.textSecondary} />
+              <TextInput
+                style={styles.utilitySearchInput}
+                placeholder="Nhập tên dịch vụ, tiện ích cần tìm..."
+                placeholderTextColor={theme.colors.textPlaceholder}
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                autoFocus
+              />
+              {searchQuery ? (
+                <TouchableOpacity onPress={() => setSearchQuery('')}>
+                  <Ionicons name="close-circle" size={18} color={theme.colors.textSecondary} />
+                </TouchableOpacity>
+              ) : null}
+            </View>
+
+            <ScrollView
+              style={styles.utilityModalList}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              {filteredSearchUtilities.length === 0 ? (
+                <View style={styles.utilityEmptyWrap}>
+                  <Text style={styles.utilityEmptyText}>
+                    Không tìm thấy tiện ích phù hợp với từ khóa.
+                  </Text>
+                </View>
+              ) : (
+                filteredSearchUtilities.map((item) => (
+                  <TouchableOpacity
+                    key={item.id}
+                    style={styles.utilityListRow}
+                    activeOpacity={0.75}
+                    onPress={() => {
+                      setSearchModalVisible(false);
+                      item.onNavigate(navigation, isExpert);
+                    }}
+                  >
+                    <View style={styles.utilityListIconCircle}>
+                      <Ionicons name={item.icon} size={20} color="#FFFFFF" />
+                    </View>
+                    <Text style={styles.utilityListLabel}>
+                      {item.label.replace(/\n/g, ' ')}
+                    </Text>
+                    <Ionicons
+                      name="chevron-forward"
+                      size={18}
+                      color={theme.colors.textSecondary}
+                    />
+                  </TouchableOpacity>
+                ))
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* ── MODAL CHỈNH SỬA TIỆN ÍCH YÊU THÍCH ── */}
+      <Modal
+        visible={editFavoritesVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setEditFavoritesVisible(false)}
+      >
+        <View style={styles.utilityModalBackdrop}>
+          <View style={styles.utilityModalSheet}>
+            <View style={styles.utilityModalHeader}>
+              <Text style={styles.utilityModalTitle}>Chỉnh sửa tiện ích yêu thích</Text>
+              <TouchableOpacity
+                onPress={() => setEditFavoritesVisible(false)}
+                style={styles.utilityModalCloseBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Đóng"
+              >
+                <Ionicons name="close" size={22} color={theme.colors.textPrimary} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.utilityModalSubtitle}>
+              Chọn các tiện ích bạn thường dùng để hiển thị nhanh trên Trang chủ ({draftFavoriteIds.length} đã chọn)
+            </Text>
+
+            <ScrollView
+              style={styles.utilityModalList}
+              showsVerticalScrollIndicator={false}
+            >
+              {ALL_HOME_UTILITIES.map((item) => {
+                const isSelected = draftFavoriteIds.includes(item.id);
+                return (
+                  <TouchableOpacity
+                    key={item.id}
+                    style={styles.utilityListRow}
+                    activeOpacity={0.75}
+                    onPress={() => handleToggleDraftFavorite(item.id)}
+                  >
+                    <View
+                      style={[
+                        styles.utilityListIconCircle,
+                        !isSelected && styles.utilityListIconCircleInactive,
+                      ]}
+                    >
+                      <Ionicons
+                        name={item.icon}
+                        size={20}
+                        color={isSelected ? '#FFFFFF' : theme.colors.primary}
+                      />
+                    </View>
+                    <Text style={styles.utilityListLabel}>
+                      {item.label.replace(/\n/g, ' ')}
+                    </Text>
+                    <Ionicons
+                      name={isSelected ? 'checkmark-circle' : 'ellipse-outline'}
+                      size={22}
+                      color={isSelected ? '#D61F26' : theme.colors.textPlaceholder}
+                    />
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            <View style={styles.utilityModalFooter}>
+              <TouchableOpacity
+                style={styles.utilityCancelBtn}
+                onPress={() => setEditFavoritesVisible(false)}
+              >
+                <Text style={styles.utilityCancelBtnText}>Hủy</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.utilitySaveBtn}
+                onPress={() => void handleSaveFavorites()}
+              >
+                <Text style={styles.utilitySaveBtnText}>Lưu thay đổi</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -1115,23 +1615,292 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     color: theme.colors.textPrimary,
   },
-  bellBtn: {
-    width: 44,
-    height: 44,
+  searchHeaderBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.75)',
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  serviceGroupSection: {
+    marginTop: 22,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    paddingVertical: 16,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    ...theme.shadows.card,
+  },
+  serviceGroupTitle: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 17,
+    lineHeight: 22,
+    color: theme.colors.textPrimary,
+  },
+  serviceGroupScroll: {
+    paddingTop: 14,
+    paddingRight: 8,
+    gap: 14,
+  },
+  serviceCircleItem: {
+    width: 78,
+    alignItems: 'center',
+  },
+  serviceCircleOuter: {
+    width: 62,
+    height: 62,
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
+    marginBottom: 8,
   },
-  unreadDotHeader: {
+  serviceCircleRed: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#D61F26',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+    position: 'relative',
+    elevation: 3,
+    shadowColor: '#8B1E1E',
+    shadowOpacity: 0.25,
+    shadowRadius: 5,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  serviceCircleCrescent: {
     position: 'absolute',
-    top: 8,
-    right: 8,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: theme.colors.error,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: 'rgba(130, 10, 15, 0.38)',
+    bottom: -14,
+    right: -14,
+  },
+  serviceCircleLabel: {
+    fontFamily: fonts.body,
+    fontSize: 12.5,
+    lineHeight: 17,
+    color: theme.colors.textPrimary,
+    textAlign: 'center',
+  },
+  favoriteSection: {
+    marginTop: 16,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    paddingVertical: 16,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    ...theme.shadows.card,
+  },
+  favoriteHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 14,
+  },
+  favoriteEditBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingVertical: 4,
+    paddingHorizontal: 4,
+  },
+  favoriteEditText: {
+    fontFamily: fonts.bodyMedium,
+    fontSize: 14,
+    color: theme.colors.textPrimary,
+  },
+  favoriteEditIconWrap: {
+    alignItems: 'center',
+  },
+  favoriteEditUnderline: {
+    width: 14,
+    height: 1.8,
+    backgroundColor: '#D61F26',
+    marginTop: 1,
+  },
+  favoriteGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    rowGap: 18,
+  },
+  favoriteCell: {
+    width: '33.33%',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+  },
+  favoriteEmblem: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#F4F3F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+    position: 'relative',
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#EAE6DF',
+  },
+  favoriteEmblemRedArc: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 14,
+    backgroundColor: '#B81D24',
+  },
+  favoriteEmblemGoldCard: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: '#FCE4A6',
     borderWidth: 1.5,
-    borderColor: '#ECE9C2',
+    borderColor: '#D99B26',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  favoriteLabel: {
+    fontFamily: fonts.body,
+    fontSize: 12.5,
+    lineHeight: 17,
+    color: theme.colors.textPrimary,
+    textAlign: 'center',
+  },
+  utilityModalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 18,
+  },
+  utilityModalSheet: {
+    width: '100%',
+    maxWidth: 480,
+    maxHeight: '82%',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    ...theme.shadows.card,
+  },
+  utilityModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  utilityModalTitle: {
+    fontFamily: fonts.serifBold,
+    fontSize: 18,
+    color: theme.colors.primaryDark,
+  },
+  utilityModalCloseBtn: {
+    padding: 4,
+  },
+  utilityModalSubtitle: {
+    fontFamily: fonts.body,
+    fontSize: 12.5,
+    lineHeight: 18,
+    color: theme.colors.textSecondary,
+    marginBottom: 12,
+  },
+  utilitySearchInputBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#F5F2EB',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    paddingHorizontal: 12,
+    height: 44,
+    marginBottom: 12,
+  },
+  utilitySearchInput: {
+    flex: 1,
+    fontFamily: fonts.body,
+    fontSize: 14,
+    color: theme.colors.textPrimary,
+    paddingVertical: 0,
+  },
+  utilityModalList: {
+    maxHeight: 360,
+  },
+  utilityListRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 11,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+  },
+  utilityListIconCircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#D61F26',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  utilityListIconCircleInactive: {
+    backgroundColor: '#F5EFE6',
+  },
+  utilityListLabel: {
+    flex: 1,
+    fontFamily: fonts.bodySemi,
+    fontSize: 14,
+    color: theme.colors.textPrimary,
+  },
+  utilityEmptyWrap: {
+    paddingVertical: 28,
+    alignItems: 'center',
+  },
+  utilityEmptyText: {
+    fontFamily: fonts.body,
+    fontSize: 13.5,
+    color: theme.colors.textSecondary,
+  },
+  utilityModalFooter: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 14,
+  },
+  utilityCancelBtn: {
+    flex: 1,
+    height: 44,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  utilityCancelBtnText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 14,
+    color: theme.colors.textSecondary,
+  },
+  utilitySaveBtn: {
+    flex: 1.5,
+    height: 44,
+    borderRadius: 10,
+    backgroundColor: theme.colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  utilitySaveBtnText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 14,
+    color: '#FFFFFF',
   },
   flex: {
     flex: 1,
@@ -1297,14 +2066,49 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bodyBold,
     fontSize: 12,
   },
-  consultBannerCard: {
+  consultBannerWrap: {
     marginTop: 18,
+    width: '100%',
+  },
+  consultBannerCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
-    padding: 14,
-    borderWidth: 1.5,
+    overflow: 'hidden',
+    borderWidth: 1,
     borderColor: '#E8D5B5',
     ...theme.shadows.card,
+  },
+  bannerSlideItem: {
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+  },
+  consultBannerImage: {
+    width: '100%',
+    height: undefined,
+    aspectRatio: 1024 / 341,
+  },
+  partnerBannerImage: {
+    width: '100%',
+    height: undefined,
+    aspectRatio: 1024 / 576,
+  },
+  bannerDotsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 8,
+  },
+  bannerDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: '#D6CFC2',
+  },
+  bannerDotActive: {
+    width: 20,
+    backgroundColor: theme.colors.primary,
   },
   upcomingCard: {
     marginTop: 18,

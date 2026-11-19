@@ -8,6 +8,7 @@ import { ToastProvider } from './src/components/ui/Toast';
 import { AppUpdateModal } from './src/components/common/AppUpdateModal';
 import { fontAssets } from './src/constants/fonts';
 import { theme } from './src/constants/theme';
+import { useThemeStore } from './src/stores/useThemeStore';
 
 if (__DEV__) {
   LogBox.ignoreLogs(['Cannot connect to Expo CLI']);
@@ -15,6 +16,12 @@ if (__DEV__) {
 
 export default function App() {
   const [fontsLoaded] = useFonts(fontAssets);
+  const isDark = useThemeStore((s) => s.isDark);
+  const loadTheme = useThemeStore((s) => s.loadTheme);
+
+  React.useEffect(() => {
+    void loadTheme();
+  }, [loadTheme]);
 
   if (!fontsLoaded) {
     return (
@@ -27,7 +34,7 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <ToastProvider>
-        <StatusBar style="dark" />
+        <StatusBar style={isDark ? 'light' : 'dark'} />
         <RootNavigator />
         <AppUpdateModal />
       </ToastProvider>

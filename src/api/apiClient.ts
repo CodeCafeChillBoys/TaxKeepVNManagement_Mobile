@@ -92,7 +92,10 @@ apiClient.interceptors.response.use(
     const beMessage =
       (data && typeof data === 'object' ? data.message || data.title : null) ||
       (typeof data === 'string' ? data : null);
-    const errorCode = data && typeof data === 'object' ? data.errorCode : undefined;
+    const errorCode =
+      data && typeof data === 'object'
+        ? data.errorCode || data.errors?.errorCode
+        : undefined;
     const picked = pickApiErrorMessage(errorCode, typeof beMessage === 'string' ? beMessage : '', '');
     if (picked) {
       error.message = picked;

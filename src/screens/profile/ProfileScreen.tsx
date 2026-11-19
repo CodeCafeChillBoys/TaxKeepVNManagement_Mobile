@@ -7,7 +7,6 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
-  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -17,75 +16,51 @@ import { fonts } from '../../constants/fonts';
 import { profileApi, UserProfileResponse } from '../../api/profileApi';
 import { RootNavigationProp } from '../../navigation/types';
 import { useAuthStore } from '../../stores/useAuthStore';
+import { useThemeStore, DARK_COLORS, LIGHT_COLORS } from '../../stores/useThemeStore';
 import { MainTabBar } from '../../components/navigation/MainTabBar';
 import { DrumHeader } from '../../components/brand/DrumHeader';
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
 import { formatPersonName } from '../../utils/formatPersonName';
-import { Dialog } from '../../components/common/Dialog';
 import { toFriendlyErrorMessage } from '../../utils/friendlyError';
+import { sanitizeProfileAddress } from '../../constants/vietnamProvinces';
 
-const Field = memo(function Field({ label, value }: { label: string; value?: string | null }) {
-  return (
-    <View style={styles.fieldRow}>
-      <Text style={styles.fieldLabel}>{label}</Text>
-      <Text style={styles.fieldValue}>{value || 'Chưa cập nhật'}</Text>
-    </View>
-  );
-});
-
-const LinkRow = memo(function LinkRow({
+const Field = memo(function Field({
   label,
-  onPress,
-  testID,
+  value,
+  isDark,
   last,
 }: {
   label: string;
-  onPress: () => void;
-  testID: string;
+  value?: string | null;
+  isDark?: boolean;
   last?: boolean;
 }) {
+  const palette = isDark ? DARK_COLORS : LIGHT_COLORS;
   return (
-    <TouchableOpacity
-      style={[styles.linkRow, last && styles.linkRowLast]}
-      onPress={onPress}
-      testID={testID}
-      accessibilityRole="button"
+    <View
+      style={[
+        styles.fieldRow,
+        { borderBottomColor: palette.border },
+        last && styles.fieldRowLast,
+      ]}
     >
-      <Text style={styles.linkLabel}>{label}</Text>
-      <Ionicons name="chevron-forward" size={16} color="#999999" />
-    </TouchableOpacity>
+      <Text style={[styles.fieldLabel, { color: palette.textSecondary }]}>{label}</Text>
+      <Text style={[styles.fieldValue, { color: palette.textPrimary }]}>
+        {value || 'Chưa cập nhật'}
+      </Text>
+    </View>
   );
 });
 
 export const ProfileScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
-  const logout = useAuthStore((s) => s.logout);
-  const authUser = useAuthStore((s) => s.user);
+  const isDark = useThemeStore((s) => s.isDark);
+  const palette = isDark ? DARK_COLORS : LIGHT_COLORS;
+
   const [profile, setProfile] = useState<UserProfileResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [showLogoutDialog, setShowLogoutDialog] = useState<boolean>(false);
-
-  const currentRole = (profile?.userRole || authUser?.role || '').toLowerCase();
-  const isExpert = currentRole === 'expert' || currentRole.includes('expert');
-
-  const handleLogout = useCallback(() => {
-    setShowLogoutDialog(true);
-  }, []);
-
-  const handleConfirmLogout = useCallback(async () => {
-    setShowLogoutDialog(false);
-    try {
-      await logout();
-    } catch (e) {
-      if (__DEV__) {
-        console.warn('Logout error:', e);
-      }
-    } finally {
-      navigation.replace('Login');
-    }
-  }, [logout, navigation]);
 
   const fetchProfile = useCallback(async (isPullRefresh = false, isAlive?: () => boolean) => {
     try {
@@ -159,11 +134,16 @@ export const ProfileScreen: React.FC = () => {
 
   if (loading && !refreshing) {
     return (
-      <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
-        <DrumHeader title="Tài khoản" onBack={goBack} />
+      <SafeAreaView
+        style={[styles.safeArea, { backgroundColor: palette.background }]}
+        edges={['top', 'left', 'right']}
+      >
+        <DrumHeader title="Cá nhân" onBack={goBack} />
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={theme.colors.primary} />
-          <Text style={styles.loadingText}>Đang tải hồ sơ...</Text>
+          <ActivityIndicator size="large" color={palette.primary} />
+          <Text style={[styles.loadingText, { color: palette.textSecondary }]}>
+            Đang tải hồ sơ...
+          </Text>
         </View>
         <MainTabBar active="Profile" />
       </SafeAreaView>
@@ -171,9 +151,12 @@ export const ProfileScreen: React.FC = () => {
   }
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+    <SafeAreaView
+      style={[styles.safeArea, { backgroundColor: palette.background }]}
+      edges={['top', 'left', 'right']}
+    >
       <DrumHeader
-        title="Tài khoản"
+        title="Cá nhân"
         onBack={goBack}
         right={
           <TouchableOpacity
@@ -182,7 +165,7 @@ export const ProfileScreen: React.FC = () => {
             accessibilityRole="button"
             accessibilityLabel="Chỉnh sửa hồ sơ"
           >
-            <Text style={styles.editHeaderText}>Sửa</Text>
+            <Text style={[styles.editHeaderText, { color: palette.primary }]}>Sửa</Text>
           </TouchableOpacity>
         }
       />
@@ -195,145 +178,79 @@ export const ProfileScreen: React.FC = () => {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={() => void fetchProfile(true)}
-            colors={[theme.colors.primary]}
+            colors={[palette.primary]}
           />
         }
       >
         <View style={styles.contentWrap}>
-          <Text style={styles.heroName}>{displayName}</Text>
-          <Text style={styles.heroStatus}>
+          <Text style={[styles.heroName, { color: palette.primaryDark }]}>{displayName}</Text>
+          <Text style={[styles.heroStatus, { color: isDark ? palette.gold : '#5A4A22' }]}>
             {profile?.isVerified ? 'Đã xác thực' : 'Chưa xác thực'}
           </Text>
-          {error ? <Text style={styles.warningSubtitle}>{error}</Text> : null}
+          {error ? (
+            <Text style={[styles.warningSubtitle, { color: palette.primary }]}>{error}</Text>
+          ) : null}
           {!profile?.isVerified ? (
-            <Text style={styles.warningSubtitle}>
+            <Text style={[styles.warningSubtitle, { color: palette.primary }]}>
               Một số tính năng sẽ bị hạn chế đến khi tài khoản được xác thực.
             </Text>
           ) : null}
           <GoldDoubleRule style={styles.rule} />
 
-          <Text style={styles.sectionTitle}>Cá nhân</Text>
-          <Field label="Họ và tên" value={displayName} />
-          <Field label="Số căn cước" value={profile?.citizenId} />
-          <Field label="Ngày sinh" value={profile?.dateOfBirth} />
-          <Field label="Địa chỉ" value={profile?.address} />
-
-          <Text style={styles.sectionTitle}>Tài khoản</Text>
-          <Field label="Email" value={profile?.email} />
-          <Field label="Số điện thoại" value={profile?.phoneNumber} />
-          <View style={styles.fieldRow}>
-            <Text style={styles.fieldLabel}>Mã số thuế</Text>
-            {profile?.taxIdNumber ? (
-              <Text style={styles.fieldValue}>{profile.taxIdNumber}</Text>
-            ) : (
-              <TouchableOpacity
-                onPress={() => handleEdit(true)}
-                accessibilityRole="button"
-                accessibilityLabel="Bổ sung mã số thuế"
-              >
-                <Text style={styles.link}>Bổ sung</Text>
-              </TouchableOpacity>
-            )}
+          {/* Thẻ thông tin cá nhân */}
+          <View
+            style={[
+              styles.cardBlock,
+              {
+                backgroundColor: palette.surface,
+                borderColor: palette.border,
+              },
+            ]}
+          >
+            <Field label="Họ và tên:" value={displayName} isDark={isDark} />
+            <Field label="Số căn cước:" value={profile?.citizenId} isDark={isDark} />
+            <Field label="Ngày sinh:" value={profile?.dateOfBirth} isDark={isDark} />
+            <Field
+              label="Địa chỉ:"
+              value={sanitizeProfileAddress(profile?.address, profile?.citizenId)}
+              isDark={isDark}
+            />
+            <Field label="Email:" value={profile?.email} isDark={isDark} />
+            <Field label="Số điện thoại:" value={profile?.phoneNumber} isDark={isDark} />
+            <View style={[styles.fieldRow, styles.fieldRowLast]}>
+              <Text style={[styles.fieldLabel, { color: palette.textSecondary }]}>
+                Mã số thuế:
+              </Text>
+              {profile?.taxIdNumber ? (
+                <Text style={[styles.fieldValue, { color: palette.textPrimary }]}>
+                  {profile.taxIdNumber}
+                </Text>
+              ) : (
+                <TouchableOpacity
+                  onPress={() => handleEdit(true)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Bổ sung mã số thuế"
+                >
+                  <Text style={[styles.link, { color: palette.primary }]}>Bổ sung</Text>
+                </TouchableOpacity>
+              )}
+            </View>
           </View>
 
-          <Text style={styles.sectionTitle}>Tư vấn & Chuyên gia</Text>
-          <LinkRow
-            label="Lịch hẹn tư vấn của tôi"
-            onPress={() => navigation.navigate('MyBookings', {})}
-            testID="quickLinkMyBookings"
-          />
-          {isExpert ? (
-            <>
-              <LinkRow
-                label="Quản lý ca tư vấn (Chuyên gia)"
-                onPress={() => navigation.navigate('ExpertBookings', {})}
-                testID="quickLinkExpertBookings"
-              />
-              <LinkRow
-                label="Ví điện tử TaxKeep"
-                onPress={() => navigation.navigate('Wallet', { walletType: 'EXPERT' })}
-                testID="quickLinkExpertWallet"
-              />
-              <LinkRow
-                label="Lịch làm việc của chuyên gia"
-                onPress={() => navigation.navigate('ExpertSlots')}
-                testID="quickLinkExpertSlots"
-              />
-            </>
-          ) : (
-            <LinkRow
-              label="Ví điện tử TaxKeep"
-              onPress={() => navigation.navigate('Wallet', { walletType: 'USER' })}
-              testID="quickLinkUserWallet"
-            />
-          )}
-          <LinkRow
-            label={isExpert ? 'Hồ sơ chuyên gia thuế' : 'Đăng ký làm chuyên gia thuế'}
-            onPress={() => navigation.navigate('ExpertApplication')}
-            testID="quickLinkExpertApplication"
-          />
-
-          <Text style={styles.sectionTitle}>Liên kết</Text>
-          <LinkRow
-            label="Gói của tôi"
-            onPress={() => navigation.navigate('SubscriptionMy')}
-            testID="quickLinkSubscriptionMy"
-          />
-          <LinkRow
-            label="Đổi mật khẩu"
-            onPress={() => navigation.navigate('ChangePassword')}
-            testID="quickLinkChangePassword"
-          />
-          <LinkRow
-            label="Người phụ thuộc"
-            onPress={() => navigation.navigate('DependentList')}
-            testID="quickLinkDependentList"
-          />
-          <LinkRow
-            label="Nơi chi trả"
-            onPress={() => navigation.navigate('IncomeSourceList')}
-            testID="quickLinkIncomeSource"
-            last
-          />
-
           <TouchableOpacity
-            style={styles.primaryEditBtn}
+            style={[styles.primaryEditBtn, { backgroundColor: palette.primary }]}
             activeOpacity={0.85}
             onPress={() => handleEdit(false)}
             accessibilityRole="button"
-            accessibilityLabel="Chỉnh sửa hồ sơ"
+            accessibilityLabel="Chỉnh sửa hồ sơ cá nhân"
+            testID="profileEditBtn"
           >
-            <Text style={styles.primaryEditBtnText}>Chỉnh sửa hồ sơ</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.logoutBtn}
-            activeOpacity={0.85}
-            onPress={handleLogout}
-            accessibilityRole="button"
-            accessibilityLabel="Đăng xuất"
-            testID="profileLogoutBtn"
-          >
-            <Text style={styles.logoutBtnText}>Đăng xuất</Text>
+            <Ionicons name="create-outline" size={18} color="#FFFFFF" />
+            <Text style={styles.primaryEditBtnText}>Chỉnh sửa hồ sơ cá nhân</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
       <MainTabBar active="Profile" />
-
-      <Dialog
-        visible={showLogoutDialog}
-        title="Đăng xuất khỏi tài khoản?"
-        message="Phiên làm việc trên thiết bị này sẽ kết thúc. Bạn có thể đăng nhập lại bất cứ lúc nào."
-        detailLabel="Tài khoản"
-        detail={displayName}
-        primaryLabel="Đăng xuất"
-        secondaryLabel="Ở lại"
-        destructive
-        onPrimary={handleConfirmLogout}
-        onSecondary={() => setShowLogoutDialog(false)}
-        onRequestClose={() => setShowLogoutDialog(false)}
-        testID="profileLogoutConfirmDialog"
-      />
     </SafeAreaView>
   );
 };
@@ -404,27 +321,28 @@ const styles = StyleSheet.create({
   },
   rule: {
     marginTop: 16,
-    marginBottom: 8,
+    marginBottom: 18,
   },
-  sectionTitle: {
-    fontFamily: fonts.serifBold,
-    fontSize: 18,
-    lineHeight: 24,
-    color: theme.colors.textPrimary,
-    marginTop: 18,
-    marginBottom: 4,
+  cardBlock: {
+    borderRadius: 12,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    ...theme.shadows.card,
   },
   fieldRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: 16,
-    paddingVertical: 11,
+    paddingVertical: 13,
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
   },
+  fieldRowLast: {
+    borderBottomWidth: 0,
+  },
   fieldLabel: {
-    width: 112,
+    width: 118,
     flexShrink: 0,
     fontFamily: fonts.body,
     fontSize: 14,
@@ -446,49 +364,22 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     color: theme.colors.primary,
   },
-  linkRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-  },
-  linkRowLast: {
-    borderBottomWidth: 0,
-  },
-  linkLabel: {
-    flex: 1,
-    fontFamily: fonts.body,
-    fontSize: 15,
-    lineHeight: 22,
-    color: theme.colors.textPrimary,
-  },
   primaryEditBtn: {
-    minHeight: 52,
+    minHeight: 50,
     borderRadius: 10,
     backgroundColor: theme.colors.primary,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 28,
+    gap: 8,
+    marginTop: 22,
     paddingHorizontal: 16,
+    ...theme.shadows.button,
   },
   primaryEditBtnText: {
     fontFamily: fonts.bodyBold,
-    fontSize: 16,
-    lineHeight: 20,
-    color: '#FFFFFF',
-  },
-  logoutBtn: {
-    alignItems: 'center',
-    paddingVertical: 16,
-    cursor: Platform.OS === 'web' ? ('pointer' as any) : undefined,
-  },
-  logoutBtnText: {
-    fontFamily: fonts.bodySemi,
     fontSize: 15,
     lineHeight: 20,
-    color: theme.colors.error,
+    color: '#FFFFFF',
   },
 });

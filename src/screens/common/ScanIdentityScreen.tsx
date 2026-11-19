@@ -802,10 +802,10 @@ export const ScanIdentityScreen: React.FC = () => {
         onSecondary={
           actionDialog?.secondaryLabel
             ? () => {
-                const cb = actionDialog.onSecondary;
-                setActionDialog(null);
-                cb?.();
-              }
+              const cb = actionDialog.onSecondary;
+              setActionDialog(null);
+              cb?.();
+            }
             : undefined
         }
         onPrimary={() => {

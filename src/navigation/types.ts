@@ -8,7 +8,8 @@ export type RootStackParamList = {
   ForgotPassword: { email?: string } | undefined;
   ResetPassword: { token?: string } | undefined;
   Home: { openNotifications?: boolean } | undefined;
-  Profile: { initialTab?: 'personal' | 'settings' } | undefined;
+  Profile: undefined;
+  Settings: undefined;
   EditProfile: { autoFocusTaxId?: boolean; ocrResult?: OcrFormFill } | undefined;
   ScanIdentity: {
     source: ScanIdentitySource;

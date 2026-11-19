@@ -13,12 +13,13 @@ export type TabKey =
   | 'Wallet'
   | 'ExpenseUpload'
   | 'Notifications'
+  | 'Settings'
   | 'Profile'
   | 'DependentList'
   | 'IncomeSourceList';
 
 type SideTabSpec = {
-  key: 'Home' | 'Wallet' | 'Notifications' | 'Profile';
+  key: 'Home' | 'Wallet' | 'Notifications' | 'Settings';
   label: string;
   icon: keyof typeof Ionicons.glyphMap;
   iconActive: keyof typeof Ionicons.glyphMap;
@@ -36,7 +37,7 @@ const RIGHT_TABS: SideTabSpec[] = [
     icon: 'notifications-outline',
     iconActive: 'notifications',
   },
-  { key: 'Profile', label: 'Cài đặt', icon: 'settings-outline', iconActive: 'settings' },
+  { key: 'Settings', label: 'Cài đặt', icon: 'settings-outline', iconActive: 'settings' },
 ];
 
 type Props = {
@@ -78,8 +79,8 @@ export const MainTabBar = React.memo(function MainTabBar({
       navigation.navigate('Wallet', { walletType: isExpert ? 'EXPERT' : 'USER' });
       return;
     }
-    if (key === 'Profile') {
-      navigation.navigate('Profile', { initialTab: 'settings' });
+    if (key === 'Settings') {
+      navigation.navigate('Settings');
     }
   };
 

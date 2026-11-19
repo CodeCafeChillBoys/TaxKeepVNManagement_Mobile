@@ -10,6 +10,7 @@ import { ForgotPasswordScreen } from '../screens/auth/ForgotPasswordScreen';
 import { ResetPasswordScreen } from '../screens/auth/ResetPasswordScreen';
 import { HomeScreen } from '../screens/home/HomeScreen';
 import { ProfileScreen } from '../screens/profile/ProfileScreen';
+import { SettingsScreen } from '../screens/profile/SettingsScreen';
 import { EditProfileScreen } from '../screens/profile/EditProfileScreen';
 import { IncomeSourceListScreen } from '../screens/incomeSource/IncomeSourceListScreen';
 import { IncomeMonthFormScreen } from '../screens/income/IncomeMonthFormScreen';
@@ -76,6 +77,7 @@ const ThemedForgotPasswordScreen = withTheme(ForgotPasswordScreen);
 const ThemedResetPasswordScreen = withTheme(ResetPasswordScreen);
 const ThemedHomeScreen = withTheme(HomeScreen);
 const ThemedProfileScreen = withTheme(ProfileScreen);
+const ThemedSettingsScreen = withTheme(SettingsScreen);
 const ThemedEditProfileScreen = withTheme(EditProfileScreen);
 const ThemedIncomeSourceListScreen = withTheme(IncomeSourceListScreen);
 const ThemedIncomeMonthFormScreen = withTheme(IncomeMonthFormScreen);
@@ -183,6 +185,7 @@ export const RootNavigator: React.FC = () => {
         <Stack.Screen name="ResetPassword" component={ThemedResetPasswordScreen} />
         <Stack.Screen name="Home" component={ThemedHomeScreen} options={tabScreenOptions} />
         <Stack.Screen name="Profile" component={ThemedProfileScreen} options={tabScreenOptions} />
+        <Stack.Screen name="Settings" component={ThemedSettingsScreen} options={tabScreenOptions} />
         <Stack.Screen name="EditProfile" component={ThemedEditProfileScreen} />
         <Stack.Screen name="IncomeSourceList" component={ThemedIncomeSourceListScreen} options={tabScreenOptions} />
         <Stack.Screen name="IncomeMonthForm" component={ThemedIncomeMonthFormScreen} />

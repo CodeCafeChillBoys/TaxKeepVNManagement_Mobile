@@ -167,16 +167,6 @@ export const SubscriptionMyScreen: React.FC = () => {
                 max={quota.maxOcrScansPerMonth}
                 period={monthLabel}
               />
-              <UsageRow
-                label="Số nguồn thu nhập"
-                used={quota.currentIncomeSourcesCount}
-                max={quota.maxIncomeSources}
-              />
-              <UsageRow
-                label="Số người phụ thuộc"
-                used={quota.currentDependentsCount}
-                max={quota.maxDependents}
-              />
 
               <View style={styles.rule} />
               {[

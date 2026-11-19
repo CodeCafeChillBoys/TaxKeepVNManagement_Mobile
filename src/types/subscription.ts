@@ -9,8 +9,6 @@ export interface SubscriptionPlan {
   maxAiQuestionsPerMonth: number;
   chatHistoryRetentionDays: number;
   maxOcrScansPerMonth: number;
-  maxIncomeSources: number;
-  maxDependents: number;
   canExportPdf: boolean;
   canExportZip: boolean;
   bookingDiscountPercent: number;
@@ -45,10 +43,6 @@ export interface SubscriptionQuotaStatus {
   maxAiQuestionsPerMonth: number;
   ocrScansUsed: number;
   maxOcrScansPerMonth: number;
-  maxIncomeSources: number;
-  currentIncomeSourcesCount: number;
-  maxDependents: number;
-  currentDependentsCount: number;
   canExportPdf: boolean;
   canExportZip: boolean;
   bookingDiscountPercent: number;
@@ -139,8 +133,6 @@ export function planBenefits(plan: SubscriptionPlan): PlanBenefit[] {
       included: true,
     },
     { label: 'Quét hóa đơn, chứng từ', value: formatLimit(plan.maxOcrScansPerMonth, 'lượt/tháng'), included: true },
-    { label: 'Số nguồn thu nhập tối đa', value: formatLimit(plan.maxIncomeSources), included: true },
-    { label: 'Số người phụ thuộc tối đa', value: formatLimit(plan.maxDependents), included: true },
     { label: 'Đối soát dữ liệu & luật thuế', value: 'Có', included: true },
     { label: 'Tải tờ khai thuế (Mẫu 02/QTT-TNCN)', value: plan.canExportPdf ? 'Được tải về' : 'Chỉ xem trước', included: plan.canExportPdf },
     { label: 'Tải trọn bộ hồ sơ chứng từ', value: plan.canExportZip ? 'Được tải về' : 'Chưa hỗ trợ', included: plan.canExportZip },

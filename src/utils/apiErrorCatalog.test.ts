@@ -8,8 +8,8 @@ describe('apiErrorCatalog', () => {
   });
 
   it('giữ câu tiếng Việt của BE khi có số liệu cụ thể', () => {
-    const be = 'Gói Standard chỉ hỗ trợ tối đa 3 người phụ thuộc (bạn hiện có 3).';
-    expect(pickApiErrorMessage('DEPENDENT_LIMIT_EXCEEDED', be)).toBe(be);
+    const be = 'Gói Basic chỉ có 5 lượt quét mỗi tháng (bạn đã dùng 5).';
+    expect(pickApiErrorMessage('OCR_QUOTA_EXCEEDED', be)).toBe(be);
   });
 
   it('không hiện nguyên mã khi BE không gửi câu tiếng Việt', () => {

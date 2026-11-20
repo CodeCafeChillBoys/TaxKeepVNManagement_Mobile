@@ -107,6 +107,7 @@ export type RootStackParamList = {
   BookingCreate: { expertProfileId: string; initialSlotId?: string; specializationId?: number };
   MyBookings: { initialStatus?: string } | undefined;
   BookingDetail: { bookingId: string; isExpertView?: boolean; autoPay?: boolean };
+  ConsultationChat: { bookingId: string };
   ExpertBookings: { initialTab?: 'pending' | 'all' } | undefined;
   ExpertSlots: undefined;
   ExpertApplication: undefined;

@@ -2110,6 +2110,19 @@ export const BookingDetailScreen: React.FC = () => {
                 )}
               </TouchableOpacity>
 
+              <TouchableOpacity
+                style={styles.dossierBtn}
+                onPress={() => navigation.navigate('ConsultationChat', { bookingId })}
+                accessibilityRole="button"
+                accessibilityLabel={isExpertView ? 'Nhắn tin với khách hàng' : 'Nhắn tin với chuyên gia'}
+                testID="bookingDetailChatBtn"
+              >
+                <Ionicons name="chatbubbles-outline" size={16} color={theme.colors.primary} />
+                <Text style={styles.dossierBtnText}>
+                  {isExpertView ? 'Nhắn tin với khách hàng' : 'Nhắn tin với chuyên gia'}
+                </Text>
+              </TouchableOpacity>
+
               <View style={styles.consultationSubBtnRow}>
                 <TouchableOpacity
                   style={styles.dossierBtn}
@@ -2170,6 +2183,16 @@ export const BookingDetailScreen: React.FC = () => {
               <TouchableOpacity style={styles.dossierBtn} onPress={handleOpenDossier}>
                 <Ionicons name="folder-open-outline" size={16} color={theme.colors.primary} />
                 <Text style={styles.dossierBtnText}>Xem lại hồ sơ thuế chia sẻ</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.dossierBtn}
+                onPress={() => navigation.navigate('ConsultationChat', { bookingId })}
+                accessibilityRole="button"
+                accessibilityLabel="Xem lại tin nhắn"
+                testID="bookingDetailChatHistoryBtn"
+              >
+                <Ionicons name="chatbubbles-outline" size={16} color={theme.colors.primary} />
+                <Text style={styles.dossierBtnText}>Xem lại tin nhắn</Text>
               </TouchableOpacity>
 
               {/* Nút gửi đánh giá nếu chưa đánh giá & là khách hàng */}

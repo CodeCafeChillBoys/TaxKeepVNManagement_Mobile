@@ -41,6 +41,7 @@ import { ExpertDetailScreen } from '../screens/consultation/ExpertDetailScreen';
 import { BookingCreateScreen } from '../screens/consultation/BookingCreateScreen';
 import { MyBookingsScreen } from '../screens/consultation/MyBookingsScreen';
 import { BookingDetailScreen } from '../screens/consultation/BookingDetailScreen';
+import { ConsultationChatScreen } from '../screens/consultation/ConsultationChatScreen';
 import { ExpertBookingsScreen } from '../screens/consultation/ExpertBookingsScreen';
 import { ExpertSlotsScreen } from '../screens/consultation/ExpertSlotsScreen';
 import { ExpertApplicationScreen } from '../screens/consultation/ExpertApplicationScreen';
@@ -108,6 +109,7 @@ const ThemedExpertDetailScreen = withTheme(ExpertDetailScreen);
 const ThemedBookingCreateScreen = withTheme(BookingCreateScreen);
 const ThemedMyBookingsScreen = withTheme(MyBookingsScreen);
 const ThemedBookingDetailScreen = withTheme(BookingDetailScreen);
+const ThemedConsultationChatScreen = withTheme(ConsultationChatScreen);
 const ThemedExpertBookingsScreen = withTheme(ExpertBookingsScreen);
 const ThemedExpertSlotsScreen = withTheme(ExpertSlotsScreen);
 const ThemedExpertApplicationScreen = withTheme(ExpertApplicationScreen);
@@ -216,6 +218,7 @@ export const RootNavigator: React.FC = () => {
         <Stack.Screen name="BookingCreate" component={ThemedBookingCreateScreen} />
         <Stack.Screen name="MyBookings" component={ThemedMyBookingsScreen} />
         <Stack.Screen name="BookingDetail" component={ThemedBookingDetailScreen} />
+        <Stack.Screen name="ConsultationChat" component={ThemedConsultationChatScreen} />
         <Stack.Screen name="ExpertBookings" component={ThemedExpertBookingsScreen} />
         <Stack.Screen name="ExpertSlots" component={ThemedExpertSlotsScreen} />
         <Stack.Screen name="ExpertApplication" component={ThemedExpertApplicationScreen} />

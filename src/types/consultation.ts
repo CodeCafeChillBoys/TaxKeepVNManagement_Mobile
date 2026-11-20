@@ -923,6 +923,60 @@ export interface UpcomingMeetingReminderDto {
 }
 
 // ══════════════════════════════════════════════════════════════════
+// CHAT 1-1 TRONG CA TƯ VẤN (ConsultationChatController)
+// ══════════════════════════════════════════════════════════════════
+
+export interface ConsultationMessageDto {
+  id: string;
+  bookingId: string;
+  senderId: string;
+  senderRole: string;
+  senderName: string;
+  senderAvatarUrl?: string | null;
+  content: string;
+  attachmentUrl?: string | null;
+  attachmentType?: string | null;
+  isRead: boolean;
+  createdAt: string;
+  isMine: boolean;
+}
+
+export interface ConsultationChatPartnerDto {
+  userId: string;
+  fullName: string;
+  avatarUrl?: string | null;
+  role: string;
+  jobTitle?: string | null;
+  specializationName?: string | null;
+}
+
+export interface ConsultationChatHistoryResponse {
+  bookingId: string;
+  bookingCode: string;
+  topicTitle: string;
+  sessionType: string;
+  bookingStatus: string;
+  roomUrl?: string | null;
+  partner: ConsultationChatPartnerDto;
+  messages: PagedResult<ConsultationMessageDto>;
+}
+
+export interface UserTypingEvent {
+  bookingId: string;
+  userId: string;
+  role: string;
+  isTyping: boolean;
+}
+
+/** SignalR "MessagesRead": readerId vừa đọc các tin messageIds của bên kia */
+export interface MessagesReadEvent {
+  bookingId: string;
+  readerId: string;
+  messageIds: string[];
+  readAt: string;
+}
+
+// ══════════════════════════════════════════════════════════════════
 // QUẢN LÝ KHUNG GIỜ LÀM VIỆC CỦA CHUYÊN GIA (EXPERT SLOTS CRUD)
 // ══════════════════════════════════════════════════════════════════
 

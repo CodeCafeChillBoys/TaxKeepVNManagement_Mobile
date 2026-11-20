@@ -41,6 +41,8 @@ import type {
   DisputeDetailResponse,
   DisputeEligibilityResponse,
   ExpertRespondDisputeRequest,
+  ConsultationChatHistoryResponse,
+  ConsultationMessageDto,
 } from '../types/consultation';
 
 function unwrap<T>(res: { data: ApiResponse<T> }, fallbackMsg: string): T {
@@ -704,6 +706,44 @@ export const consultationApi = {
       '/api/v1/consultations/upcoming-reminder'
     );
     return unwrap(res, 'Không thể tải thông tin nhắc nhở lịch hẹn.');
+  },
+
+  // ══════════════════════════════════════════════════════════════════
+  // CHAT 1-1 TRONG CA TƯ VẤN
+  // ══════════════════════════════════════════════════════════════════
+
+  /**
+   * Lịch sử chat + thông tin người bên kia (mới nhất trước khi sort=-createdAt)
+   * GET /api/v1/consultations/{bookingId}/messages
+   */
+  async getChatHistory(bookingId: string, page = 1, size = 50): Promise<ConsultationChatHistoryResponse> {
+    const res = await apiClient.get<ApiResponse<ConsultationChatHistoryResponse>>(
+      `/api/v1/consultations/${bookingId}/messages?sort=-createdAt&page=${page}&size=${size}`
+    );
+    return unwrap(res, 'Không thể tải lịch sử tin nhắn.');
+  },
+
+  /**
+   * Gửi tin nhắn
+   * POST /api/v1/consultations/{bookingId}/messages
+   */
+  async sendChatMessage(bookingId: string, content: string): Promise<ConsultationMessageDto> {
+    const res = await apiClient.post<ApiResponse<ConsultationMessageDto>>(
+      `/api/v1/consultations/${bookingId}/messages`,
+      { content }
+    );
+    return unwrap(res, 'Không thể gửi tin nhắn.');
+  },
+
+  /**
+   * Đánh dấu đã đọc toàn bộ tin của bên kia
+   * PATCH /api/v1/consultations/{bookingId}/messages/read-status
+   */
+  async markChatRead(bookingId: string): Promise<void> {
+    const res = await apiClient.patch<ApiResponse<boolean>>(
+      `/api/v1/consultations/${bookingId}/messages/read-status`
+    );
+    unwrapVoid(res, 'Không thể cập nhật trạng thái đã đọc.');
   },
 
   // ══════════════════════════════════════════════════════════════════

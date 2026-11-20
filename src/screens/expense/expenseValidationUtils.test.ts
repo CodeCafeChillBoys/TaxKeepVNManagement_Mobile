@@ -4,9 +4,20 @@ import {
   validateCrucialFields,
   getValidationMatrixErrorDetails,
   parseBackendError,
+  toPercent,
 } from './expenseValidationUtils';
 
 describe('expenseValidationUtils', () => {
+  describe('toPercent', () => {
+    it('làm tròn và chặn trong 0..100', () => {
+      expect(toPercent(0.974)).toBe(97);
+      expect(toPercent(0.85)).toBe(85);
+      expect(toPercent(1.2)).toBe(100);
+      expect(toPercent(-0.1)).toBe(0);
+      expect(toPercent(NaN)).toBe(0);
+    });
+  });
+
   describe('formatCurrencyVND', () => {
     it('formats numeric values with Vietnamese Dong symbol', () => {
       expect(formatCurrencyVND(1250000)).toBe('1.250.000 ₫');

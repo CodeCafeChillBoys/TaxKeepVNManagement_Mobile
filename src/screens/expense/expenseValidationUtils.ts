@@ -6,6 +6,12 @@ import {
 } from '../../types/expense';
 import { sanitizeUiMessage, toFriendlyError } from '../../utils/friendlyError';
 
+/** Tỷ lệ 0..1 → phần trăm làm tròn, chặn trong 0..100 (giá trị lỗi coi như 0) */
+export function toPercent(ratio: number): number {
+  const v = Math.round(Number(ratio) * 100);
+  return Number.isFinite(v) ? Math.min(100, Math.max(0, v)) : 0;
+}
+
 /** Danh sách 4 trường cốt lõi theo mục 6.3 của đặc tả */
 export const CRUCIAL_FIELD_NAMES = [
   'total_amount',

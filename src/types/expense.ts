@@ -261,6 +261,11 @@ export interface DocumentReviewResponse {
   isIdentityValid?: boolean | null;
   validationErrors?: string[];
   isNotReimbursed?: boolean | null;
+  /** Điểm tin cậy OCR tổng thể 0..1 do AI trả về (null với chứng từ cũ chưa có điểm) */
+  overallConfidence?: number | null;
+  /** Ngưỡng Admin áp dụng lúc trích xuất 0..1 */
+  appliedThreshold?: number | null;
+  isPassedThreshold?: boolean | null;
   totalIncome?: number | null;
   taxWithheld?: number | null;
   insuranceDeducted?: number | null;

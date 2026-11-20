@@ -56,8 +56,11 @@ export function mapDocumentReviewToOcrResult(
     }
   }
 
-  const overallConfidence = 0.95;
-  const isPassedThreshold = overallConfidence >= appliedThreshold;
+  // Ưu tiên ngưỡng BE đã áp dụng lúc trích xuất; không có điểm AI thì để undefined, không tự bịa điểm
+  if (doc.appliedThreshold != null) appliedThreshold = Number(doc.appliedThreshold);
+  const overallConfidence = doc.overallConfidence != null ? Number(doc.overallConfidence) : undefined;
+  const isPassedThreshold =
+    doc.isPassedThreshold ?? (overallConfidence !== undefined ? overallConfidence >= appliedThreshold : true);
 
   return {
     id: doc.id,
@@ -104,7 +107,7 @@ export function mapDocumentReviewToOcrResult(
     hasCrucialLowConfidence: false,
     fields: [],
     qualityEvaluation: {
-      qualityScore: 0.95,
+      qualityScore: overallConfidence ?? 0,
       requiredThreshold: 0.75,
       qualityIssues: [],
       isPassedQuality: true,

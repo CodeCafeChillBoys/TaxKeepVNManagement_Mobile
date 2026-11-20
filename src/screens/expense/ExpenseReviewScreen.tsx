@@ -25,6 +25,7 @@ import {
   calculateItemsTotal,
   validateCrucialFields,
   getValidationMatrixErrorDetails,
+  toPercent,
 } from './expenseValidationUtils';
 import { expenseApi } from '../../api/expenseApi';
 import { useExpenseStore } from '../../stores/useExpenseStore';
@@ -273,13 +274,22 @@ export const ExpenseReviewScreen: React.FC = () => {
     return getCrucialFieldsForCategory(currentDocTypeCode);
   }, [getCrucialFieldsForCategory, currentDocTypeCode, systemConfigs, isWithholding]);
 
-  const effectiveConfidence = initialData.overallConfidence !== undefined ? initialData.overallConfidence : 0.95;
+  // Điểm thật do AI trả về; chứng từ cũ chưa có điểm thì để trống, không gán số mặc định
+  const effectiveConfidence: number | undefined =
+    initialData.overallConfidence != null ? Number(initialData.overallConfidence) : undefined;
+  // Ngưỡng BE đã áp dụng lúc trích xuất; chưa có thì dùng ngưỡng Admin hiện hành
+  const effectiveThreshold: number =
+    initialData.appliedThreshold != null ? Number(initialData.appliedThreshold) : dynamicThreshold;
 
   const crucialCheck = useMemo(() => {
     return validateCrucialFields(initialData.fields || [], dynamicThreshold, effectiveCrucialFields);
   }, [initialData.fields, dynamicThreshold, effectiveCrucialFields]);
 
-  const isPassedThreshold = effectiveConfidence >= dynamicThreshold && !crucialCheck.hasCrucialLowConfidence;
+  const isPassedThreshold =
+    (effectiveConfidence === undefined || effectiveConfidence >= effectiveThreshold) &&
+    !crucialCheck.hasCrucialLowConfidence;
+  const confidencePct = effectiveConfidence !== undefined ? toPercent(effectiveConfidence) : null;
+  const thresholdPct = toPercent(effectiveThreshold);
 
   // Ánh xạ nhãn tiếng Việt cho các trường cốt lõi
   const CRUCIAL_FIELD_LABELS: Record<string, string> = {
@@ -710,7 +720,7 @@ export const ExpenseReviewScreen: React.FC = () => {
         insuranceDeducted: isWithholding ? (parseMoney(insuranceDeductedStr) ?? 0) : undefined,
         items: isWithholding ? [] : items,
         isNotReimbursed: isWithholding ? true : isNotReimbursed,
-        appliedThreshold: dynamicThreshold,
+        appliedThreshold: effectiveThreshold,
         overallConfidence: effectiveConfidence,
         isPassedThreshold: isPassedThreshold,
         crossCheckResult: crossCheckResult || null,
@@ -1001,14 +1011,32 @@ export const ExpenseReviewScreen: React.FC = () => {
                   {isPassedThreshold ? 'Đạt yêu cầu' : 'Cần xem lại'}
                 </Badge>
               </View>
-              <View style={styles.confidenceBar}>
-                <View style={[styles.confidenceFill, {
-                  width: `${Math.min(100, Math.round(effectiveConfidence * 100))}%`,
-                  backgroundColor: isPassedThreshold ? '#16A34A' : '#D97706',
-                }]} />
+              <View style={styles.confidenceBarWrap}>
+                <View style={styles.confidenceBar}>
+                  {confidencePct !== null ? (
+                    <View style={[styles.confidenceFill, {
+                      width: `${confidencePct}%`,
+                      backgroundColor: isPassedThreshold ? '#16A34A' : '#D97706',
+                    }]} />
+                  ) : null}
+                </View>
+                {/* Vạch mốc ngưỡng Admin */}
+                <View
+                  style={[styles.thresholdMarker, { left: `${thresholdPct}%` }]}
+                  accessibilityLabel={`Ngưỡng yêu cầu ${thresholdPct}%`}
+                />
               </View>
-              <Text style={styles.confidencePct}>
-                {Math.round(effectiveConfidence * 100)}% {isPassedThreshold ? '(Đạt tiêu chuẩn đối soát)' : '(Cần kiểm tra lại)'}
+              <Text style={styles.confidenceLine} testID="expenseConfidenceLine">
+                {confidencePct !== null
+                  ? `Độ tin cậy trích xuất: ${confidencePct}% (Yêu cầu hệ thống: ≥ ${thresholdPct}%)`
+                  : `Chưa có điểm tin cậy từ AI cho chứng từ này (Yêu cầu hệ thống: ≥ ${thresholdPct}%)`}
+              </Text>
+              <Text style={[styles.confidencePct, { color: isPassedThreshold ? '#15803D' : '#B45309' }]}>
+                {confidencePct === null
+                  ? 'Vui lòng tự kiểm tra lại các trường thông tin bên dưới'
+                  : isPassedThreshold
+                    ? 'Đạt tiêu chuẩn đối soát tự động'
+                    : 'Dưới ngưỡng yêu cầu – cần kiểm tra lại'}
               </Text>
 
               {/* Các điểm kiểm tra trường cốt lõi */}
@@ -1841,8 +1869,11 @@ const styles = StyleSheet.create({
   },
   imageErrorText: { fontSize: 12, color: '#64748B' },
   // Confidence
-  confidenceBar: { height: 6, backgroundColor: '#F1F5F9', borderRadius: 3, overflow: 'hidden', marginBottom: 4 },
+  confidenceBarWrap: { position: 'relative', justifyContent: 'center', marginBottom: 6 },
+  confidenceBar: { height: 6, backgroundColor: '#F1F5F9', borderRadius: 3, overflow: 'hidden' },
   confidenceFill: { height: '100%', borderRadius: 3 },
+  thresholdMarker: { position: 'absolute', top: -3, width: 2, height: 12, marginLeft: -1, backgroundColor: '#1E293B', borderRadius: 1 },
+  confidenceLine: { fontSize: 12, color: '#334155', marginBottom: 2 },
   confidencePct: { fontSize: 11, color: '#64748B', marginBottom: 10 },
   checkGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   checkItem: { flexDirection: 'row', alignItems: 'center', gap: 4, width: '47%' },

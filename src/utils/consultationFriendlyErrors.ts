@@ -441,6 +441,19 @@ export function formatCertVerificationNote(note?: string | null, status?: string
 }
 
 /**
+ * Lấy điểm tin cậy và ngưỡng AI từ ghi chú thẩm định chứng chỉ.
+ * shortcut: BE chỉ ghi số vào câu verificationNote ("Độ tin cậy: 92%", "Độ tin cậy trích xuất (72%) không đạt ngưỡng 80%"),
+ * đổi sang đọc field số khi CertificateResponseDto có overallConfidence/appliedThreshold.
+ */
+export function formatCertConfidence(note?: string | null): string | null {
+  if (!note) return null;
+  const conf = note.match(/độ tin cậy[^\d]{0,20}(\d{1,3})\s*%/i);
+  if (!conf) return null;
+  const thr = note.match(/ngưỡng\s*(\d{1,3})\s*%/i);
+  return thr ? `${conf[1]}% (yêu cầu ≥ ${thr[1]}%)` : `${conf[1]}%`;
+}
+
+/**
  * Định dạng số nguyên thành chuỗi có dấu chấm phân cách hàng nghìn (VD: 200000 -> "200.000")
  */
 export function formatThousands(value?: string | number | null): string {

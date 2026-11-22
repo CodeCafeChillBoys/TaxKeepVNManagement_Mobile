@@ -29,6 +29,7 @@ import { useAuthStore } from '../../stores/useAuthStore';
 import {
   toFriendlyConsultationError,
   formatCertVerificationNote,
+  formatCertConfidence,
   formatThousands,
   parseThousands,
   formatVndWithDots,
@@ -719,9 +720,10 @@ export const ExpertApplicationScreen: React.FC = () => {
       if (finalCert) {
         if (finalCert.verificationStatus === 'Verified') {
           const friendlyNote = formatCertVerificationNote(finalCert.verificationNote, finalCert.verificationStatus);
+          const confidence = formatCertConfidence(finalCert.verificationNote);
           setDialog({
             title: 'Thẩm định thành công',
-            message: `Chứng chỉ "${finalCert.certificateName}" đã được hệ thống AI OCR thẩm định và xác thực hợp lệ!\n\n${friendlyNote || 'Thông tin văn bằng đã khớp với tài khoản chuyên gia.'}`,
+            message: `Chứng chỉ "${finalCert.certificateName}" đã được hệ thống AI OCR thẩm định và xác thực hợp lệ!\n\n${friendlyNote || 'Thông tin văn bằng đã khớp với tài khoản chuyên gia.'}${confidence ? `\nĐộ tin cậy trích xuất: ${confidence}.` : ''}`,
             primaryLabel: 'Đã hiểu',
             onPrimary: () => setDialog(null),
           });
@@ -1576,6 +1578,15 @@ export const ExpertApplicationScreen: React.FC = () => {
                       </Text>
                     </View>
                   </View>
+
+                  {formatCertConfidence(selectedCertForDetail.verificationNote) && (
+                    <View style={styles.certDetailRow}>
+                      <Text style={styles.certDetailLabel}>Độ tin cậy AI</Text>
+                      <Text style={styles.certDetailValueBold}>
+                        {formatCertConfidence(selectedCertForDetail.verificationNote)}
+                      </Text>
+                    </View>
+                  )}
 
                   {selectedCertForDetail.verificationNote && (
                     <View

@@ -222,6 +222,11 @@ export const SettlementPreviewScreen: React.FC = () => {
             <Text style={styles.sheetDesc}>
               Sau khi chốt, số liệu kỳ tính thuế được lưu cố định để xuất tờ khai 02/QTT-TNCN và bộ chứng từ đính kèm.
             </Text>
+            {preview?.warnings?.length ? (
+              <Text style={[styles.sheetDesc, { color: '#92400E' }]}>
+                Còn {preview.warnings.length} cảnh báo chưa xử lý. Các khoản trong cảnh báo sẽ không được tính giảm trừ nếu chốt ngay.
+              </Text>
+            ) : null}
             {hero ? (
               <>
                 <Text style={styles.sheetLabel}>{hero.label}</Text>

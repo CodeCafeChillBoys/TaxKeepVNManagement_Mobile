@@ -25,6 +25,7 @@ import { ScanIdentityScreen } from '../screens/common/ScanIdentityScreen';
 import { ExpenseListScreen } from '../screens/expense/ExpenseListScreen';
 import { ExpenseUploadScreen } from '../screens/expense/ExpenseUploadScreen';
 import { ExpenseReviewScreen } from '../screens/expense/ExpenseReviewScreen';
+import { MedicalStatementScreen } from '../screens/expense/MedicalStatementScreen';
 import { SettlementStartScreen } from '../screens/settlement/SettlementStartScreen';
 import { SettlementPreviewScreen } from '../screens/settlement/SettlementPreviewScreen';
 import { SettlementSuccessScreen } from '../screens/settlement/SettlementSuccessScreen';
@@ -93,6 +94,7 @@ const ThemedScanIdentityScreen = withTheme(ScanIdentityScreen);
 const ThemedExpenseListScreen = withTheme(ExpenseListScreen);
 const ThemedExpenseUploadScreen = withTheme(ExpenseUploadScreen);
 const ThemedExpenseReviewScreen = withTheme(ExpenseReviewScreen);
+const ThemedMedicalStatementScreen = withTheme(MedicalStatementScreen);
 const ThemedTaxChatScreen = withTheme(TaxChatScreen);
 const ThemedTaxChatHistoryScreen = withTheme(TaxChatHistoryScreen);
 const ThemedSettlementStartScreen = withTheme(SettlementStartScreen);
@@ -202,6 +204,7 @@ export const RootNavigator: React.FC = () => {
         <Stack.Screen name="ExpenseList" component={ThemedExpenseListScreen} />
         <Stack.Screen name="ExpenseUpload" component={ThemedExpenseUploadScreen} />
         <Stack.Screen name="ExpenseReview" component={ThemedExpenseReviewScreen} />
+        <Stack.Screen name="MedicalStatement" component={ThemedMedicalStatementScreen} />
         <Stack.Screen name="TaxChat" component={ThemedTaxChatScreen} />
         <Stack.Screen name="TaxChatHistory" component={ThemedTaxChatHistoryScreen} />
         <Stack.Screen name="SettlementStart" component={ThemedSettlementStartScreen} />

@@ -65,6 +65,8 @@ export type RootStackParamList = {
     isReadOnly?: boolean;
     crossCheckResult?: import('../api/incomeSourceApi').IncomeSourceCrossCheckResult | null;
   };
+  /** Tải và xem bảng kê chi phí KCB của một hóa đơn viện phí */
+  MedicalStatement: { periodId: string; documentId: string; readOnly?: boolean };
   /** Chat tư vấn thuế AI. Không sessionId = phiên mới; nonce để nạp lại khi mở từ Lịch sử */
   TaxChat: { sessionId?: string; nonce?: number } | undefined;
   TaxChatHistory: undefined;

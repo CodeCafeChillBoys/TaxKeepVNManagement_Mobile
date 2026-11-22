@@ -270,9 +270,56 @@ export interface DocumentReviewResponse {
   taxWithheld?: number | null;
   insuranceDeducted?: number | null;
   crossCheckResult?: import('../api/incomeSourceApi').IncomeSourceCrossCheckResult | null;
+  /** Bảng kê chi phí KCB (Mẫu 01/KBCB) gắn với hóa đơn viện phí, null nếu chưa tải */
+  medicalStatement?: MedicalStatement | null;
   status: 'UPLOADED' | 'EXTRACTED' | 'CONFIRMED' | 'FAILED' | string;
   createdAt: string;
   items: DocumentItemResponse[];
+}
+
+/** Một dòng chi phí trên bảng kê KCB, BE đã phân loại được/không được giảm trừ */
+export interface MedicalStatementLine {
+  id: number;
+  lineOrder: number;
+  sectionCode?: string | null;
+  sectionName?: string | null;
+  itemName: string;
+  unit?: string | null;
+  quantity: number;
+  unitPrice: number;
+  totalAmount: number;
+  insurancePaid: number;
+  patientCoPay: number;
+  patientSelfPay: number;
+  deductionStatus: 'ELIGIBLE' | 'EXCLUDED' | string;
+  isEligibleDeduction: boolean;
+  deductionReason?: string | null;
+  eligibleAmount: number;
+}
+
+export type MedicalStatementStatus = 'UPLOADED' | 'EXTRACTED' | 'FAILED' | 'CONFIRMED';
+
+export interface MedicalStatement {
+  id: string;
+  documentId: string;
+  fileUrl: string;
+  originalFilename?: string | null;
+  statementNumber?: string | null;
+  patientName?: string | null;
+  hospitalName?: string | null;
+  admissionDate?: string | null;
+  dischargeDate?: string | null;
+  totalHospitalAmount?: number | null;
+  insurancePaidAmount?: number | null;
+  patientPaidAmount?: number | null;
+  patientSelfPayAmount?: number | null;
+  totalEligibleAmount?: number | null;
+  overallConfidence?: number | null;
+  appliedThreshold?: number | null;
+  isPassedThreshold?: boolean | null;
+  status: MedicalStatementStatus | string;
+  validationErrors: string[];
+  lines: MedicalStatementLine[];
 }
 
 export interface PagedResult<T> {

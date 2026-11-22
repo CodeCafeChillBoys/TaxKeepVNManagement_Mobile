@@ -13,13 +13,14 @@ import {
   KeyboardAvoidingView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import { useNavigation, useRoute, RouteProp, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { HeaderMotif } from '../../components/common/HeaderMotif';
 import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
-import { ExpenseOcrResult, InvoiceLineItem, ValidationErrorItem } from '../../types/expense';
+import { ExpenseOcrResult, InvoiceLineItem, MedicalStatement, ValidationErrorItem } from '../../types/expense';
+import { isMedicalReceipt, getStatementStatusMeta } from './medicalStatementUtils';
 import {
   formatCurrencyVND,
   calculateItemsTotal,
@@ -144,6 +145,19 @@ export const ExpenseReviewScreen: React.FC = () => {
       });
     }
   }, [periodIdParam, initialData.documentId]);
+
+  // Bảng kê KCB của hóa đơn viện phí: tải lại mỗi khi quay về từ màn hình bảng kê
+  const isMedical = isMedicalReceipt(currentDocTypeCode);
+  const [medicalStatement, setMedicalStatement] = useState<MedicalStatement | null | undefined>(undefined);
+  useFocusEffect(
+    useCallback(() => {
+      if (!isMedical || !periodIdParam || !initialData.documentId) return;
+      expenseApi
+        .getDocumentById(periodIdParam, initialData.documentId)
+        .then((doc) => setMedicalStatement(doc.medicalStatement ?? null))
+        .catch(() => setMedicalStatement(undefined));
+    }, [isMedical, periodIdParam, initialData.documentId])
+  );
 
   const groupKey = getGroupKeyFromDocTypeCode(currentDocTypeCode);
   const groupMeta = getGroupMetadata(groupKey);
@@ -1001,6 +1015,37 @@ export const ExpenseReviewScreen: React.FC = () => {
                 </View>
               </Card>
             ) : null}
+
+            {/* Bảng kê chi phí KCB đi kèm hóa đơn viện phí */}
+            {isMedical && periodIdParam && initialData.documentId && medicalStatement !== undefined && (
+              <TouchableOpacity
+                activeOpacity={0.7}
+                onPress={() =>
+                  navigation.navigate('MedicalStatement', {
+                    periodId: periodIdParam,
+                    documentId: initialData.documentId!,
+                    readOnly: isRouteReadOnly,
+                  })
+                }
+              >
+                <Card style={[styles.card, !medicalStatement && styles.cardWarning]}>
+                  <View style={styles.cardHeaderRow}>
+                    <View style={styles.cardHeaderLeft}>
+                      <Ionicons name="document-text-outline" size={15} color="#475569" />
+                      <Text style={styles.cardHeaderTitle} numberOfLines={1}>Bảng kê chi phí KCB</Text>
+                    </View>
+                    <Badge variant={getStatementStatusMeta(medicalStatement?.status).variant}>
+                      {getStatementStatusMeta(medicalStatement?.status).label}
+                    </Badge>
+                  </View>
+                  <Text style={{ fontSize: 13, color: '#475569', lineHeight: 19 }}>
+                    {medicalStatement
+                      ? `Được giảm trừ: ${formatCurrencyVND(medicalStatement.totalEligibleAmount ?? 0)}. Bấm để xem chi tiết.`
+                      : 'Chưa có bảng kê nên khoản viện phí này chưa được tính giảm trừ. Bấm để tải bảng kê.'}
+                  </Text>
+                </Card>
+              </TouchableOpacity>
+            )}
 
             {/* Đánh giá mức độ tin cậy AI */}
             <Card style={styles.card}>

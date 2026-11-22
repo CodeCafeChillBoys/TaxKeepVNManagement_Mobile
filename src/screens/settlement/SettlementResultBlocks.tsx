@@ -70,6 +70,23 @@ export const SettlementResultBlocks = React.memo(function SettlementResultBlocks
       </Text>
       {cleanSummary ? <Text style={styles.summaryMsg}>{cleanSummary}</Text> : null}
 
+      {preview.warnings?.length ? (
+        <View style={styles.warnBox} accessibilityRole="alert">
+          <View style={styles.warnHead}>
+            <Ionicons name="warning-outline" size={16} color="#92400E" />
+            <Text style={styles.warnTitle}>Cần xử lý trước khi chốt ({preview.warnings.length})</Text>
+          </View>
+          {preview.warnings.map((w, i) => (
+            <Text key={i} style={styles.warnLine}>• {sanitizeUiMessage(w)}</Text>
+          ))}
+          {!locked && onOpenCharityVouchers ? (
+            <TouchableOpacity onPress={onOpenCharityVouchers} accessibilityRole="button">
+              <Text style={styles.warnLink}>Mở danh sách chứng từ để bổ sung bảng kê →</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      ) : null}
+
       <GoldDoubleRule style={styles.rule} />
 
       {SECTIONS.map((sec, idx) => {
@@ -557,6 +574,18 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   rule: { marginTop: 16, marginBottom: 4 },
+  warnBox: {
+    marginTop: 14,
+    padding: 12,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#FCD34D',
+    backgroundColor: '#FFFBEB',
+  },
+  warnHead: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 },
+  warnTitle: { fontFamily: fonts.body, fontSize: 13, fontWeight: '700', color: '#92400E', flexShrink: 1 },
+  warnLine: { fontFamily: fonts.body, fontSize: 13, lineHeight: 19, color: '#78350F', marginBottom: 4 },
+  warnLink: { fontFamily: fonts.body, fontSize: 13, fontWeight: '700', color: theme.colors.primary, marginTop: 4 },
   section: { borderBottomWidth: 1, borderBottomColor: theme.colors.border },
   sectionHead: {
     flexDirection: 'row',

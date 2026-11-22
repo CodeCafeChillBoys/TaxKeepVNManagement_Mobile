@@ -72,6 +72,8 @@ export interface TaxSettlementPreview {
   refundAmount: number;
   dueAmount: number;
   summaryMessage: string;
+  /** Cảnh báo từ BE, vd hóa đơn y tế thiếu/sai bảng kê nên chưa được tính giảm trừ */
+  warnings?: string[];
   status: string;
 }
 

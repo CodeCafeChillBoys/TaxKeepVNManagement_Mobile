@@ -200,7 +200,11 @@ export const DependentListScreen: React.FC = () => {
       setIsDetailModalVisible(true);
       setDetailLoading(true);
       try {
-        const detail = await dependentDocumentApi.getDependentById(depId);
+        // getRules nạp tên giấy tờ (docName) từ DB để nhãn tài liệu đã nộp không hiện mã thô
+        const [detail] = await Promise.all([
+          dependentDocumentApi.getDependentById(depId),
+          dependentDocumentApi.getRules(),
+        ]);
         if (!isMountedRef.current) return;
         setSelectedDetail(detail);
       } catch (err: unknown) {

@@ -3,6 +3,8 @@
  * Grill Q1–Q12 (2026-09-20).
  */
 
+import { groupCodeToIndex, humanizeGroupCodes } from './dependentGroupUtils';
+
 export type RelationshipCode = 'CHILD' | 'SPOUSE' | 'PARENT' | 'OTHER_DEPENDENT';
 
 /** UI group index 0..4 (Nhóm 1..5). */
@@ -227,13 +229,10 @@ export function mapUiGroupToBackendEnum(
         ? { relationship: 'CHILD', currentGroup: 'CHILD_OVER_18_DISABLED' }
         : null;
     case 3:
-      if (relationship === 'SPOUSE') {
-        return { relationship: 'SPOUSE', currentGroup: 'SPOUSE_RETIRED' };
-      }
-      if (relationship === 'PARENT') {
-        return { relationship: 'PARENT', currentGroup: 'PARENT_RETIRED' };
-      }
-      return null;
+      // Nhóm 4 gồm nhiều nhóm BE (vd PARENT_DISABLED): currentGroup rỗng = lấy từ DB qua selectDbGroupsForUi
+      return relationship === 'SPOUSE' || relationship === 'PARENT'
+        ? { relationship, currentGroup: '' }
+        : null;
     case 4:
       return relationship === 'OTHER_DEPENDENT'
         ? { relationship: 'OTHER_DEPENDENT', currentGroup: 'OTHER_HELPLESS' }
@@ -245,3 +244,16 @@ export function mapUiGroupToBackendEnum(
 
 export const ELIGIBILITY_CLEARED_TOAST =
   'Lựa chọn quan hệ/nhóm không còn phù hợp với tuổi tại ngày hiệu lực. Vui lòng chọn lại.';
+
+/** Nhóm BE (từ GET /dependents/groups, đọc rule active trong DB) thuộc tab UI đang chọn. */
+export function selectDbGroupsForUi(groupIdx: number, dbGroups: string[]): string[] {
+  return dbGroups.filter((g) => groupCodeToIndex(g?.toUpperCase()) === groupIdx);
+}
+
+/** Nhãn khi DB có nhiều nhóm con cho cùng quan hệ (vd PARENT_DISABLED và PARENT_RETIRED). */
+export function subGroupConditionLabel(code: string): string {
+  const c = code.toUpperCase();
+  if (c.endsWith('_DISABLED')) return 'Trong độ tuổi lao động nhưng khuyết tật / mất khả năng lao động';
+  if (c.endsWith('_RETIRED')) return 'Đã hết tuổi lao động';
+  return humanizeGroupCodes(c);
+}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -33,7 +33,7 @@ import {
   DocumentViewerItem,
 } from '../../components/common/DocumentViewerModal';
 import { RootStackParamList, RootNavigationProp } from '../../navigation/types';
-import { relationDocTypeFor, resolveProofDocumentsChecklist, selectNewUploads } from './proofDocumentsParams';
+import { resolveProofDocumentsChecklist, selectNewUploads, selectRulesForTab } from './proofDocumentsParams';
 
 type ProofDocumentsRouteProp = RouteProp<RootStackParamList, 'ProofDocuments'>;
 
@@ -282,17 +282,15 @@ export const ProofDocumentsScreen: React.FC = () => {
   const [dynamicDocs, setDynamicDocs] = useState<LawDocItem[] | null>(null);
 
   const currentGroupSpec = LAW_GROUP_SPECS[selectedGroupIdx];
-  // Danh sách dự phòng khi chưa có quy tắc từ BE: ô "chứng minh quan hệ" Nhóm 4 đổi mã theo vợ/chồng hay cha/mẹ
-  // useMemo: activeDocs là dependency của effect đồng bộ serverDocs, mảng mới mỗi lần render sẽ gây vòng lặp
-  const relationship = (route.params?.dependentData as any)?.relationship as string | undefined;
-  const staticDocs = useMemo(
-    () =>
-      currentGroupSpec.docs.map((d) =>
-        d.key === 'g4_relation' ? { ...d, docType: relationDocTypeFor(relationship) } : d
-      ),
-    [currentGroupSpec, relationship]
-  );
-  const activeDocs = dynamicDocs && dynamicDocs.length > 0 ? dynamicDocs : staticDocs;
+  // Danh sách dựng sẵn chỉ để xem hướng dẫn luật khi chưa tải được rule; không dùng để upload (mã giấy tờ phải từ DB)
+  const staticDocs = currentGroupSpec.docs;
+  const docsFromDb = Boolean(dynamicDocs && dynamicDocs.length > 0);
+  const activeDocs = docsFromDb ? (dynamicDocs as LawDocItem[]) : staticDocs;
+  // Tải được rule nhưng nhóm không có rule nào = admin chưa cấu hình, không phải lỗi mạng
+  const RULES_NOT_LOADED_MESSAGE =
+    allRules.length > 0
+      ? 'Nhóm người phụ thuộc này chưa được cấu hình danh mục giấy tờ minh chứng trên hệ thống. Vui lòng liên hệ quản trị viên.'
+      : 'Chưa tải được danh mục giấy tờ của nhóm này từ hệ thống. Vui lòng kiểm tra kết nối và mở lại màn hình.';
 
   useEffect(() => {
     loadInitialData();
@@ -334,43 +332,19 @@ export const ProofDocumentsScreen: React.FC = () => {
 
     if (allRules.length === 0) return;
 
-    const rel = (route.params?.dependentData as any)?.relationship;
-    let targetGroup = 'CHILD_UNDER_18';
-
-    if (selectedGroupIdx === 0) {
-      targetGroup = 'CHILD_UNDER_18';
-    } else if (selectedGroupIdx === 1) {
-      targetGroup = 'CHILD_STUDYING';
-    } else if (selectedGroupIdx === 2) {
-      targetGroup = 'CHILD_DISABLED';
-    } else if (selectedGroupIdx === 3) {
-      if (rel === 'SPOUSE') targetGroup = 'SPOUSE';
-      else if (rel === 'PARENT_IN_LAW') targetGroup = 'PARENT_IN_LAW';
-      else targetGroup = 'PARENT';
-    } else if (selectedGroupIdx === 4) {
-      targetGroup = 'OTHER_HELPLESS';
-    }
-
-    // Lọc các rule tương ứng với nhóm
-    let filteredRules = allRules.filter(
-      (r) => r.targetGroup.toUpperCase() === targetGroup.toUpperCase()
+    // Ô upload lấy hoàn toàn từ rule DB theo nhóm thật của NPT (vd PARENT_RETIRED)
+    const filteredRules = selectRulesForTab(
+      allRules,
+      selectedGroupIdx,
+      (route.params?.dependentData as any)?.groupCode ?? (route.params?.dependentData as any)?.currentGroup
     );
 
-    // Fallback nếu không có kết quả chính xác theo tên nhóm mới
     if (filteredRules.length === 0) {
-      if (selectedGroupIdx === 1) {
-        filteredRules = allRules.filter((r) => r.targetGroup.includes('STUDY'));
-      } else if (selectedGroupIdx === 2) {
-        filteredRules = allRules.filter((r) => r.targetGroup.includes('DISABLE'));
-      } else if (selectedGroupIdx === 3) {
-        filteredRules = allRules.filter((r) => r.targetGroup === 'PARENT' || r.targetGroup === 'SPOUSE');
-      }
-    }
-
-    if (filteredRules.length > 0) {
+      setDynamicDocs(null);
+    } else {
       const docs: LawDocItem[] = filteredRules.map((rule, idx) => {
         const letter = String.fromCharCode(97 + idx); // a, b, c, d...
-        const label = getDocTypeLabel(rule.docType);
+        const label = getDocTypeLabel(rule.docType, rule.docName);
         const mandatoryBadge = rule.isMandatory ? ' (Bắt buộc)' : ' (Tùy chọn)';
         return {
           key: `rule_${rule.docType.toLowerCase()}`,
@@ -601,13 +575,18 @@ export const ProofDocumentsScreen: React.FC = () => {
       return;
     }
 
+    if (!docsFromDb) {
+      toast.warning(RULES_NOT_LOADED_MESSAGE, 'Chưa có danh mục giấy tờ');
+      return;
+    }
+
     try {
       setUploading(true);
       let uploadCount = 0;
 
       for (const [key, fileObj] of entriesToUpload) {
-        const docSpec = activeDocs.find((d) => d.key === key);
-        const docType = docSpec?.docType || 'BIRTH_CERTIFICATE';
+        const docType = activeDocs.find((d) => d.key === key)?.docType;
+        if (!docType) continue;
 
         // Gọi API DependentDocument uploadDocument
         const res = await dependentDocumentApi.uploadDocument(dependentId, docType, fileObj);
@@ -700,14 +679,19 @@ export const ProofDocumentsScreen: React.FC = () => {
       return;
     }
 
+    if (!docsFromDb) {
+      toast.warning(RULES_NOT_LOADED_MESSAGE, 'Chưa có danh mục giấy tờ');
+      return;
+    }
+
     try {
       setUploading(true);
       let lastRes: any = null;
 
       // Upload từng tệp lên Backend API thật
       for (const [key, fileObj] of chosenEntries) {
-        const docSpec = activeDocs.find((d) => d.key === key);
-        const docType = docSpec?.docType || 'BIRTH_CERTIFICATE';
+        const docType = activeDocs.find((d) => d.key === key)?.docType;
+        if (!docType) continue;
 
         const res = await dependentDocumentApi.uploadDocument(dependentId, docType, fileObj);
         lastRes = res;

@@ -41,6 +41,8 @@ import {
   reconcileEligibilitySelection,
   RELATIONSHIP_OPTIONS,
   sanitizeOcrEligibility,
+  selectDbGroupsForUi,
+  subGroupConditionLabel,
 } from './dependentEligibility';
 
 const DAYS = Array.from({ length: 31 }, (_, i) => String(i + 1).padStart(2, '0'));
@@ -60,7 +62,8 @@ type PickerType =
   | 'endDay'
   | 'endMonth'
   | 'endYear'
-  | 'conditionGroup';
+  | 'conditionGroup'
+  | 'subGroup';
 
 interface PickerItem {
   value: any;
@@ -202,7 +205,7 @@ export const TaxRegistrationScreen: React.FC = () => {
     );
   }, [route.params?.ocrDependentFill]);
 
-  const handleContinue = async () => {
+  const handleContinue = async (chosenGroup?: string) => {
     if (!fullName.trim()) {
       toast.warning('Vui lòng nhập họ và tên người phụ thuộc.', 'Thiếu thông tin bắt buộc');
       return;
@@ -253,7 +256,32 @@ export const TaxRegistrationScreen: React.FC = () => {
       toast.warning('Mối quan hệ và nhóm điều kiện chưa khớp nhau. Vui lòng chọn lại.', 'Cần kiểm tra lại');
       return;
     }
-    const { relationship: relCode, currentGroup: groupEnumCode } = mapped;
+    const relCode = mapped.relationship;
+    let groupEnumCode = chosenGroup || mapped.currentGroup;
+    if (!groupEnumCode) {
+      // Nhóm 4: nhóm con (vd PARENT_DISABLED) lấy từ các nhóm đang có rule trong DB, không gán cứng
+      const options = selectDbGroupsForUi(
+        selectedGroupIdx,
+        await dependentDocumentApi.getGroups(relCode)
+      );
+      if (!isMountedRef.current) return;
+      if (options.length === 0) {
+        toast.warning(
+          'Điều kiện đăng ký cho mối quan hệ này chưa được cấu hình trên hệ thống. Vui lòng liên hệ quản trị viên.',
+          'Chưa có nhóm điều kiện'
+        );
+        return;
+      }
+      if (options.length > 1) {
+        openPicker(
+          'Chọn điều kiện giảm trừ',
+          'subGroup',
+          options.map((g) => ({ value: g, label: subGroupConditionLabel(g) }))
+        );
+        return;
+      }
+      groupEnumCode = options[0];
+    }
 
     let createdDependentId = '';
     try {
@@ -351,10 +379,15 @@ export const TaxRegistrationScreen: React.FC = () => {
         case 'conditionGroup':
           setSelectedGroupIdx(val);
           break;
+        case 'subGroup':
+          setActivePicker(null);
+          handleContinue(val);
+          return;
       }
       setActivePicker(null);
     },
-    [activePicker, selectedGroupIdx, ageAtEffective]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [activePicker, selectedGroupIdx, ageAtEffective, handleContinue]
   );
 
   const pickerKeyExtractor = useCallback((item: PickerItem) => String(item.value), []);
@@ -731,7 +764,7 @@ export const TaxRegistrationScreen: React.FC = () => {
             <View style={styles.btnWrapper}>
               <TouchableOpacity
                 style={[styles.continueBtn, isSubmitting && styles.continueBtnDisabled]}
-                onPress={handleContinue}
+                onPress={() => handleContinue()}
                 disabled={isSubmitting}
                 activeOpacity={0.85}
                 testID="btnContinueTaxReg"

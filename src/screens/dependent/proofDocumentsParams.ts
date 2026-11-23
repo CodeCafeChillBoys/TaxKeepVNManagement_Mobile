@@ -50,11 +50,25 @@ export function selectNewUploads<T extends { docId?: string | null }>(
 }
 
 /**
- * Mã giấy tờ chứng minh quan hệ của Nhóm 4 theo quan hệ với người nộp thuế.
- * Vợ/chồng và cha mẹ vợ/chồng nộp giấy kết hôn; cha mẹ đẻ nộp giấy khai sinh của người nộp thuế
- * (khớp DependentService.GetMissingDocuments của BE và OCR so loại BIRTH_CERTIFICATE).
+ * Rule giấy tờ (từ DB) hiển thị ở tab đang chọn.
+ * - Có NPT thuộc tab này: chỉ lấy rule đúng currentGroup của NPT (vd PARENT_RETIRED).
+ * - Không có NPT: lấy mọi rule có targetGroup thuộc tab, bỏ trùng docType.
+ * Không đoán mã nhóm hay mã giấy tờ trong app.
  */
-export function relationDocTypeFor(relationship?: string | null): string {
-  const rel = (relationship || '').toUpperCase();
-  return rel === 'SPOUSE' || rel === 'PARENT_IN_LAW' ? 'MARRIAGE_CERTIFICATE' : 'BIRTH_CERTIFICATE';
+export function selectRulesForTab<T extends { targetGroup: string; docType: string }>(
+  rules: T[],
+  groupIdx: number,
+  currentGroup?: string | null
+): T[] {
+  const current = currentGroup?.toUpperCase();
+  if (current && groupCodeToIndex(current) === groupIdx) {
+    return rules.filter((r) => r.targetGroup?.toUpperCase() === current);
+  }
+  const seen = new Set<string>();
+  return rules.filter((r) => {
+    const code = r.docType?.toUpperCase();
+    if (!code || seen.has(code) || groupCodeToIndex(r.targetGroup?.toUpperCase()) !== groupIdx) return false;
+    seen.add(code);
+    return true;
+  });
 }

@@ -5,6 +5,7 @@ import {
   ValidationErrorCode,
 } from '../../types/expense';
 import { sanitizeUiMessage, toFriendlyError } from '../../utils/friendlyError';
+import { parseForbiddenError } from '../../utils/permissionError';
 
 /** Tỷ lệ 0..1 → phần trăm làm tròn, chặn trong 0..100 (giá trị lỗi coi như 0) */
 export function toPercent(ratio: number): number {
@@ -38,6 +39,32 @@ export function calculateItemsTotal(items: InvoiceLineItem[]): number {
         : (Number(item.quantity) || 0) * (Number(item.unitPrice) || 0);
     return acc + (isNaN(total) ? 0 : total);
   }, 0);
+}
+
+/**
+ * Khởi tạo tổng tiền thực thanh toán của hóa đơn từ dữ liệu BE/OCR.
+ * Giữ nguyên giá trị 0 (VD: hóa đơn học phí/viện phí được tài trợ hoặc BHYT chi trả 100%)
+ * thay vì ghi đè bằng tổng các dòng chi tiết trước chiết khấu/tài trợ.
+ */
+export function resolveInitialInvoiceTotalAmount(
+  initialTotalAmount?: number | string | null,
+  items?: InvoiceLineItem[]
+): number {
+  if (initialTotalAmount !== undefined && initialTotalAmount !== null && initialTotalAmount !== '') {
+    const parsed = Number(initialTotalAmount);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return parsed;
+    }
+  }
+  return calculateItemsTotal(items || []);
+}
+
+/**
+ * Kiểm tra tổng tiền thực thanh toán của hóa đơn có hợp lệ để xác nhận lưu hay không.
+ * Cho phép bằng 0 (hóa đơn được miễn giảm/tài trợ/bảo hiểm chi trả 100%), chỉ chặn số âm hoặc không hợp lệ.
+ */
+export function isValidInvoiceTotalAmount(amount: number | null | undefined): boolean {
+  return typeof amount === 'number' && Number.isFinite(amount) && amount >= 0;
 }
 
 /**
@@ -236,13 +263,51 @@ export function sanitizeExpenseServerMessage(raw?: string | null, fallback = '')
 export function parseBackendError(err: any): { title: string; message: string } {
   const status = err?.response?.status;
   const data = err?.response?.data;
-  const errorCode = String(data?.errorCode || '').toUpperCase();
+  const errorCode = String(data?.errorCode || data?.errors?.errorCode || '').toUpperCase();
   const rawMessage: string = typeof data?.message === 'string'
     ? data.message
     : typeof err?.message === 'string'
       ? err.message
       : '';
   const lowerRaw = rawMessage.toLowerCase();
+
+  // 0a. Lỗi chuyên biệt luồng Bảng kê chi phí KCB (TaxPeriodService.MedicalStatement.cs)
+  if (
+    errorCode === 'ERR_NOT_MEDICAL_RECEIPT' ||
+    lowerRaw.includes('parent document must be a medical receipt')
+  ) {
+    return {
+      title: 'Không phải hóa đơn viện phí',
+      message: 'Chỉ có thể tải bảng kê chi phí KCB cho hóa đơn thuộc loại Hóa đơn viện phí.',
+    };
+  }
+
+  if (
+    errorCode === 'ERR_MEDICAL_STATEMENT_TYPE_NOT_CONFIGURED' ||
+    lowerRaw.includes('configure the medical statement document type')
+  ) {
+    return {
+      title: 'Chưa cấu hình loại bảng kê',
+      message: 'Hệ thống chưa cấu hình loại chứng từ bảng kê chi phí KCB. Vui lòng liên hệ quản trị viên.',
+    };
+  }
+
+  if (
+    errorCode === 'ERR_INVALID_STATUS' ||
+    lowerRaw.includes('already been extracted or verified')
+  ) {
+    return {
+      title: 'Không thể thay đổi chứng từ',
+      message: 'Chứng từ hoặc bảng kê đã được xác nhận nên không thể chỉnh sửa hay tải đè.',
+    };
+  }
+
+  if (errorCode === 'OCR_QUOTA_EXCEEDED' || errorCode === 'QUOTA_EXCEEDED') {
+    return {
+      title: 'Đã hết lượt quét OCR',
+      message: 'Bạn đã sử dụng hết lượt quét OCR trong gói hiện tại. Vui lòng nâng cấp gói để tiếp tục.',
+    };
+  }
 
   // 0. Phiên đăng nhập hết hạn
   if (status === 401 || errorCode === 'UNAUTHORIZED' || errorCode === 'ERR_UNAUTHORIZED') {
@@ -252,14 +317,21 @@ export function parseBackendError(err: any): { title: string; message: string } 
     };
   }
 
-  // 1. Kỳ quyết toán đã nộp / kết toán và bị khóa
+  // 1. Phân biệt rõ lỗi 403 do Kỳ quyết toán đã khóa vs 403 do thiếu quyền truy cập (RBAC)
   if (
     status === 403 ||
     errorCode === 'FORBIDDEN' ||
-    errorCode === 'ERR_TAX_PERIOD_LOCKED' ||
-    lowerRaw.includes('submitted') ||
-    lowerRaw.includes('locked')
+    errorCode === 'ERR_TAX_PERIOD_LOCKED'
   ) {
+    const forbidden = parseForbiddenError(err);
+    if (forbidden) {
+      return {
+        title: forbidden.title,
+        message: forbidden.message,
+      };
+    }
+  }
+  if (lowerRaw.includes('submitted') || lowerRaw.includes('locked')) {
     return {
       title: 'Kỳ tính thuế đã khóa',
       message: 'Hồ sơ kỳ tính thuế này đã hoàn tất quyết toán và nộp cho cơ quan thuế. Bạn không thể tải thêm hoặc sửa đổi chứng từ.',

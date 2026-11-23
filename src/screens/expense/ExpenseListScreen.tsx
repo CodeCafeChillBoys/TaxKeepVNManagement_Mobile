@@ -26,7 +26,9 @@ import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop'
 import { RootNavigationProp } from '../../navigation/types';
 import { ExpenseOcrResult } from '../../types/expense';
 import { expenseApi, mapDocumentReviewToOcrResult } from '../../api/expenseApi';
+import { taxSettlementApi } from '../../api/taxSettlementApi';
 import { formatCurrencyVND, parseBackendError } from './expenseValidationUtils';
+import { isMedicalReceipt } from './medicalStatementUtils';
 import { sanitizeUiMessage } from '../../utils/friendlyError';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { useExpenseStore } from '../../stores/useExpenseStore';
@@ -34,6 +36,7 @@ import { useDebounce } from '../../hooks/useDebounce';
 import {
   groupExpensesByAiClassification,
   calculateExpenseMetrics,
+  calculateExpenseDeductionSummary,
   ExpenseGroup,
   searchExpenses,
   filterExpensesByStatus,
@@ -44,6 +47,7 @@ import {
   getStatusLabel,
   getStatusBadgeVariant,
   isWithholdingDocType,
+  requiresReimbursementConfirmation,
 } from './expenseGroupUtils';
 import {
   Card,
@@ -119,9 +123,10 @@ const ExpenseDocCardRow = React.memo<ExpenseDocCardRowProps>(({ doc, onViewDetai
           <View style={styles.docCardTopRow}>
             <Badge variant={statusVariant} style={styles.docStatusBadge}>{statusText}</Badge>
             <View style={styles.docRightMeta}>
-              {doc.isNotReimbursed && !isWithholdingDoc && (
-                <Ionicons name="shield-checkmark-outline" size={13} color="#0F766E" />
-              )}
+              {doc.isNotReimbursed &&
+                requiresReimbursementConfirmation(doc.docTypeCode, doc.docTypeName) && (
+                  <Ionicons name="shield-checkmark-outline" size={13} color="#0F766E" />
+                )}
               {doc.overallConfidence ? (
                 <Text style={styles.confidenceText}>
                   {(doc.overallConfidence * 100).toFixed(0)}% rõ nét
@@ -192,6 +197,18 @@ const ExpenseDocCardRow = React.memo<ExpenseDocCardRowProps>(({ doc, onViewDetai
                   minimumFontScale={0.8}
                 >
                   Thu nhập: {formatCurrencyVND(doc.totalIncome)}
+                </Text>
+              ) : isConfirmed &&
+                isMedicalReceipt(doc.docTypeCode) &&
+                doc.medicalStatement?.status === 'CONFIRMED' &&
+                doc.isNotReimbursed !== false ? (
+                <Text
+                  style={styles.docDeductibleSubText}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.8}
+                >
+                  Khấu trừ KCB: {formatCurrencyVND(doc.medicalStatement.totalEligibleAmount ?? 0)}
                 </Text>
               ) : null}
             </View>
@@ -272,6 +289,7 @@ export const ExpenseListScreen: React.FC = () => {
     documents,
     periods,
     documentTypes,
+    systemConfigs,
     error: periodError,
     setSelectedYear,
     addYear,
@@ -282,6 +300,7 @@ export const ExpenseListScreen: React.FC = () => {
     loadFromStorage,
     addOrUpdateDocument,
     fetchDocumentTypes,
+    fetchSystemConfigs,
   } = useExpenseStore(
     useShallow((s) => ({
       selectedYear: s.selectedYear,
@@ -289,6 +308,7 @@ export const ExpenseListScreen: React.FC = () => {
       documents: s.documents,
       periods: s.periods,
       documentTypes: s.documentTypes,
+      systemConfigs: s.systemConfigs,
       error: s.error,
       setSelectedYear: s.setSelectedYear,
       addYear: s.addYear,
@@ -299,6 +319,7 @@ export const ExpenseListScreen: React.FC = () => {
       loadFromStorage: s.loadFromStorage,
       addOrUpdateDocument: s.addOrUpdateDocument,
       fetchDocumentTypes: s.fetchDocumentTypes,
+      fetchSystemConfigs: s.fetchSystemConfigs,
     }))
   );
 
@@ -336,9 +357,10 @@ export const ExpenseListScreen: React.FC = () => {
 
   const syncExpenseData = useCallback(
     async (isAlive: () => boolean) => {
-      const [, , taxPeriodsRes] = await Promise.allSettled([
+      const [, , , taxPeriodsRes] = await Promise.allSettled([
         loadFromStorage(userId),
         fetchDocumentTypes(),
+        fetchSystemConfigs(),
         userId ? expenseApi.getTaxPeriods() : Promise.resolve(null),
       ]);
 
@@ -375,7 +397,7 @@ export const ExpenseListScreen: React.FC = () => {
         }
       }
     },
-    [userId, loadFromStorage, fetchDocumentTypes, setSelectedYear, initPeriodForYear]
+    [userId, loadFromStorage, fetchDocumentTypes, fetchSystemConfigs, setSelectedYear, initPeriodForYear]
   );
 
   useFocusEffect(
@@ -407,6 +429,63 @@ export const ExpenseListScreen: React.FC = () => {
   );
 
   const metrics = useMemo(() => calculateExpenseMetrics(allCurrentExpenses), [allCurrentExpenses]);
+
+  const localDeductionSummary = useMemo(
+    () => calculateExpenseDeductionSummary(allCurrentExpenses, selectedYear, systemConfigs),
+    [allCurrentExpenses, selectedYear, systemConfigs]
+  );
+
+  // Đồng bộ số liệu khấu trừ từ Backend TaxSettlementEngine (áp đúng chính sách trần năm trong DB),
+  // fallback mượt sang localDeductionSummary khi offline hoặc đang tải.
+  const [serverDeduction, setServerDeduction] = useState<{
+    taxYear: number;
+    medicalDeduction: number;
+    educationDeduction: number;
+    charityDeduction: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!userId || !selectedYear) {
+      setServerDeduction(null);
+      return;
+    }
+    let cancelled = false;
+    taxSettlementApi
+      .preview({ taxYear: selectedYear })
+      .then((preview) => {
+        if (cancelled || !isMountedRef.current) return;
+        setServerDeduction({
+          taxYear: selectedYear,
+          medicalDeduction: Number(preview.medicalDeduction ?? 0),
+          educationDeduction: Number(preview.educationDeduction ?? 0),
+          charityDeduction: Number(preview.charityDeduction ?? 0),
+        });
+      })
+      .catch(() => {
+        if (!cancelled && isMountedRef.current) {
+          setServerDeduction((prev) => (prev?.taxYear === selectedYear ? prev : null));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, selectedYear, metrics.confirmedDocs, metrics.totalConfirmedAmount, allCurrentExpenses.length]);
+
+  const deductionSummary = useMemo(() => {
+    if (serverDeduction && serverDeduction.taxYear === selectedYear) {
+      const medicalDeduction = serverDeduction.medicalDeduction;
+      const educationDeduction = serverDeduction.educationDeduction;
+      const charityDeduction = serverDeduction.charityDeduction;
+      return {
+        ...localDeductionSummary,
+        medicalDeduction,
+        educationDeduction,
+        charityDeduction,
+        totalDeduction: medicalDeduction + educationDeduction + charityDeduction,
+      };
+    }
+    return localDeductionSummary;
+  }, [localDeductionSummary, serverDeduction, selectedYear]);
 
   // Danh mục chi phí được phép giảm trừ thuế TNCN
   const categoryOptions = useMemo<CategoryOptionItem[]>(() => {
@@ -885,6 +964,74 @@ export const ExpenseListScreen: React.FC = () => {
             </Text>
             <Text style={styles.kpiBoxLabel}>Chi phí đã xác nhận</Text>
           </View>
+
+          {/* THỐNG KÊ TỔNG KHẤU TRỪ CHI PHÍ KỲ NĂM */}
+          <View style={styles.deductionCard} testID="expenseDeductionSummaryCard">
+            <Text
+              style={styles.deductionTotalVal}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.75}
+              testID="expenseTotalDeductionValue"
+            >
+              {formatCurrencyVND(deductionSummary.totalDeduction)}
+            </Text>
+            <Text style={styles.kpiBoxLabel}>
+              Tổng khấu trừ chi phí năm {selectedYear}
+            </Text>
+
+            <View style={styles.deductionDivider} />
+
+            {deductionSummary.appliesMedicalAndEducation ? (
+              <View style={styles.deductionBreakdownRow}>
+                <View style={styles.deductionItem}>
+                  <Text style={styles.deductionItemLabel}>Y tế</Text>
+                  <Text style={styles.deductionItemVal} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
+                    {formatCurrencyVND(deductionSummary.medicalDeduction)}
+                  </Text>
+                  {deductionSummary.isMedicalCapped && (
+                    <Text style={styles.deductionCapHint}>Đạt trần năm</Text>
+                  )}
+                </View>
+                <View style={styles.deductionItemDivider} />
+                <View style={styles.deductionItem}>
+                  <Text style={styles.deductionItemLabel}>Học phí</Text>
+                  <Text style={styles.deductionItemVal} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
+                    {formatCurrencyVND(deductionSummary.educationDeduction)}
+                  </Text>
+                  {deductionSummary.isEducationCapped && (
+                    <Text style={styles.deductionCapHint}>Đạt trần năm</Text>
+                  )}
+                </View>
+                <View style={styles.deductionItemDivider} />
+                <View style={styles.deductionItem}>
+                  <Text style={styles.deductionItemLabel}>Từ thiện</Text>
+                  <Text style={styles.deductionItemVal} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
+                    {formatCurrencyVND(deductionSummary.charityDeduction)}
+                  </Text>
+                </View>
+              </View>
+            ) : (
+              <View style={styles.deductionLegacyWrap}>
+                <View style={styles.deductionLegacyRow}>
+                  <Text style={styles.deductionItemLabel}>Từ thiện, nhân đạo, khuyến học</Text>
+                  <Text style={styles.deductionItemVal}>
+                    {formatCurrencyVND(deductionSummary.charityDeduction)}
+                  </Text>
+                </View>
+                <Text style={styles.deductionNoteText}>
+                  Chi phí y tế và học phí bắt đầu áp dụng giảm trừ từ kỳ tính thuế năm 2026.
+                </Text>
+              </View>
+            )}
+
+            {deductionSummary.medicalExcludedCount > 0 && (
+              <Text style={styles.deductionNoteText}>
+                {deductionSummary.medicalExcludedCount} hóa đơn y tế đã duyệt chưa được tính do thiếu bảng kê KCB hợp lệ hoặc đã bồi hoàn bảo hiểm.
+              </Text>
+            )}
+          </View>
+
           <View style={styles.kpiSmallGrid}>
             <View style={[styles.kpiSmall, { backgroundColor: '#ECFDF5' }]}>
               <Text style={[styles.kpiSmallVal, { color: '#16A34A' }]}>{metrics.confirmedDocs}</Text>
@@ -1096,6 +1243,7 @@ export const ExpenseListScreen: React.FC = () => {
       metrics.totalConfirmedAmount,
       metrics.confirmedDocs,
       metrics.pendingDocs,
+      deductionSummary,
       allCurrentExpenses.length,
       handleNavigateUpload,
       handleSubmitPeriod,
@@ -1692,6 +1840,73 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontWeight: '500',
   },
+  deductionCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderLeftWidth: 4,
+    borderLeftColor: '#8B1E1E',
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  deductionTotalVal: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#0F172A',
+    lineHeight: 26,
+  },
+  deductionDivider: {
+    height: 1,
+    backgroundColor: '#F1F5F9',
+    marginVertical: 8,
+  },
+  deductionBreakdownRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  deductionItem: {
+    flex: 1,
+    alignItems: 'center',
+    paddingHorizontal: 4,
+  },
+  deductionItemDivider: {
+    width: 1,
+    alignSelf: 'stretch',
+    backgroundColor: '#F1F5F9',
+  },
+  deductionItemLabel: {
+    fontSize: 10.5,
+    fontWeight: '500',
+    color: '#64748B',
+    marginBottom: 2,
+  },
+  deductionItemVal: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#0F172A',
+  },
+  deductionCapHint: {
+    fontSize: 9.5,
+    fontWeight: '500',
+    color: '#64748B',
+    marginTop: 2,
+  },
+  deductionLegacyWrap: {
+    gap: 4,
+  },
+  deductionLegacyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  deductionNoteText: {
+    fontSize: 10.5,
+    color: '#64748B',
+    marginTop: 6,
+    lineHeight: 15,
+  },
   kpiSmallGrid: {
     flexDirection: 'row',
     gap: 6,
@@ -1999,6 +2214,13 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: '#64748B',
     marginTop: 1,
+    flexShrink: 1,
+  },
+  docDeductibleSubText: {
+    fontSize: 10.5,
+    color: '#64748B',
+    fontWeight: '500',
+    marginTop: 2,
     flexShrink: 1,
   },
   docActions: {

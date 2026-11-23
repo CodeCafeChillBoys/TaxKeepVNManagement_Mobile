@@ -1,4 +1,5 @@
 import { cleanRawTechnicalStrings, toFriendlyConsultationError, FriendlyErrorResult } from './consultationFriendlyErrors';
+import { parseForbiddenError } from './permissionError';
 
 const BANNED_TECHNICAL_PATTERNS: Array<[RegExp, string]> = [
   [/\bnetwork\s*error\b/gi, 'Không thể kết nối mạng'],
@@ -89,6 +90,15 @@ export function toFriendlyError(
       title: 'Phiên đăng nhập đã hết hạn',
       message: 'Vui lòng đăng nhập lại để tiếp tục kê khai và tra cứu hồ sơ thuế.',
     };
+  }
+  if (status === 403 || code === 'FORBIDDEN') {
+    const forbidden = parseForbiddenError(anyErr);
+    if (forbidden) {
+      return {
+        title: forbidden.title,
+        message: forbidden.message,
+      };
+    }
   }
   if (status === 413) {
     return {

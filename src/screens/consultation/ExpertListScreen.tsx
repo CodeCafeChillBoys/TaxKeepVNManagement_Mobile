@@ -16,9 +16,10 @@ import {
   NativeScrollEvent,
   LayoutChangeEvent,
   Platform,
+  AppState,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
@@ -36,6 +37,19 @@ import type {
 } from '../../types/consultation';
 import { formatVnd, formatVietnameseDate, isValidAvatarUrl } from '../../types/consultation';
 import { toFriendlyErrorMessage } from '../../utils/friendlyError';
+import {
+  DEFAULT_FEATURED_COUNT,
+  DEFAULT_SORT_OPTIONS,
+  buildFeaturedListSignature,
+  formatExpertRatingDisplay,
+  getDefaultSortLabel,
+  getFeaturedBannerSubtitle,
+  isSelfExpertProfile,
+  reconcileUserSelectedSort,
+  resolveAdminSortConfig,
+  selectDisplayedFeaturedExperts,
+  type SortOptionItem,
+} from './expertFeaturedUtils';
 
 const TIME_FILTERS: { key: ExpertTimeFilter; label: string }[] = [
   { key: 'All', label: 'Tất cả lịch' },
@@ -47,30 +61,32 @@ const TIME_FILTERS: { key: ExpertTimeFilter; label: string }[] = [
 
 const BANNER_CARD_GAP = 12;
 
-const SORT_OPTIONS: { key: ExpertSortBy; label: string }[] = [
-  { key: 'Recommended', label: 'Đề xuất ưu tiên' },
-  { key: 'RatingDesc', label: 'Đánh giá cao nhất' },
-  { key: 'FeeAsc', label: 'Mức phí thấp nhất' },
-  { key: 'FeeDesc', label: 'Mức phí cao nhất' },
-  { key: 'ExperienceDesc', label: 'Kinh nghiệm nhiều nhất' },
-  { key: 'CompletedSessionsDesc', label: 'Nhiều ca hoàn thành' },
-];
-
 interface FeaturedBannerSlideItemProps {
   item: ExpertListItemResponse;
   rank: number;
+  defaultSortBy: ExpertSortBy;
   onPress: (expertId: string) => void;
 }
 
 const FeaturedBannerSlideItem = React.memo<FeaturedBannerSlideItemProps>(({
   item,
   rank,
+  defaultSortBy,
   onPress,
 }) => {
   const [imgError, setImgError] = useState(false);
+
+  useEffect(() => {
+    setImgError(false);
+  }, [item.avatarUrl]);
+
   const isValidHttp = isValidAvatarUrl(item.avatarUrl);
   const nameParts = (item.fullName || 'Chuyên gia').trim().split(/\s+/);
   const displayInitial = (nameParts[nameParts.length - 1]?.charAt(0) || 'C').toUpperCase();
+  const ratingDisplay = formatExpertRatingDisplay(item.rating, item.totalReviews);
+  const highlightRating = defaultSortBy === 'RatingDesc';
+  const highlightExperience = defaultSortBy === 'ExperienceDesc';
+  const highlightSessions = defaultSortBy === 'CompletedSessionsDesc';
 
   return (
     <TouchableOpacity
@@ -147,21 +163,36 @@ const FeaturedBannerSlideItem = React.memo<FeaturedBannerSlideItemProps>(({
 
           {/* Metrics Row */}
           <View style={styles.bannerMetricsRow}>
-            <View style={styles.bannerRatingPill}>
+            <View
+              style={[
+                styles.bannerRatingPill,
+                highlightRating && styles.bannerMetricHighlightedPill,
+              ]}
+            >
               <Ionicons name="star" size={11} color="#FBBF24" />
-              <Text style={styles.bannerRatingVal}>
-                {item.rating > 0 ? item.rating.toFixed(1) : '5.0'}
-              </Text>
-              <Text style={styles.bannerReviewCnt}>({item.totalReviews})</Text>
+              <Text style={styles.bannerRatingVal}>{ratingDisplay.label}</Text>
+              {ratingDisplay.hasReviews && (
+                <Text style={styles.bannerReviewCnt}>({item.totalReviews})</Text>
+              )}
             </View>
 
             {item.yearsOfExperience > 0 && (
-              <View style={styles.bannerMetricDividerPill}>
+              <View
+                style={[
+                  styles.bannerMetricDividerPill,
+                  highlightExperience && styles.bannerMetricHighlightedPill,
+                ]}
+              >
                 <Text style={styles.bannerMetricText}>{item.yearsOfExperience} năm KN</Text>
               </View>
             )}
 
-            <View style={styles.bannerMetricDividerPill}>
+            <View
+              style={[
+                styles.bannerMetricDividerPill,
+                highlightSessions && styles.bannerMetricHighlightedPill,
+              ]}
+            >
               <Text style={styles.bannerMetricText}>
                 {item.completedConsultationsCount} ca tư vấn
               </Text>
@@ -210,11 +241,15 @@ const FeaturedBannerSlideItem = React.memo<FeaturedBannerSlideItemProps>(({
 
 interface FeaturedExpertBannerCarouselProps {
   items: ExpertListItemResponse[];
+  defaultSortBy: ExpertSortBy;
+  defaultSortLabel: string;
   onPressExpert: (expertId: string) => void;
 }
 
 const FeaturedExpertBannerCarousel = React.memo<FeaturedExpertBannerCarouselProps>(({
   items,
+  defaultSortBy,
+  defaultSortLabel,
   onPressExpert,
 }) => {
   const [activeIndex, setActiveIndex] = useState(0);
@@ -224,6 +259,12 @@ const FeaturedExpertBannerCarousel = React.memo<FeaturedExpertBannerCarouselProp
   const isProgrammaticScrollRef = useRef(false);
   const programmaticTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dragReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const itemsSignature = useMemo(() => buildFeaturedListSignature(items), [items]);
+  const subtitleText = useMemo(
+    () => getFeaturedBannerSubtitle(defaultSortBy, defaultSortLabel),
+    [defaultSortBy, defaultSortLabel]
+  );
 
   useEffect(() => {
     return () => {
@@ -238,6 +279,20 @@ const FeaturedExpertBannerCarousel = React.memo<FeaturedExpertBannerCarouselProp
 
   const safeIndex = items.length > 0 ? Math.min(activeIndex, items.length - 1) : 0;
   const snapInterval = containerWidth > 0 ? containerWidth + BANNER_CARD_GAP : 0;
+
+  // Khi danh sách chuyên gia đề xuất thay đổi thứ tự/dữ liệu theo cấu hình Admin, luôn reset về TOP #1
+  useEffect(() => {
+    setActiveIndex(0);
+    isUserDraggingRef.current = false;
+    isProgrammaticScrollRef.current = false;
+    if (programmaticTimerRef.current) {
+      clearTimeout(programmaticTimerRef.current);
+      programmaticTimerRef.current = null;
+    }
+    if (snapInterval > 0) {
+      flatListRef.current?.scrollToOffset({ offset: 0, animated: false });
+    }
+  }, [itemsSignature, snapInterval]);
 
   const handleContainerLayout = useCallback((e: LayoutChangeEvent) => {
     const measured = Math.floor(e.nativeEvent.layout.width);
@@ -291,7 +346,7 @@ const FeaturedExpertBannerCarousel = React.memo<FeaturedExpertBannerCarouselProp
     }, 4000);
 
     return () => clearInterval(interval);
-  }, [items.length, snapInterval]);
+  }, [items.length, snapInterval, itemsSignature]);
 
   const handleScroll = useCallback(
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -334,7 +389,7 @@ const FeaturedExpertBannerCarousel = React.memo<FeaturedExpertBannerCarouselProp
               Chuyên gia đề xuất hàng đầu
             </Text>
             <Text style={styles.sectionSubtitle} numberOfLines={1}>
-              Xếp hạng tự động theo tiêu chí hệ thống
+              {subtitleText}
             </Text>
           </View>
         </View>
@@ -369,6 +424,7 @@ const FeaturedExpertBannerCarousel = React.memo<FeaturedExpertBannerCarouselProp
         <FlatList
           ref={flatListRef}
           data={items}
+          extraData={`${itemsSignature}|${defaultSortBy}|${containerWidth}`}
           keyExtractor={(item) => `featured-slide-${item.id}`}
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -407,6 +463,7 @@ const FeaturedExpertBannerCarousel = React.memo<FeaturedExpertBannerCarouselProp
               <FeaturedBannerSlideItem
                 item={item}
                 rank={index + 1}
+                defaultSortBy={defaultSortBy}
                 onPress={onPressExpert}
               />
             </View>
@@ -417,6 +474,7 @@ const FeaturedExpertBannerCarousel = React.memo<FeaturedExpertBannerCarouselProp
           <FeaturedBannerSlideItem
             item={items[safeIndex]}
             rank={safeIndex + 1}
+            defaultSortBy={defaultSortBy}
             onPress={onPressExpert}
           />
         </View>
@@ -449,9 +507,15 @@ interface ExpertListItemCardProps {
 
 const ExpertListItemCard = React.memo<ExpertListItemCardProps>(({ item, onPress }) => {
   const [imgError, setImgError] = useState(false);
+
+  useEffect(() => {
+    setImgError(false);
+  }, [item.avatarUrl]);
+
   const isValidHttp = isValidAvatarUrl(item.avatarUrl);
   const nameParts = (item.fullName || 'Chuyên gia').trim().split(/\s+/);
   const displayInitial = (nameParts[nameParts.length - 1]?.charAt(0) || 'C').toUpperCase();
+  const ratingDisplay = formatExpertRatingDisplay(item.rating, item.totalReviews);
 
   return (
     <TouchableOpacity
@@ -499,10 +563,10 @@ const ExpertListItemCard = React.memo<ExpertListItemCardProps>(({ item, onPress 
           <View style={styles.cardHighlights}>
             <View style={styles.ratingBadge}>
               <Ionicons name="star" size={12} color="#F59E0B" />
-              <Text style={styles.ratingText}>
-                {item.rating > 0 ? item.rating.toFixed(1) : '5.0'}
-              </Text>
-              <Text style={styles.reviewCount}>({item.totalReviews})</Text>
+              <Text style={styles.ratingText}>{ratingDisplay.label}</Text>
+              {ratingDisplay.hasReviews && (
+                <Text style={styles.reviewCount}>({item.totalReviews})</Text>
+              )}
             </View>
 
             {item.yearsOfExperience > 0 && (
@@ -595,6 +659,9 @@ export const ExpertListScreen: React.FC = () => {
 
   const isMountedRef = useRef(true);
   const requestSeqRef = useRef(0);
+  const metadataSeqRef = useRef(0);
+  const hasLoadedOnceRef = useRef(false);
+  const featuredLoadFailedRef = useRef(false);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -608,8 +675,9 @@ export const ExpertListScreen: React.FC = () => {
   const [selectedSpecId, setSelectedSpecId] = useState<number | null>(null);
   const [timeFilter, setTimeFilter] = useState<ExpertTimeFilter>('All');
   const [userSelectedSortBy, setUserSelectedSortBy] = useState<ExpertSortBy | null>(null);
-  const [dynamicSortOptions, setDynamicSortOptions] = useState<{ key: ExpertSortBy; label: string }[]>(SORT_OPTIONS);
+  const [dynamicSortOptions, setDynamicSortOptions] = useState<SortOptionItem[]>(DEFAULT_SORT_OPTIONS);
   const [defaultSortKey, setDefaultSortKey] = useState<ExpertSortBy>('Recommended');
+  const [defaultSortLabel, setDefaultSortLabel] = useState<string>('Đề xuất ưu tiên');
   const sortBy: ExpertSortBy = userSelectedSortBy ?? defaultSortKey;
 
   const [sortModalVisible, setSortModalVisible] = useState(false);
@@ -627,24 +695,18 @@ export const ExpertListScreen: React.FC = () => {
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
 
+  const isCurrentUserExpert = useMemo(() => {
+    const role = String(currentUser?.role || '').toLowerCase();
+    return role === 'expert' || role.includes('expert');
+  }, [currentUser?.role]);
+
+  const featuredFetchCount = isCurrentUserExpert
+    ? DEFAULT_FEATURED_COUNT + 1
+    : DEFAULT_FEATURED_COUNT;
+
   // Hàm xác định xem chuyên gia có phải là chính bản thân người dùng đang đăng nhập hay không
   const isSelfExpert = useCallback(
-    (exp: ExpertListItemResponse) => {
-      if (!currentUser) return false;
-      const myId = String(currentUser.id || '').trim().toLowerCase();
-      const myName = String(currentUser.fullName || '').trim().toLowerCase();
-      const expUserId = String(exp.userId || '').trim().toLowerCase();
-      const expProfileId = String(exp.id || '').trim().toLowerCase();
-      const expName = String(exp.fullName || '').trim().toLowerCase();
-
-      if (myId && (myId === expUserId || myId === expProfileId)) {
-        return true;
-      }
-      if (myName && expName && myName === expName) {
-        return true;
-      }
-      return false;
-    },
+    (exp: ExpertListItemResponse) => isSelfExpertProfile(exp, currentUser),
     [currentUser]
   );
 
@@ -654,59 +716,60 @@ export const ExpertListScreen: React.FC = () => {
   }, [experts, isSelfExpert]);
 
   const displayedFeatured = useMemo(() => {
-    return featuredExperts.filter((e) => !isSelfExpert(e));
-  }, [featuredExperts, isSelfExpert]);
+    return selectDisplayedFeaturedExperts(
+      featuredExperts,
+      currentUser,
+      DEFAULT_FEATURED_COUNT
+    );
+  }, [featuredExperts, currentUser]);
 
-  // Tải danh mục lĩnh vực, chuyên gia đề xuất (6 chuyên gia chuẩn BE) & cấu hình sắp xếp hệ thống
+  // Tải danh mục lĩnh vực, chuyên gia đề xuất (chuẩn cấu hình Admin trên BE) & cấu hình sắp xếp hệ thống
   const loadMetadataAndFeatured = useCallback(async () => {
+    const seq = ++metadataSeqRef.current;
     try {
-      const [specs, featured, sortConfig] = await Promise.all([
-        consultationApi.getSpecializations(true).catch(() => []),
-        consultationApi.getFeaturedExperts(6).catch(() => []),
-        consultationApi.getExpertSortOptions().catch(() => null),
+      const [specsRes, featuredRes, sortConfigRes] = await Promise.allSettled([
+        consultationApi.getSpecializations(true),
+        consultationApi.getFeaturedExperts(featuredFetchCount),
+        consultationApi.getExpertSortOptions(),
       ]);
-      if (!isMountedRef.current) return;
-      if (specs.length > 0) {
-        setSpecializations(specs);
+      if (!isMountedRef.current || seq !== metadataSeqRef.current) return;
+
+      if (specsRes.status === 'fulfilled' && specsRes.value.length > 0) {
+        setSpecializations(specsRes.value);
       }
-      setFeaturedExperts(featured);
-      if (sortConfig?.options && sortConfig.options.length > 0) {
-        const mappedOptions = sortConfig.options.map((opt) => ({
-          key: opt.value as ExpertSortBy,
-          label: opt.label,
-        }));
-        setDynamicSortOptions(mappedOptions);
-        if (sortConfig.defaultSortBy) {
-          const defKey = sortConfig.defaultSortBy as ExpertSortBy;
-          setDefaultSortKey(defKey);
-        }
-        setUserSelectedSortBy((prev) => {
-          if (prev && !mappedOptions.some((o) => o.key === prev)) {
-            return null;
-          }
-          return prev;
-        });
+
+      if (featuredRes.status === 'fulfilled') {
+        featuredLoadFailedRef.current = false;
+        setFeaturedExperts(featuredRes.value);
+      } else {
+        featuredLoadFailedRef.current = true;
+      }
+
+      if (sortConfigRes.status === 'fulfilled' && sortConfigRes.value) {
+        const resolved = resolveAdminSortConfig(sortConfigRes.value, DEFAULT_SORT_OPTIONS);
+        setDynamicSortOptions(resolved.options);
+        setDefaultSortKey(resolved.defaultSortBy);
+        setDefaultSortLabel(resolved.defaultSortLabel);
+        setUserSelectedSortBy((prev) =>
+          reconcileUserSelectedSort(prev, resolved.defaultSortBy, resolved.options)
+        );
       }
     } catch (e) {
       if (__DEV__) {
         console.warn('Load specs/featured/sortConfig error:', e);
       }
     }
-  }, []);
-
-  useEffect(() => {
-    loadMetadataAndFeatured();
-  }, [loadMetadataAndFeatured]);
+  }, [featuredFetchCount]);
 
   // Fetch danh sách chuyên gia
   const fetchExperts = useCallback(
-    async (isRefresh = false, pageNum = 1) => {
+    async (isRefresh = false, pageNum = 1, manageRefreshState = true) => {
       if (!isMountedRef.current) return;
       const reqId = ++requestSeqRef.current;
 
-      if (isRefresh) setRefreshing(true);
-      else if (pageNum === 1) setLoading(true);
-      else setLoadingMore(true);
+      if (isRefresh && manageRefreshState) setRefreshing(true);
+      else if (!isRefresh && pageNum === 1) setLoading(true);
+      else if (pageNum > 1) setLoadingMore(true);
 
       setError(null);
       try {
@@ -723,6 +786,15 @@ export const ExpertListScreen: React.FC = () => {
 
         if (pageNum === 1) {
           setExperts(result.items);
+          // Nếu API /experts/featured lỗi tạm thời, fallback từ trang 1 danh sách mặc định (BE dùng cùng cấu hình Admin)
+          const isDefaultUnfilteredView =
+            !debouncedKeyword &&
+            selectedSpecId === null &&
+            timeFilter === 'All' &&
+            userSelectedSortBy === null;
+          if (featuredLoadFailedRef.current && isDefaultUnfilteredView) {
+            setFeaturedExperts(result.items.slice(0, featuredFetchCount));
+          }
         } else {
           setExperts((prev) => [...prev, ...result.items]);
         }
@@ -737,21 +809,57 @@ export const ExpertListScreen: React.FC = () => {
       } finally {
         if (isMountedRef.current && reqId === requestSeqRef.current) {
           setLoading(false);
-          setRefreshing(false);
+          if (manageRefreshState) setRefreshing(false);
           setLoadingMore(false);
         }
       }
     },
-    [debouncedKeyword, selectedSpecId, timeFilter, userSelectedSortBy]
+    [debouncedKeyword, selectedSpecId, timeFilter, userSelectedSortBy, featuredFetchCount]
   );
+
+  useEffect(() => {
+    loadMetadataAndFeatured();
+  }, [loadMetadataAndFeatured]);
 
   useEffect(() => {
     fetchExperts(false, 1);
   }, [fetchExperts]);
 
-  const handleRefresh = useCallback(() => {
-    loadMetadataAndFeatured();
-    fetchExperts(true, 1);
+  // Đồng bộ lại cấu hình Admin & Top chuyên gia đề xuất mỗi khi quay lại màn hình
+  useFocusEffect(
+    useCallback(() => {
+      if (!hasLoadedOnceRef.current) {
+        hasLoadedOnceRef.current = true;
+        return;
+      }
+      void loadMetadataAndFeatured();
+      void fetchExperts(true, 1, false);
+    }, [loadMetadataAndFeatured, fetchExperts])
+  );
+
+  // Đồng bộ lại khi người dùng quay lại ứng dụng từ nền (VD: vừa đổi cấu hình trên Web Admin)
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active' && hasLoadedOnceRef.current) {
+        void loadMetadataAndFeatured();
+        void fetchExperts(true, 1, false);
+      }
+    });
+    return () => sub.remove();
+  }, [loadMetadataAndFeatured, fetchExperts]);
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await Promise.all([
+        loadMetadataAndFeatured(),
+        fetchExperts(true, 1, false),
+      ]);
+    } finally {
+      if (isMountedRef.current) {
+        setRefreshing(false);
+      }
+    }
   }, [loadMetadataAndFeatured, fetchExperts]);
 
   const handleLoadMore = useCallback(() => {
@@ -781,14 +889,11 @@ export const ExpertListScreen: React.FC = () => {
     setSelectedSpecId(null);
     setTimeFilter('All');
     setUserSelectedSortBy(null);
+    void loadMetadataAndFeatured();
   };
 
   const currentSortLabel = useMemo(() => {
-    return (
-      dynamicSortOptions.find((s) => s.key === sortBy)?.label ||
-      SORT_OPTIONS.find((s) => s.key === sortBy)?.label ||
-      'Sắp xếp'
-    );
+    return getDefaultSortLabel(sortBy, dynamicSortOptions);
   }, [sortBy, dynamicSortOptions]);
 
   const selectedSpecName = useMemo(() => {
@@ -803,10 +908,12 @@ export const ExpertListScreen: React.FC = () => {
   const listHeaderElement = useMemo(
     () => (
       <>
-        {/* Banner Slide Chuyên gia đề xuất hàng đầu (Hiển thị khi không gõ tìm kiếm) */}
+        {/* Banner Slide Chuyên gia đề xuất hàng đầu (Hiển thị theo cấu hình Admin khi không gõ tìm kiếm) */}
         {displayedFeatured.length > 0 && !keyword.trim() && (
           <FeaturedExpertBannerCarousel
             items={displayedFeatured}
+            defaultSortBy={defaultSortKey}
+            defaultSortLabel={defaultSortLabel}
             onPressExpert={handlePressExpert}
           />
         )}
@@ -823,7 +930,16 @@ export const ExpertListScreen: React.FC = () => {
         </View>
       </>
     ),
-    [displayedFeatured, keyword, handlePressExpert, displayedExperts.length, sortBy, currentSortLabel]
+    [
+      displayedFeatured,
+      defaultSortKey,
+      defaultSortLabel,
+      keyword,
+      handlePressExpert,
+      displayedExperts.length,
+      sortBy,
+      currentSortLabel,
+    ]
   );
 
   const hasActiveFilters = Boolean(
@@ -1054,7 +1170,13 @@ export const ExpertListScreen: React.FC = () => {
           <Ionicons name="alert-circle-outline" size={44} color={theme.colors.error} />
           <Text style={styles.errorTitle}>Không thể tải dữ liệu</Text>
           <Text style={styles.errorMsg}>{error}</Text>
-          <TouchableOpacity style={styles.retryBtn} onPress={() => fetchExperts(false, 1)}>
+          <TouchableOpacity
+            style={styles.retryBtn}
+            onPress={() => {
+              void loadMetadataAndFeatured();
+              void fetchExperts(false, 1);
+            }}
+          >
             <Text style={styles.retryBtnText}>Thử lại</Text>
           </TouchableOpacity>
         </View>
@@ -1733,6 +1855,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 5,
+  },
+  bannerMetricHighlightedPill: {
+    backgroundColor: 'rgba(253, 230, 138, 0.24)',
+    borderWidth: 0.75,
+    borderColor: '#FDE68A',
   },
   bannerMetricText: {
     fontFamily: fonts.bodySemi,

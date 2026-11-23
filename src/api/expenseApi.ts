@@ -93,6 +93,7 @@ export function mapDocumentReviewToOcrResult(
     taxWithheld: doc.taxWithheld ?? null,
     insuranceDeducted: doc.insuranceDeducted ?? null,
     crossCheckResult: (doc as any).crossCheckResult || null,
+    medicalStatement: doc.medicalStatement ?? null,
     isNotReimbursed: doc.isNotReimbursed ?? false,
     items: (doc.items || []).map((it, idx) => ({
       itemOrder: it.itemOrder || idx + 1,
@@ -499,7 +500,8 @@ export const expenseApi = {
     try {
       const res = await apiClient.get<any>(`/api/admin/system-configs`, {
         params: { activeOnly },
-      });
+        suppressPermissionToast: true,
+      } as any);
       const raw = res.data;
       if (Array.isArray(raw)) return raw;
       if (Array.isArray(raw?.value)) return raw.value;
@@ -522,7 +524,7 @@ export const expenseApi = {
       const params = categoryCode ? { categoryCode } : {};
       const res = await apiClient.get<ThresholdResolveResponse>(
         `/api/admin/system-configs/threshold/test-resolve`,
-        { params }
+        { params, suppressPermissionToast: true } as any
       );
       return res.data;
     } catch (err) {

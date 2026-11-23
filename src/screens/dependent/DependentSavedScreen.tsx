@@ -33,8 +33,23 @@ export const DependentSavedScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
   const route = useRoute<Route>();
   const insets = useSafeAreaInsets();
-  const { fullName, relationship, groupCode, groupId, effectiveFromMonth } = route.params;
+  const { dependentId, fullName, relationship, groupCode, groupId, effectiveFromMonth } = route.params;
   const displayName = formatPersonName(fullName) || fullName;
+
+  const goToDetail = () => {
+    if (!dependentId) {
+      goToList();
+      return;
+    }
+    navigation.reset({
+      index: 2,
+      routes: [
+        { name: 'Home' },
+        { name: 'DependentList' },
+        { name: 'DependentDetail', params: { dependentId } },
+      ],
+    });
+  };
 
   const goToList = () => {
     navigation.reset({
@@ -91,15 +106,30 @@ export const DependentSavedScreen: React.FC = () => {
 
       <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 16) }]}>
         <View style={styles.footerInner}>
+          {dependentId ? (
+            <TouchableOpacity
+              style={styles.button}
+              activeOpacity={0.85}
+              onPress={goToDetail}
+              accessibilityRole="button"
+              accessibilityLabel="Xem chi tiết hồ sơ người phụ thuộc"
+              testID="dependentSavedViewDetail"
+            >
+              <Text style={styles.buttonText}>Xem chi tiết hồ sơ</Text>
+            </TouchableOpacity>
+          ) : null}
+
           <TouchableOpacity
-            style={styles.button}
+            style={dependentId ? styles.secondaryButton : styles.button}
             activeOpacity={0.85}
             onPress={goToList}
             accessibilityRole="button"
             accessibilityLabel="Về danh sách người phụ thuộc"
             testID="dependentSavedGoList"
           >
-            <Text style={styles.buttonText}>Về danh sách người phụ thuộc</Text>
+            <Text style={dependentId ? styles.secondaryButtonText : styles.buttonText}>
+              Về danh sách người phụ thuộc
+            </Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -338,6 +368,7 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 520,
     alignSelf: 'center',
+    gap: 10,
   },
   button: {
     minHeight: 52,
@@ -353,6 +384,24 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 20,
     color: '#FFFFFF',
+    textAlign: 'center',
+  },
+  secondaryButton: {
+    minHeight: 48,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#8B1E1E',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+  },
+  secondaryButtonText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 15,
+    lineHeight: 20,
+    color: '#8B1E1E',
     textAlign: 'center',
   },
 });

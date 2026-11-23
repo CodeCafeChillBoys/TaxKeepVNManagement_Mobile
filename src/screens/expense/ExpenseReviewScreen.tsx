@@ -16,14 +16,22 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
+import { fonts } from '../../constants/fonts';
 import { HeaderMotif } from '../../components/common/HeaderMotif';
 import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { ExpenseOcrResult, InvoiceLineItem, MedicalStatement, ValidationErrorItem } from '../../types/expense';
-import { isMedicalReceipt, getStatementStatusMeta } from './medicalStatementUtils';
+import {
+  isMedicalReceipt,
+  getStatementStatusMeta,
+  shouldShowMedicalStatementImage,
+  getStatementErrorLabel,
+} from './medicalStatementUtils';
 import {
   formatCurrencyVND,
   calculateItemsTotal,
+  resolveInitialInvoiceTotalAmount,
+  isValidInvoiceTotalAmount,
   validateCrucialFields,
   getValidationMatrixErrorDetails,
   toPercent,
@@ -35,6 +43,7 @@ import {
   getGroupMetadata,
   getDocumentTypeIcon,
   isWithholdingDocType,
+  requiresReimbursementConfirmation,
 } from './expenseGroupUtils';
 import { incomeSourceApi, IncomeSourceCrossCheckResult } from '../../api/incomeSourceApi';
 import { formatMoneyInput, parseMoney } from '../income/incomeFormUtils';
@@ -45,6 +54,8 @@ import {
   useToast,
 } from '../../components/ui';
 import { Dialog } from '../../components/common/Dialog';
+import { DocumentViewerModal, DocumentViewerItem } from '../../components/common/DocumentViewerModal';
+import { isImageDocumentUri } from '../../components/common/imageZoomUtils';
 import { parseBackendError } from './expenseValidationUtils';
 
 type TabType = 'KIEM_TRA' | 'THONG_TIN';
@@ -148,14 +159,23 @@ export const ExpenseReviewScreen: React.FC = () => {
 
   // Bảng kê KCB của hóa đơn viện phí: tải lại mỗi khi quay về từ màn hình bảng kê
   const isMedical = isMedicalReceipt(currentDocTypeCode);
-  const [medicalStatement, setMedicalStatement] = useState<MedicalStatement | null | undefined>(undefined);
+  const [medicalStatement, setMedicalStatement] = useState<MedicalStatement | null | undefined>(
+    initialData.medicalStatement
+  );
+  const [statementImageFailed, setStatementImageFailed] = useState<boolean>(false);
+  const [viewerDocument, setViewerDocument] = useState<DocumentViewerItem | null>(null);
+
+  useEffect(() => {
+    setStatementImageFailed(false);
+  }, [medicalStatement?.fileUrl]);
+
   useFocusEffect(
     useCallback(() => {
       if (!isMedical || !periodIdParam || !initialData.documentId) return;
       expenseApi
         .getDocumentById(periodIdParam, initialData.documentId)
         .then((doc) => setMedicalStatement(doc.medicalStatement ?? null))
-        .catch(() => setMedicalStatement(undefined));
+        .catch(() => setMedicalStatement((prev) => (prev !== undefined ? prev : undefined)));
     }, [isMedical, periodIdParam, initialData.documentId])
   );
 
@@ -167,6 +187,12 @@ export const ExpenseReviewScreen: React.FC = () => {
   // Xác định linh hoạt loại chứng từ có phải là Chứng từ khấu trừ thuế TNCN hay không
   const isWithholding = useMemo(
     () => isWithholdingDocType(currentDocTypeCode, currentDocTypeName),
+    [currentDocTypeCode, currentDocTypeName]
+  );
+
+  // Ô xác nhận chưa bồi hoàn bảo hiểm chỉ hiển thị & áp dụng cho hóa đơn Y tế và Giáo dục
+  const showReimbursementConfirmation = useMemo(
+    () => requiresReimbursementConfirmation(currentDocTypeCode, currentDocTypeName),
     [currentDocTypeCode, currentDocTypeName]
   );
 
@@ -226,12 +252,9 @@ export const ExpenseReviewScreen: React.FC = () => {
   const [itemFormPrice, setItemFormPrice] = useState<string>('0');
 
   const itemsSum = calculateItemsTotal(items);
-  const [totalAmount, setTotalAmount] = useState<number>(() => {
-    if (initialData.totalAmount !== undefined && initialData.totalAmount !== null && Number(initialData.totalAmount) > 0) {
-      return Number(initialData.totalAmount);
-    }
-    return calculateItemsTotal(initialData.items || []);
-  });
+  const [totalAmount, setTotalAmount] = useState<number>(() =>
+    resolveInitialInvoiceTotalAmount(initialData.totalAmount, initialData.items)
+  );
 
   // Modal confirm action states
   const [showSaveConfirmModal, setShowSaveConfirmModal] = useState<boolean>(false);
@@ -610,8 +633,8 @@ export const ExpenseReviewScreen: React.FC = () => {
         return;
       }
 
-      if (totalAmount <= 0) {
-        toast.error('Tổng tiền thanh toán của hóa đơn phải lớn hơn 0.', 'Số tiền không hợp lệ');
+      if (!isValidInvoiceTotalAmount(totalAmount)) {
+        toast.error('Tổng tiền thanh toán của hóa đơn không được nhỏ hơn 0.', 'Số tiền không hợp lệ');
         return;
       }
     }
@@ -685,10 +708,10 @@ export const ExpenseReviewScreen: React.FC = () => {
               buyerIdCard: buyerIdCard.trim() || null,
               buyerAddress: buyerAddress.trim() || null,
               paymentMethod: paymentMethod.trim() || null,
-              totalAmount: totalAmount || null,
+              totalAmount: isValidInvoiceTotalAmount(totalAmount) ? totalAmount : 0,
               isYearValid: initialData.validationStatus?.isYearValid ?? true,
               isIdentityValid: initialData.validationStatus?.isIdentityValid ?? true,
-              isNotReimbursed: isNotReimbursed,
+              isNotReimbursed: showReimbursementConfirmation ? isNotReimbursed : null,
               items: items.map((it, idx) => ({
                 itemOrder: it.itemOrder || idx + 1,
                 itemName: it.itemName,
@@ -733,7 +756,11 @@ export const ExpenseReviewScreen: React.FC = () => {
         taxWithheld: isWithholding ? (parseMoney(taxWithheldStr) ?? 0) : undefined,
         insuranceDeducted: isWithholding ? (parseMoney(insuranceDeductedStr) ?? 0) : undefined,
         items: isWithholding ? [] : items,
-        isNotReimbursed: isWithholding ? true : isNotReimbursed,
+        isNotReimbursed: isWithholding
+          ? true
+          : showReimbursementConfirmation
+            ? isNotReimbursed
+            : null,
         appliedThreshold: effectiveThreshold,
         overallConfidence: effectiveConfidence,
         isPassedThreshold: isPassedThreshold,
@@ -849,8 +876,8 @@ export const ExpenseReviewScreen: React.FC = () => {
         return;
       }
 
-      if (totalAmount <= 0) {
-        toast.error('Tổng tiền thanh toán của hóa đơn phải lớn hơn 0.', 'Số tiền không hợp lệ');
+      if (!isValidInvoiceTotalAmount(totalAmount)) {
+        toast.error('Tổng tiền thanh toán của hóa đơn không được nhỏ hơn 0.', 'Số tiền không hợp lệ');
         return;
       }
     }
@@ -994,18 +1021,38 @@ export const ExpenseReviewScreen: React.FC = () => {
                     {isWithholding ? 'Ảnh chứng từ khấu trừ gốc' : 'Ảnh hóa đơn gốc'}
                   </Text>
                 </View>
-                <Image
-                  source={{ uri: invoiceImageUri }}
-                  style={styles.invoiceImage}
-                  resizeMode="contain"
-                  onError={() => {
-                    if (initialData.originalFileUri && invoiceImageUri !== initialData.originalFileUri) {
-                      setInvoiceImageUri(initialData.originalFileUri);
-                      return;
-                    }
-                    setInvoiceImageFailed(true);
-                  }}
-                />
+                <TouchableOpacity
+                  activeOpacity={0.9}
+                  style={styles.imagePreviewWrap}
+                  onPress={() =>
+                    setViewerDocument({
+                      uri: invoiceImageUri,
+                      title: isWithholding ? 'Ảnh chứng từ khấu trừ gốc' : 'Ảnh hóa đơn gốc',
+                      fileName: initialData.originalFilename,
+                      subtitle: sellerName || undefined,
+                      isReadable: true,
+                    })
+                  }
+                  accessibilityRole="button"
+                  accessibilityLabel={isWithholding ? 'Phóng to ảnh chứng từ khấu trừ gốc' : 'Phóng to ảnh hóa đơn gốc'}
+                >
+                  <Image
+                    source={{ uri: invoiceImageUri }}
+                    style={styles.invoiceImage}
+                    resizeMode="contain"
+                    onError={() => {
+                      if (initialData.originalFileUri && invoiceImageUri !== initialData.originalFileUri) {
+                        setInvoiceImageUri(initialData.originalFileUri);
+                        return;
+                      }
+                      setInvoiceImageFailed(true);
+                    }}
+                  />
+                  <View style={styles.imageZoomBadge}>
+                    <Ionicons name="search-outline" size={12} color="#FFFFFF" />
+                    <Text style={styles.imageZoomBadgeText}>Phóng to</Text>
+                  </View>
+                </TouchableOpacity>
               </Card>
             ) : invoiceImageFailed ? (
               <Card style={styles.card}>
@@ -1018,33 +1065,127 @@ export const ExpenseReviewScreen: React.FC = () => {
 
             {/* Bảng kê chi phí KCB đi kèm hóa đơn viện phí */}
             {isMedical && periodIdParam && initialData.documentId && medicalStatement !== undefined && (
-              <TouchableOpacity
-                activeOpacity={0.7}
-                onPress={() =>
-                  navigation.navigate('MedicalStatement', {
-                    periodId: periodIdParam,
-                    documentId: initialData.documentId!,
-                    readOnly: isRouteReadOnly,
-                  })
-                }
-              >
-                <Card style={[styles.card, !medicalStatement && styles.cardWarning]}>
+              medicalStatement ? (
+                <Card style={styles.card}>
                   <View style={styles.cardHeaderRow}>
                     <View style={styles.cardHeaderLeft}>
                       <Ionicons name="document-text-outline" size={15} color="#475569" />
                       <Text style={styles.cardHeaderTitle} numberOfLines={1}>Bảng kê chi phí KCB</Text>
                     </View>
-                    <Badge variant={getStatementStatusMeta(medicalStatement?.status).variant}>
-                      {getStatementStatusMeta(medicalStatement?.status).label}
+                    <Badge variant={getStatementStatusMeta(medicalStatement.status).variant}>
+                      {getStatementStatusMeta(medicalStatement.status).label}
                     </Badge>
                   </View>
-                  <Text style={{ fontSize: 13, color: '#475569', lineHeight: 19 }}>
-                    {medicalStatement
-                      ? `Được giảm trừ: ${formatCurrencyVND(medicalStatement.totalEligibleAmount ?? 0)}. Bấm để xem chi tiết.`
-                      : 'Chưa có bảng kê nên khoản viện phí này chưa được tính giảm trừ. Bấm để tải bảng kê.'}
-                  </Text>
+
+                  {shouldShowMedicalStatementImage(medicalStatement) && (
+                    isImageDocumentUri(medicalStatement.fileUrl, undefined, medicalStatement.originalFilename) ? (
+                      !statementImageFailed ? (
+                        <TouchableOpacity
+                          activeOpacity={0.9}
+                          style={[styles.imagePreviewWrap, { marginBottom: 10 }]}
+                          onPress={() =>
+                            setViewerDocument({
+                              uri: medicalStatement.fileUrl,
+                              title: 'Ảnh bảng kê chi phí KCB',
+                              fileName: medicalStatement.originalFilename || undefined,
+                              subtitle: `Được giảm trừ: ${formatCurrencyVND(medicalStatement.totalEligibleAmount ?? 0)}`,
+                              isReadable: true,
+                            })
+                          }
+                          accessibilityRole="button"
+                          accessibilityLabel="Phóng to ảnh bảng kê chi phí KCB"
+                        >
+                          <Image
+                            source={{ uri: medicalStatement.fileUrl }}
+                            style={styles.invoiceImage}
+                            resizeMode="contain"
+                            onError={() => setStatementImageFailed(true)}
+                          />
+                          <View style={styles.imageZoomBadge}>
+                            <Ionicons name="search-outline" size={12} color="#FFFFFF" />
+                            <Text style={styles.imageZoomBadgeText}>Phóng to</Text>
+                          </View>
+                        </TouchableOpacity>
+                      ) : (
+                        <View style={[styles.imageErrorBox, { marginBottom: 10 }]}>
+                          <Ionicons name="image-outline" size={26} color="#94A3B8" />
+                          <Text style={styles.imageErrorText}>Không tải được ảnh bảng kê gốc.</Text>
+                        </View>
+                      )
+                    ) : (
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        style={styles.statementPdfBox}
+                        onPress={() =>
+                          setViewerDocument({
+                            uri: medicalStatement.fileUrl,
+                            title: 'Bảng kê chi phí KCB',
+                            fileName: medicalStatement.originalFilename || 'bang_ke_kcb.pdf',
+                            mimeType: 'application/pdf',
+                            subtitle: `Được giảm trừ: ${formatCurrencyVND(medicalStatement.totalEligibleAmount ?? 0)}`,
+                            isReadable: true,
+                          })
+                        }
+                      >
+                        <Ionicons name="document-text" size={22} color="#8B1E1E" />
+                        <Text style={styles.statementPdfName} numberOfLines={1}>
+                          {medicalStatement.originalFilename || 'Tệp bảng kê chi phí KCB (PDF)'}
+                        </Text>
+                        <Ionicons name="open-outline" size={16} color="#64748B" />
+                      </TouchableOpacity>
+                    )
+                  )}
+
+                  <TouchableOpacity
+                    activeOpacity={0.7}
+                    style={styles.statementFooterRow}
+                    onPress={() =>
+                      navigation.navigate('MedicalStatement', {
+                        periodId: periodIdParam,
+                        documentId: initialData.documentId!,
+                        readOnly: isRouteReadOnly,
+                      })
+                    }
+                  >
+                    <Text style={styles.statementSummaryText}>
+                      Được giảm trừ:{' '}
+                      <Text style={styles.statementEligibleAmount}>
+                        {formatCurrencyVND(medicalStatement.totalEligibleAmount ?? 0)}
+                      </Text>
+                    </Text>
+                    <View style={styles.statementDetailLink}>
+                      <Text style={styles.statementDetailLinkText}>Xem chi tiết</Text>
+                      <Ionicons name="chevron-forward" size={15} color="#8B1E1E" />
+                    </View>
+                  </TouchableOpacity>
                 </Card>
-              </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  activeOpacity={0.7}
+                  onPress={() =>
+                    navigation.navigate('MedicalStatement', {
+                      periodId: periodIdParam,
+                      documentId: initialData.documentId!,
+                      readOnly: isRouteReadOnly,
+                    })
+                  }
+                >
+                  <Card style={[styles.card, styles.cardWarning]}>
+                    <View style={styles.cardHeaderRow}>
+                      <View style={styles.cardHeaderLeft}>
+                        <Ionicons name="document-text-outline" size={15} color="#475569" />
+                        <Text style={styles.cardHeaderTitle} numberOfLines={1}>Bảng kê chi phí KCB</Text>
+                      </View>
+                      <Badge variant={getStatementStatusMeta(null).variant}>
+                        {getStatementStatusMeta(null).label}
+                      </Badge>
+                    </View>
+                    <Text style={{ fontSize: 13, color: '#475569', lineHeight: 19 }}>
+                      Chưa có bảng kê nên khoản viện phí này chưa được tính giảm trừ. Bấm để tải bảng kê.
+                    </Text>
+                  </Card>
+                </TouchableOpacity>
+              )
             )}
 
             {/* Đánh giá mức độ tin cậy AI */}
@@ -1108,10 +1249,14 @@ export const ExpenseReviewScreen: React.FC = () => {
                 </View>
                 {validationErrors.map((err, idx) => {
                   const details = getValidationMatrixErrorDetails(err.code);
+                  const displayMessage =
+                    err.code === 'ERR_AI_VALIDATION' && err.message
+                      ? getStatementErrorLabel(err.message)
+                      : details.message;
                   return (
                     <View key={idx} style={styles.errorItem}>
                       <Text style={styles.errorItemTitle}>{details.title}</Text>
-                      <Text style={styles.errorItemMsg}>{details.message}</Text>
+                      <Text style={styles.errorItemMsg}>{displayMessage}</Text>
                       <Text style={styles.errorItemHint}>💡 {details.actionHint}</Text>
                     </View>
                   );
@@ -1149,10 +1294,10 @@ export const ExpenseReviewScreen: React.FC = () => {
                     </View>
                     <Separator style={{ marginVertical: 6 }} />
                     <View style={styles.voucherSummaryRow}>
-                      <Text style={[styles.voucherSummaryLabel, { color: '#8B1E1E', fontWeight: '700' }]}>
+                      <Text style={[styles.voucherSummaryLabel, { color: '#8B1E1E', fontFamily: fonts.bodyBold }]}>
                         [19] Thuế TNCN đã khấu trừ:
                       </Text>
-                      <Text style={[styles.voucherSummaryValue, { color: '#8B1E1E', fontSize: 15, fontWeight: '800' }]}>
+                      <Text style={[styles.voucherSummaryValue, { color: '#8B1E1E', fontSize: 15, fontFamily: fonts.bodyBold }]}>
                         {formatCurrencyVND(parseMoney(taxWithheldStr) ?? initialData.taxWithheld ?? 0)}
                       </Text>
                     </View>
@@ -1282,15 +1427,15 @@ export const ExpenseReviewScreen: React.FC = () => {
                   )}
                 </Card>
               </>
-            ) : (
-              /* PHẦN DÀNH RIÊNG CHO HÓA ĐƠN: Cam kết chưa bồi hoàn */
+            ) : showReimbursementConfirmation ? (
+              /* PHẦN DÀNH RIÊNG CHO HÓA ĐƠN GIÁO DỤC & Y TẾ: Cam kết chưa bồi hoàn */
               <Card style={styles.card}>
                 <View style={styles.cardHeader}>
                   <Ionicons name="shield-checkmark-outline" size={15} color="#475569" />
                   <Text style={styles.cardHeaderTitle}>Xác nhận điều kiện giảm trừ thuế</Text>
                 </View>
                 <Text style={styles.commitDesc}>
-                  Theo quy định thuế TNCN, chi phí chỉ được giảm trừ khi chưa được bảo hiểm hoặc tổ chức khác bồi hoàn toàn bộ.
+                  Theo quy định thuế TNCN, chi phí giáo dục và y tế chỉ được giảm trừ khi chưa được bảo hiểm hoặc tổ chức khác bồi hoàn toàn bộ.
                 </Text>
                 <TouchableOpacity
                   disabled={isReadOnly}
@@ -1304,7 +1449,7 @@ export const ExpenseReviewScreen: React.FC = () => {
                     color={isNotReimbursed ? '#8B1E1E' : '#94A3B8'}
                   />
                   <View style={{ flex: 1, marginLeft: 10 }}>
-                    <Text style={[styles.commitTitle, isNotReimbursed && { color: '#8B1E1E', fontWeight: '700' }]}>
+                    <Text style={[styles.commitTitle, isNotReimbursed && { color: '#8B1E1E', fontFamily: fonts.bodyBold }]}>
                       Tôi xác nhận khoản chi phí này chưa được bồi hoàn từ bảo hiểm hoặc nguồn khác
                     </Text>
                     <Text style={styles.commitStatus}>
@@ -1313,7 +1458,7 @@ export const ExpenseReviewScreen: React.FC = () => {
                   </View>
                 </TouchableOpacity>
               </Card>
-            )}
+            ) : null}
           </View>
         )}
 
@@ -1587,7 +1732,7 @@ export const ExpenseReviewScreen: React.FC = () => {
                     </View>
                   </View>
                   <FieldInput label="Ngày lập (YYYY-MM-DD)" value={invoiceDate} onChange={setInvoiceDate} placeholder={`${new Date().getFullYear()}-03-15`} />
-                  <FieldInput label="Tổng tiền thực thanh toán (VNĐ)" value={totalAmount ? String(totalAmount) : ''} onChange={(v) => setTotalAmount(Number(v.replace(/[^0-9]/g,''))||0)} placeholder="0" keyboardType="numeric" />
+                  <FieldInput label="Tổng tiền thực thanh toán (VNĐ)" value={String(totalAmount)} onChange={(v) => setTotalAmount(Number(v.replace(/[^0-9]/g,''))||0)} placeholder="0" keyboardType="numeric" />
                   <FieldInput label="Đường dẫn tra cứu điện tử" value={lookupUrl} onChange={setLookupUrl} placeholder="https://..." />
                   <FieldInput label="Mã tra cứu hóa đơn" value={lookupCode} onChange={setLookupCode} />
                 </Card>
@@ -1772,7 +1917,7 @@ export const ExpenseReviewScreen: React.FC = () => {
                     </View>
                     <View style={{ flex: 1, marginLeft: 10 }}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
-                        <Text style={[styles.docTypeOptionName, isSelected && { color: '#8B1E1E', fontWeight: '700' }]}>{t.name}</Text>
+                        <Text style={[styles.docTypeOptionName, isSelected && { color: '#8B1E1E', fontFamily: fonts.bodyBold }]}>{t.name}</Text>
                         <Badge
                           variant={isItemWithholding ? 'default' : (t.isTaxEligible ? 'teal' : 'secondary')}
                           style={{ marginTop: 1 }}
@@ -1837,6 +1982,12 @@ export const ExpenseReviewScreen: React.FC = () => {
         }}
         onSecondary={() => setDeleteItemIndex(null)}
         onRequestClose={() => setDeleteItemIndex(null)}
+      />
+      {/* MODAL XEM ẢNH PHÓNG TO / THU NHỎ */}
+      <DocumentViewerModal
+        visible={Boolean(viewerDocument)}
+        document={viewerDocument}
+        onClose={() => setViewerDocument(null)}
       />
     </SafeAreaView>
   );
@@ -1903,7 +2054,47 @@ const styles = StyleSheet.create({
   cardHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, marginRight: 8 },
   cardHeaderTitle: { fontSize: 13, fontWeight: '700', color: '#0F172A', flexShrink: 1 },
   // Invoice image
+  imagePreviewWrap: { position: 'relative', borderRadius: 6, overflow: 'hidden' },
   invoiceImage: { width: '100%', height: 220, borderRadius: 6, backgroundColor: '#0F172A' },
+  imageZoomBadge: {
+    position: 'absolute',
+    right: 10,
+    bottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(15, 23, 42, 0.78)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.22)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+  },
+  imageZoomBadgeText: { fontSize: 11, fontWeight: '700', color: '#FFFFFF' },
+  statementPdfBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 10,
+  },
+  statementPdfName: { flex: 1, fontSize: 12.5, fontWeight: '600', color: '#0F172A' },
+  statementFooterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    paddingTop: 2,
+  },
+  statementSummaryText: { flex: 1, fontSize: 13, color: '#475569', lineHeight: 19 },
+  statementEligibleAmount: { fontWeight: '700', color: '#15803D' },
+  statementDetailLink: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  statementDetailLinkText: { fontSize: 12.5, fontWeight: '700', color: '#8B1E1E' },
   imageErrorBox: {
     height: 160,
     alignItems: 'center',

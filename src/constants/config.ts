@@ -54,12 +54,34 @@ export function getAutoDetectedHost(): string | null {
 export const DEV_LAN_HOST = '192.168.110.124';
 
 /**
+ * Kiểm tra xem URL cấu hình trong biến môi trường có phải máy chủ public / đã deploy
+ * (https://... hoặc http:// trỏ tới IP/domain public, không phải localhost hay mạng LAN nội bộ).
+ */
+function isRemoteServerUrl(rawUrl?: string): boolean {
+  if (!rawUrl) return false;
+  if (rawUrl.startsWith('https://')) return true;
+  const match = rawUrl.match(/^http:\/\/([^/:]+)/i);
+  if (!match) return false;
+  const host = match[1].toLowerCase();
+  if (host === 'localhost' || host === '127.0.0.1' || host === '10.0.2.2') return false;
+  if (host.startsWith('192.168.') || host.startsWith('10.')) return false;
+  if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(host)) return false;
+  return true;
+}
+
+/**
  * - Web: localhost hoặc hostname trình duyệt
- * - Ưu tiên URL production / tunnel (https://...) từ biến môi trường nếu có
+ * - Ưu tiên URL production / tunnel / server đã deploy từ biến môi trường nếu có
  * - Tự động nhận diện IP LAN từ Metro Bundler (Expo Go trên điện thoại thật)
  * - Fallback: DEV_LAN_HOST hoặc 10.0.2.2 (Android emulator)
  */
 export function getLocalApiBaseUrl(): string {
+  const fromEnv = process.env.EXPO_PUBLIC_API_URL?.trim() || process.env.EXPO_PUBLIC_API_BASE_URL?.trim();
+  // Nếu có URL cố định dạng domain https hoặc IP/domain server đã deploy (vd http://13.236.166.3:5000), ưu tiên dùng trên mọi nền tảng
+  if (fromEnv && isRemoteServerUrl(fromEnv)) {
+    return fromEnv.replace(/\/+$/, '');
+  }
+
   if (Platform.OS === 'web') {
     if (typeof window !== 'undefined' && window.location) {
       const hostname = window.location.hostname;
@@ -73,12 +95,6 @@ export function getLocalApiBaseUrl(): string {
     return `http://localhost:${API_PORT}`;
   }
 
-  const fromEnv = process.env.EXPO_PUBLIC_API_URL?.trim() || process.env.EXPO_PUBLIC_API_BASE_URL?.trim();
-  // Nếu có URL cố định dạng domain https (ngrok, tunnel, server production), ưu tiên dùng
-  if (fromEnv && fromEnv.startsWith('https://')) {
-    return fromEnv.replace(/\/+$/, '');
-  }
-
   // TỰ ĐỘNG nhận diện IP từ Metro Bundler (không cần cấu hình thủ công)
   const autoHost = getAutoDetectedHost();
   if (autoHost) {
@@ -86,11 +102,6 @@ export function getLocalApiBaseUrl(): string {
       return `http://10.0.2.2:${API_PORT}`;
     }
     return `http://${autoHost}:${API_PORT}`;
-  }
-
-  // Nếu không detect được từ Metro thì kiểm tra env http://...
-  if (fromEnv) {
-    return fromEnv.replace(/\/+$/, '');
   }
 
   // Máy thật Android / iOS fallback
@@ -102,7 +113,7 @@ export function getLocalApiBaseUrl(): string {
 
 export function getLocalAiBaseUrl(): string {
   const fromEnv = process.env.EXPO_PUBLIC_AI_URL?.trim();
-  if (fromEnv && fromEnv.startsWith('https://')) {
+  if (fromEnv && isRemoteServerUrl(fromEnv)) {
     return fromEnv.replace(/\/+$/, '');
   }
 
@@ -137,29 +148,24 @@ export function getLocalAiBaseUrl(): string {
   return `http://localhost:${AI_PORT}`;
 }
 
+export const PRODUCTION_WEB_FRONTEND_URL = 'https://taxkeepvn.vercel.app';
+
 export function getLocalWebFrontendUrl(): string {
   const fromEnv = process.env.EXPO_PUBLIC_WEB_URL?.trim();
   if (fromEnv) {
     return fromEnv.replace(/\/+$/, '');
   }
 
-  // Trên trình duyệt Web, lấy trực tiếp window.location.origin (ví dụ: http://localhost:8081)
+  // Trên trình duyệt Web dev, giữ window.location.origin nếu đang chạy local dev
   if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.origin) {
-    return window.location.origin;
-  }
-
-  const autoHost = getAutoDetectedHost();
-  if (autoHost) {
-    if (autoHost === '10.0.2.2') {
-      return `http://10.0.2.2:${WEB_PORT}`;
+    const origin = window.location.origin;
+    if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
+      return origin;
     }
-    return `http://${autoHost}:${WEB_PORT}`;
   }
 
-  if (Platform.OS === 'android' || Platform.OS === 'ios') {
-    return `http://${DEV_LAN_HOST}:${WEB_PORT}`;
-  }
-  return `http://localhost:${WEB_PORT}`;
+  // Mặc định luôn trỏ về trang web frontend đã deploy trên Vercel
+  return PRODUCTION_WEB_FRONTEND_URL;
 }
 
 export const config = {

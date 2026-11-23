@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -6,18 +6,19 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
   Platform,
   Modal,
   Image,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { theme } from '../../constants/theme';
-import { HomeHeaderButton } from '../../components/navigation/HomeHeaderButton';
+import { DrumHeader } from '../../components/brand/DrumHeader';
+import { useToast } from '../../components/ui/Toast';
+import { Dialog } from '../../components/common/Dialog';
 import { formatPersonName } from '../../utils/formatPersonName';
 import {
   dependentDocumentApi,
@@ -30,8 +31,16 @@ import {
   DocumentViewerModal,
   DocumentViewerItem,
 } from '../../components/common/DocumentViewerModal';
+import { isImageDocumentUri } from '../../components/common/imageZoomUtils';
 import { RootStackParamList, RootNavigationProp } from '../../navigation/types';
-import { resolveProofDocumentsChecklist } from './proofDocumentsParams';
+import { relationDocTypeFor, resolveProofDocumentsChecklist } from './proofDocumentsParams';
+import {
+  areAllMandatoryStepsUploaded,
+  canNavigateToProofStep,
+  findInitialPendingStepIndex,
+  parseDependentUploadError,
+  type ParsedDependentUploadError,
+} from './dependentDocumentError';
 
 type ProofDocumentsRouteProp = RouteProp<RootStackParamList, 'ProofDocuments'>;
 
@@ -40,6 +49,8 @@ interface LawDocItem {
   code: string;
   docType: string;
   title: string;
+  shortLabel: string;
+  isMandatory: boolean;
   lawExplanation?: string;
 }
 
@@ -50,6 +61,18 @@ interface LawGroupRequirement {
   title: string;
   subtitle: string;
   docs: LawDocItem[];
+}
+
+interface SelectedDocFile {
+  name: string;
+  sizeText: string;
+  type: string;
+  blob?: Blob | File;
+  uri?: string;
+  docId?: string;
+  docType?: string;
+  uploadedAt?: string;
+  isReadable?: boolean;
 }
 
 const LAW_GROUP_SPECS: LawGroupRequirement[] = [
@@ -64,13 +87,17 @@ const LAW_GROUP_SPECS: LawGroupRequirement[] = [
         key: 'g1_birth',
         code: 'a',
         docType: 'BIRTH_CERTIFICATE',
-        title: 'a. Giấy khai sinh của con (hoặc bản trích lục khai sinh).',
+        title: 'Giấy khai sinh của con (hoặc bản trích lục khai sinh)',
+        shortLabel: 'Giấy khai sinh',
+        isMandatory: true,
       },
       {
         key: 'g1_cccd',
         code: 'b',
         docType: 'CITIZEN_ID',
-        title: 'b. Căn cước công dân / Mã định danh cá nhân của con (nếu đã được cấp).',
+        title: 'Căn cước công dân / Mã định danh cá nhân của con (nếu đã được cấp)',
+        shortLabel: 'CCCD của con',
+        isMandatory: false,
       },
     ],
   },
@@ -79,26 +106,31 @@ const LAW_GROUP_SPECS: LawGroupRequirement[] = [
     code: 'CHILD_OVER_18_STUDYING',
     tabLabel: 'Nhóm 2',
     title: 'Nhóm 2: Con từ 18 tuổi trở lên đang đi học',
-    subtitle: 'Độ tuổi < 18 tuổi và còn đang theo học các bậc giáo dục.',
+    subtitle: 'Con từ đủ 18 tuổi và đang theo học đại học, cao đẳng, trung học chuyên nghiệp, dạy nghề.',
     docs: [
       {
         key: 'g2_cccd',
         code: 'a',
         docType: 'CITIZEN_ID',
-        title: 'a. Căn cước công dân của con.',
+        title: 'Căn cước công dân của con',
+        shortLabel: 'CCCD của con',
+        isMandatory: true,
       },
       {
         key: 'g2_birth',
         code: 'b',
         docType: 'BIRTH_CERTIFICATE',
-        title: 'b. Giấy khai sinh của con (chứng minh quan hệ).',
+        title: 'Giấy khai sinh của con (chứng minh quan hệ)',
+        shortLabel: 'Giấy khai sinh',
+        isMandatory: false,
       },
       {
         key: 'g2_student',
         code: 'c',
         docType: 'STUDENT_CARD',
-        title:
-          'c. Thẻ sinh viên (còn hạn) hoặc Giấy xác nhận học sinh/sinh viên từ trường đại học, cao đẳng, trung cấp, học nghề.',
+        title: 'Thẻ sinh viên (còn hạn) hoặc Giấy xác nhận học sinh/sinh viên từ nhà trường',
+        shortLabel: 'Thẻ sinh viên',
+        isMandatory: true,
       },
     ],
   },
@@ -113,20 +145,25 @@ const LAW_GROUP_SPECS: LawGroupRequirement[] = [
         key: 'g3_cccd',
         code: 'a',
         docType: 'CITIZEN_ID',
-        title: 'a. Căn cước công dân của con.',
+        title: 'Căn cước công dân của con',
+        shortLabel: 'CCCD của con',
+        isMandatory: true,
       },
       {
         key: 'g3_birth',
         code: 'b',
         docType: 'BIRTH_CERTIFICATE',
-        title: 'b. Giấy khai sinh của con.',
+        title: 'Giấy khai sinh của con',
+        shortLabel: 'Giấy khai sinh',
+        isMandatory: false,
       },
       {
         key: 'g3_disability',
         code: 'c',
         docType: 'DISABILITY_CERTIFICATE',
-        title:
-          'c. Giấy xác nhận mức độ khuyết tật (do UBND cấp xã cấp) hoặc Biên bản giám định y khoa mất khả năng lao động.',
+        title: 'Giấy xác nhận mức độ khuyết tật hoặc Biên bản giám định y khoa mất khả năng lao động',
+        shortLabel: 'Giấy khuyết tật',
+        isMandatory: true,
       },
     ],
   },
@@ -141,13 +178,17 @@ const LAW_GROUP_SPECS: LawGroupRequirement[] = [
         key: 'g4_cccd',
         code: 'a',
         docType: 'CITIZEN_ID',
-        title: 'a. Căn cước công dân của người phụ thuộc (cha/mẹ hoặc vợ/chồng).',
+        title: 'Căn cước công dân của người phụ thuộc (cha/mẹ hoặc vợ/chồng)',
+        shortLabel: 'CCCD NPT',
+        isMandatory: true,
       },
       {
         key: 'g4_relation',
         code: 'b',
         docType: 'MARRIAGE_CERTIFICATE',
-        title: 'b. Giấy tờ chứng minh quan hệ:',
+        title: 'Giấy tờ chứng minh quan hệ',
+        shortLabel: 'Chứng minh quan hệ',
+        isMandatory: true,
         lawExplanation:
           '- Nếu là Vợ/Chồng: Giấy chứng nhận kết hôn.\n- Nếu là Cha mẹ đẻ: Giấy khai sinh của người nộp thuế.\n- Nếu là Cha mẹ vợ/chồng: Giấy kết hôn của NNT + Giấy khai sinh của vợ/chồng.\n- Nếu là Cha mẹ nuôi: Quyết định công nhận việc nuôi con nuôi.',
       },
@@ -155,7 +196,9 @@ const LAW_GROUP_SPECS: LawGroupRequirement[] = [
         key: 'g4_condition',
         code: 'c',
         docType: 'DISABILITY_CERTIFICATE',
-        title: 'c. Giấy tờ chứng minh điều kiện giảm trừ:',
+        title: 'Giấy tờ chứng minh điều kiện giảm trừ',
+        shortLabel: 'Điều kiện giảm trừ',
+        isMandatory: false,
         lawExplanation:
           '- Nếu ngoài độ tuổi lao động: Bản cam kết không có thu nhập (hoặc thu nhập dưới ngưỡng luật định).\n- Nếu trong độ tuổi lao động: Giấy xác nhận khuyết tật hoặc Kết luận giám định mất khả năng lao động.',
       },
@@ -172,29 +215,35 @@ const LAW_GROUP_SPECS: LawGroupRequirement[] = [
         key: 'g5_cccd_or_birth',
         code: 'a',
         docType: 'CITIZEN_ID',
-        title: 'a. Căn cước công dân / Giấy khai sinh của người phụ thuộc.',
+        title: 'Căn cước công dân / Giấy khai sinh của người phụ thuộc',
+        shortLabel: 'CCCD / GKS',
+        isMandatory: true,
       },
       {
         key: 'g5_blood_relation',
         code: 'b',
         docType: 'RELATIONSHIP_CERTIFICATE',
-        title:
-          'b. Giấy tờ chứng minh quan hệ huyết thống (Giấy khai sinh các bên, thông tin cư trú chứng minh cùng dòng họ).',
+        title: 'Giấy tờ chứng minh quan hệ huyết thống (Giấy khai sinh các bên, cư trú CT07)',
+        shortLabel: 'Quan hệ huyết thống',
+        isMandatory: true,
       },
       {
         key: 'g5_ubnd_cert',
         code: 'c',
         docType: 'SUPPORT_COMMITMENT_FORM',
-        title:
-          'c. Văn bản xác nhận của UBND cấp xã nơi cư trú xác nhận người nộp thuế đang trực tiếp nuôi dưỡng và người phụ thuộc không còn ai khác phụ dưỡng.',
+        title: 'Văn bản xác nhận của UBND cấp xã về việc trực tiếp nuôi dưỡng',
+        shortLabel: 'Xác nhận nuôi dưỡng',
+        isMandatory: true,
       },
       {
         key: 'g5_labor_condition',
         code: 'd',
         docType: 'DISABILITY_CERTIFICATE',
-        title: 'd. Giấy tờ điều kiện lao động:',
+        title: 'Giấy tờ điều kiện lao động',
+        shortLabel: 'Điều kiện lao động',
+        isMandatory: false,
         lawExplanation:
-          '- Nếu trong độ tuổi lao động: Giấy xác nhận khuyết tật/ mất khả năng lao động.\n- Nếu ngoài độ tuổi lao động: Bản cam kết không có thu nhập hợp lệ.',
+          '- Nếu trong độ tuổi lao động: Giấy xác nhận khuyết tật / mất khả năng lao động.\n- Nếu ngoài độ tuổi lao động: Bản cam kết không có thu nhập hợp lệ.',
       },
     ],
   },
@@ -203,6 +252,23 @@ const LAW_GROUP_SPECS: LawGroupRequirement[] = [
 export const ProofDocumentsScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
   const route = useRoute<ProofDocumentsRouteProp>();
+  const insets = useSafeAreaInsets();
+  const { toast } = useToast();
+
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  const [dialog, setDialog] = useState<{
+    title: string;
+    message: string;
+    primaryLabel?: string;
+    onPrimary?: () => void;
+  } | null>(null);
 
   const initialGroupIdx =
     typeof route.params?.groupIndex === 'number' &&
@@ -223,76 +289,72 @@ export const ProofDocumentsScreen: React.FC = () => {
     }
   }, [route.params?.groupIndex]);
 
-  const [dependents, setDependents] = useState<DependentItem[]>([]);
   const [selectedDependent, setSelectedDependent] = useState<DependentItem | null>(null);
-
-  // Lưu trữ tệp được chọn theo từng mục document key
-  const [selectedFiles, setSelectedFiles] = useState<
-    Record<
-      string,
-      {
-        name: string;
-        sizeText: string;
-        type: string;
-        blob?: Blob | File;
-        uri?: string;
-        docId?: string;
-        docType?: string;
-        uploadedAt?: string;
-        isReadable?: boolean;
-      }
-    >
-  >({});
-
+  const [selectedFiles, setSelectedFiles] = useState<Record<string, SelectedDocFile>>({});
   const [uploading, setUploading] = useState<boolean>(false);
   const [uploadedKeys, setUploadedKeys] = useState<Record<string, boolean>>({});
+  const [skippedKeys, setSkippedKeys] = useState<Record<string, boolean>>({});
+  const [stepErrors, setStepErrors] = useState<Record<string, ParsedDependentUploadError | undefined>>({});
+  const [stepSuccesses, setStepSuccesses] = useState<Record<string, string | undefined>>({});
+  const [lastSuccessNotice, setLastSuccessNotice] = useState<string | null>(null);
   const [serverDocs, setServerDocs] = useState<any[]>([]);
-  const [previewDoc, setPreviewDoc] = useState<DocumentViewerItem | null>(null);
+  const [serverProfileComplete, setServerProfileComplete] = useState<boolean>(false);
+  const [currentStepIdx, setCurrentStepIdx] = useState<number>(0);
+  const hasAutoPositionedStepRef = useRef<boolean>(false);
 
-  // State cho Modal chọn nguồn ảnh/tệp thực tế
+  const [previewDoc, setPreviewDoc] = useState<DocumentViewerItem | null>(null);
   const [pickerModalVisible, setPickerModalVisible] = useState<boolean>(false);
   const [activePickingDoc, setActivePickingDoc] = useState<{
     key: string;
     title: string;
     docType: string;
   } | null>(null);
-
-  // State cho Modal đọc chi tiết luật khi bấm dấu chấm than (!)
   const [lawModalVisible, setLawModalVisible] = useState<boolean>(false);
   const [lawModalData, setLawModalData] = useState<{
     title: string;
     content: string;
   } | null>(null);
 
-  const handleOpenLawModal = (title: string, content: string) => {
-    setLawModalData({ title, content });
-    setLawModalVisible(true);
-  };
-
   const [allRules, setAllRules] = useState<DependentDocumentRuleItem[]>([]);
   const [dynamicDocs, setDynamicDocs] = useState<LawDocItem[] | null>(null);
 
   const currentGroupSpec = LAW_GROUP_SPECS[selectedGroupIdx];
-  const activeDocs = dynamicDocs && dynamicDocs.length > 0 ? dynamicDocs : currentGroupSpec.docs;
+  const relationship = (route.params?.dependentData as any)?.relationship as string | undefined;
+
+  const staticDocs = useMemo(
+    () =>
+      currentGroupSpec.docs.map((d) =>
+        d.key === 'g4_relation' ? { ...d, docType: relationDocTypeFor(relationship) } : d
+      ),
+    [currentGroupSpec, relationship]
+  );
+
+  const activeDocs = dynamicDocs && dynamicDocs.length > 0 ? dynamicDocs : staticDocs;
+
+  // Đảm bảo chỉ số bước luôn nằm trong phạm vi activeDocs
+  useEffect(() => {
+    if (currentStepIdx >= activeDocs.length) {
+      setCurrentStepIdx(Math.max(0, activeDocs.length - 1));
+    }
+  }, [activeDocs.length, currentStepIdx]);
 
   useEffect(() => {
-    loadInitialData();
-    loadRules();
+    void loadInitialData();
+    void loadRules();
   }, []);
 
   const loadRules = async () => {
     try {
       const rules = await dependentDocumentApi.getRules();
-      if (rules && rules.length > 0) {
+      if (isMountedRef.current && rules && rules.length > 0) {
         setAllRules(rules);
       }
     } catch (err) {
-      console.warn('loadRules err:', err);
+      if (__DEV__) console.warn('loadRules err:', err);
     }
   };
 
   // Cập nhật danh sách tài liệu động theo quy tắc từ Backend API
-  // NPT-07: ưu tiên requiredDocuments từ PATCH /group qua nav params
   useEffect(() => {
     const fromPatch = resolveProofDocumentsChecklist({
       requiredDocuments: route.params?.requiredDocuments,
@@ -306,7 +368,9 @@ export const ProofDocumentsScreen: React.FC = () => {
           key: `patch_${docType.toLowerCase()}_${idx}`,
           code: letter,
           docType,
-          title: `${letter}. ${label} (Bắt buộc)`,
+          title: label,
+          shortLabel: label,
+          isMandatory: true,
         };
       });
       setDynamicDocs(docs);
@@ -316,48 +380,56 @@ export const ProofDocumentsScreen: React.FC = () => {
     if (allRules.length === 0) return;
 
     const rel = (route.params?.dependentData as any)?.relationship;
-    let targetGroup = 'CHILD_UNDER_18';
+    const explicitGroupCode = (route.params?.dependentData as any)?.groupCode as string | undefined;
+    let targetGroup = explicitGroupCode || 'CHILD_UNDER_18';
 
-    if (selectedGroupIdx === 0) {
-      targetGroup = 'CHILD_UNDER_18';
-    } else if (selectedGroupIdx === 1) {
-      targetGroup = 'CHILD_STUDYING';
-    } else if (selectedGroupIdx === 2) {
-      targetGroup = 'CHILD_DISABLED';
-    } else if (selectedGroupIdx === 3) {
-      if (rel === 'SPOUSE') targetGroup = 'SPOUSE';
-      else if (rel === 'PARENT_IN_LAW') targetGroup = 'PARENT_IN_LAW';
-      else targetGroup = 'PARENT';
-    } else if (selectedGroupIdx === 4) {
-      targetGroup = 'OTHER_HELPLESS';
+    if (!explicitGroupCode) {
+      if (selectedGroupIdx === 0) {
+        targetGroup = 'CHILD_UNDER_18';
+      } else if (selectedGroupIdx === 1) {
+        targetGroup = 'CHILD_OVER_18_STUDYING';
+      } else if (selectedGroupIdx === 2) {
+        targetGroup = 'CHILD_OVER_18_DISABLED';
+      } else if (selectedGroupIdx === 3) {
+        targetGroup = rel === 'SPOUSE' ? 'SPOUSE_RETIRED' : 'PARENT_RETIRED';
+      } else if (selectedGroupIdx === 4) {
+        targetGroup = 'OTHER_HELPLESS';
+      }
     }
 
-    // Lọc các rule tương ứng với nhóm
     let filteredRules = allRules.filter(
       (r) => r.targetGroup.toUpperCase() === targetGroup.toUpperCase()
     );
 
-    // Fallback nếu không có kết quả chính xác theo tên nhóm mới
     if (filteredRules.length === 0) {
       if (selectedGroupIdx === 1) {
-        filteredRules = allRules.filter((r) => r.targetGroup.includes('STUDY'));
+        filteredRules = allRules.filter((r) => r.targetGroup.toUpperCase().includes('STUDY'));
       } else if (selectedGroupIdx === 2) {
-        filteredRules = allRules.filter((r) => r.targetGroup.includes('DISABLE'));
+        filteredRules = allRules.filter((r) => r.targetGroup.toUpperCase().includes('DISABLE'));
       } else if (selectedGroupIdx === 3) {
-        filteredRules = allRules.filter((r) => r.targetGroup === 'PARENT' || r.targetGroup === 'SPOUSE');
+        filteredRules = allRules.filter((r) =>
+          rel === 'SPOUSE'
+            ? r.targetGroup.toUpperCase().includes('SPOUSE')
+            : r.targetGroup.toUpperCase().includes('PARENT')
+        );
+      } else if (selectedGroupIdx === 4) {
+        filteredRules = allRules.filter((r) => r.targetGroup.toUpperCase().includes('OTHER'));
       }
     }
 
     if (filteredRules.length > 0) {
-      const docs: LawDocItem[] = filteredRules.map((rule, idx) => {
-        const letter = String.fromCharCode(97 + idx); // a, b, c, d...
+      // Đưa các chứng từ bắt buộc lên trước để người dùng upload xong bắt buộc trước
+      const ordered = [...filteredRules].sort((a, b) => Number(b.isMandatory) - Number(a.isMandatory));
+      const docs: LawDocItem[] = ordered.map((rule, idx) => {
+        const letter = String.fromCharCode(97 + idx);
         const label = getDocTypeLabel(rule.docType);
-        const mandatoryBadge = rule.isMandatory ? ' (Bắt buộc)' : ' (Tùy chọn)';
         return {
           key: `rule_${rule.docType.toLowerCase()}`,
           code: letter,
           docType: rule.docType,
-          title: `${letter}. ${label}${mandatoryBadge}`,
+          title: label,
+          shortLabel: label,
+          isMandatory: Boolean(rule.isMandatory),
           lawExplanation: rule.description || undefined,
         };
       });
@@ -365,11 +437,11 @@ export const ProofDocumentsScreen: React.FC = () => {
     }
   }, [allRules, selectedGroupIdx, route.params?.dependentData, route.params?.requiredDocuments]);
 
-  // Tự động đồng bộ hóa tài liệu từ máy chủ (serverDocs) vào các ô giấy tờ (activeDocs)
+  // Tự động đồng bộ hóa tài liệu từ máy chủ (serverDocs) vào các bước
   useEffect(() => {
     if (!serverDocs || serverDocs.length === 0) return;
     const newUploadedKeys: Record<string, boolean> = {};
-    const newSelectedFiles: Record<string, any> = {};
+    const newSelectedFiles: Record<string, SelectedDocFile> = {};
 
     activeDocs.forEach((docSpec) => {
       const matchingDoc = serverDocs.find(
@@ -383,7 +455,7 @@ export const ProofDocumentsScreen: React.FC = () => {
       if (matchingDoc) {
         newUploadedKeys[docSpec.key] = true;
         newSelectedFiles[docSpec.key] = {
-          name: (matchingDoc.fileUrl || '').split('/').pop() || docSpec.title,
+          name: (matchingDoc.fileUrl || '').split('/').pop()?.split('?')[0] || docSpec.title,
           sizeText: 'Đã lưu trên máy chủ',
           type: matchingDoc.fileMimeType || 'image/jpeg',
           uri: getFullFileUrl(matchingDoc.fileUrl),
@@ -395,14 +467,21 @@ export const ProofDocumentsScreen: React.FC = () => {
       }
     });
 
-    setUploadedKeys((prev) => ({ ...prev, ...newUploadedKeys }));
-    setSelectedFiles((prev) => ({ ...prev, ...newSelectedFiles }));
+    setUploadedKeys((prev) => {
+      const merged = { ...prev, ...newUploadedKeys };
+      if (!hasAutoPositionedStepRef.current) {
+        hasAutoPositionedStepRef.current = true;
+        setCurrentStepIdx(findInitialPendingStepIndex(activeDocs, merged));
+      }
+      return merged;
+    });
+    setSelectedFiles((prev) => ({ ...newSelectedFiles, ...prev }));
   }, [serverDocs, activeDocs]);
 
   const loadInitialData = async () => {
     try {
       const deps = await dependentDocumentApi.getDependents();
-      setDependents(deps);
+      if (!isMountedRef.current) return;
       if (deps.length > 0) {
         const matched = deps.find((d) => d.currentGroup === currentGroupSpec.code);
         setSelectedDependent(matched || deps[0]);
@@ -415,19 +494,57 @@ export const ProofDocumentsScreen: React.FC = () => {
     if (targetDepId) {
       try {
         const detail = await dependentDocumentApi.getDependentById(targetDepId);
+        if (!isMountedRef.current) return;
+        if (detail?.isProfileComplete) {
+          setServerProfileComplete(true);
+        }
         if (detail && Array.isArray(detail.documents) && detail.documents.length > 0) {
           setServerDocs(detail.documents);
         }
       } catch (err) {
-        console.warn('getDependentById in ProofDocumentsScreen error:', err);
+        if (__DEV__) console.warn('getDependentById in ProofDocumentsScreen error:', err);
       }
     }
   };
 
-  // Mở menu chọn nguồn ảnh thật khi bấm vào ô
+  const dependentId =
+    route.params?.dependentId ||
+    (route.params?.dependentData as any)?.id ||
+    selectedDependent?.id;
+
+  const currentDoc = activeDocs[currentStepIdx] || activeDocs[0];
+  const currentFile = currentDoc ? selectedFiles[currentDoc.key] : undefined;
+  const isCurrentUploaded = currentDoc ? Boolean(uploadedKeys[currentDoc.key]) : false;
+  const hasPendingLocalFile = Boolean(currentFile && !currentFile.docId);
+  const currentError = currentDoc ? stepErrors[currentDoc.key] : undefined;
+  const currentSuccessMsg = currentDoc ? stepSuccesses[currentDoc.key] : undefined;
+  const isLastStep = currentStepIdx >= activeDocs.length - 1;
+  const uploadedCount = activeDocs.filter((d) => uploadedKeys[d.key]).length;
+  const allMandatoryDone = areAllMandatoryStepsUploaded(
+    activeDocs,
+    uploadedKeys,
+    serverProfileComplete
+  );
+
+  const handleOpenLawModal = (title: string, content: string) => {
+    setLawModalData({ title, content });
+    setLawModalVisible(true);
+  };
+
+  const assignPickedFile = (docKey: string, file: SelectedDocFile) => {
+    setSelectedFiles((prev) => ({
+      ...prev,
+      [docKey]: file,
+    }));
+    // Xóa lỗi cũ của bước này ngay khi người dùng chọn lại ảnh mới
+    setStepErrors((prev) => ({ ...prev, [docKey]: undefined }));
+    setStepSuccesses((prev) => ({ ...prev, [docKey]: undefined }));
+    setLastSuccessNotice(null);
+  };
+
   const handleOpenDocPicker = (docKey: string, docTitle: string, docType: string) => {
+    if (uploading) return;
     if (Platform.OS === 'web') {
-      // Trình duyệt web: mở input file trực tiếp
       const input = document.createElement('input');
       input.type = 'file';
       input.accept = 'image/*,application/pdf';
@@ -435,32 +552,28 @@ export const ProofDocumentsScreen: React.FC = () => {
         const file = e.target?.files?.[0];
         if (file) {
           if (file.size > 10 * 1024 * 1024) {
-            window.alert('Dung lượng tệp vượt quá giới hạn 10MB.');
+            toast.error('Dung lượng tệp vượt quá giới hạn tối đa 10MB.', 'Tệp vượt quá 10MB');
             return;
           }
           const sizeKb = Math.round(file.size / 1024);
           const sizeText = sizeKb > 1024 ? `${(sizeKb / 1024).toFixed(1)} MB` : `${sizeKb} KB`;
-
-          setSelectedFiles((prev) => ({
-            ...prev,
-            [docKey]: {
-              name: file.name,
-              sizeText,
-              type: file.type || 'application/pdf',
-              blob: file,
-            },
-          }));
+          const previewUri = typeof URL !== 'undefined' ? URL.createObjectURL(file) : undefined;
+          assignPickedFile(docKey, {
+            name: file.name,
+            sizeText,
+            type: file.type || 'application/pdf',
+            blob: file,
+            uri: previewUri,
+          });
         }
       };
       input.click();
     } else {
-      // Điện thoại Android / iOS: hiển thị Modal chọn Camera, Thư viện ảnh, hoặc File PDF
       setActivePickingDoc({ key: docKey, title: docTitle, docType });
       setPickerModalVisible(true);
     }
   };
 
-  // 1. Chụp ảnh thật bằng Camera
   const handleLaunchCamera = async () => {
     setPickerModalVisible(false);
     if (!activePickingDoc) return;
@@ -468,37 +581,34 @@ export const ProofDocumentsScreen: React.FC = () => {
     try {
       const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert('Cấp quyền Camera', 'Vui lòng cho phép ứng dụng truy cập Camera để chụp ảnh giấy tờ minh chứng.');
+        toast.warning('Vui lòng cho phép ứng dụng truy cập máy ảnh để chụp ảnh giấy tờ minh chứng.', 'Cần cấp quyền');
         return;
       }
 
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes: ['images'],
         quality: 0.8,
-        allowsEditing: true,
+        allowsEditing: false,
       });
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const asset = result.assets[0];
-        const fileName = asset.fileName || `chup_${activePickingDoc.docType.toLowerCase()}_${Date.now().toString().slice(-4)}.jpg`;
-        const sizeText = asset.fileSize ? `${Math.round(asset.fileSize / 1024)} KB` : '1.4 MB';
-
-        setSelectedFiles((prev) => ({
-          ...prev,
-          [activePickingDoc.key]: {
-            name: fileName,
-            sizeText,
-            type: asset.mimeType || 'image/jpeg',
-            uri: asset.uri,
-          },
-        }));
+        const fileName =
+          asset.fileName ||
+          `chup_${activePickingDoc.docType.toLowerCase()}_${Date.now().toString().slice(-4)}.jpg`;
+        const sizeText = asset.fileSize ? `${Math.round(asset.fileSize / 1024)} KB` : 'Ảnh chụp mới';
+        assignPickedFile(activePickingDoc.key, {
+          name: fileName,
+          sizeText,
+          type: asset.mimeType || 'image/jpeg',
+          uri: asset.uri,
+        });
       }
     } catch (err: any) {
-      Alert.alert('Lỗi chụp ảnh', err.message || 'Không thể khởi động Camera.');
+      toast.error(err?.message || 'Không thể khởi động máy ảnh.', 'Lỗi chụp ảnh');
     }
   };
 
-  // 2. Chọn ảnh thật từ Thư viện (Gallery)
   const handleLaunchGallery = async () => {
     setPickerModalVisible(false);
     if (!activePickingDoc) return;
@@ -506,7 +616,7 @@ export const ProofDocumentsScreen: React.FC = () => {
     try {
       const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert('Cấp quyền Thư viện ảnh', 'Vui lòng cho phép ứng dụng truy cập Thư viện ảnh để chọn chứng từ.');
+        toast.warning('Vui lòng cho phép ứng dụng truy cập Thư viện ảnh để chọn chứng từ.', 'Cần cấp quyền');
         return;
       }
 
@@ -518,25 +628,22 @@ export const ProofDocumentsScreen: React.FC = () => {
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const asset = result.assets[0];
-        const fileName = asset.fileName || `anh_${activePickingDoc.docType.toLowerCase()}_${Date.now().toString().slice(-4)}.jpg`;
-        const sizeText = asset.fileSize ? `${Math.round(asset.fileSize / 1024)} KB` : '1.2 MB';
-
-        setSelectedFiles((prev) => ({
-          ...prev,
-          [activePickingDoc.key]: {
-            name: fileName,
-            sizeText,
-            type: asset.mimeType || 'image/jpeg',
-            uri: asset.uri,
-          },
-        }));
+        const fileName =
+          asset.fileName ||
+          `anh_${activePickingDoc.docType.toLowerCase()}_${Date.now().toString().slice(-4)}.jpg`;
+        const sizeText = asset.fileSize ? `${Math.round(asset.fileSize / 1024)} KB` : 'Ảnh thư viện';
+        assignPickedFile(activePickingDoc.key, {
+          name: fileName,
+          sizeText,
+          type: asset.mimeType || 'image/jpeg',
+          uri: asset.uri,
+        });
       }
     } catch (err: any) {
-      Alert.alert('Lỗi thư viện ảnh', err.message || 'Không thể mở thư viện ảnh.');
+      toast.error(err?.message || 'Không thể mở thư viện ảnh.', 'Lỗi thư viện ảnh');
     }
   };
 
-  // 3. Chọn tệp PDF hoặc tài liệu từ máy
   const handleLaunchDocument = async () => {
     setPickerModalVisible(false);
     if (!activePickingDoc) return;
@@ -549,190 +656,231 @@ export const ProofDocumentsScreen: React.FC = () => {
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
         const asset = result.assets[0];
+        if (asset.size && asset.size > 10 * 1024 * 1024) {
+          toast.error('Dung lượng tệp vượt quá giới hạn tối đa 10MB.', 'Tệp vượt quá 10MB');
+          return;
+        }
         const sizeKb = asset.size ? Math.round(asset.size / 1024) : 380;
         const sizeText = sizeKb > 1024 ? `${(sizeKb / 1024).toFixed(1)} MB` : `${sizeKb} KB`;
-
-        setSelectedFiles((prev) => ({
-          ...prev,
-          [activePickingDoc.key]: {
-            name: asset.name,
-            sizeText,
-            type: asset.mimeType || 'application/pdf',
-            uri: asset.uri,
-          },
-        }));
+        assignPickedFile(activePickingDoc.key, {
+          name: asset.name,
+          sizeText,
+          type: asset.mimeType || 'application/pdf',
+          uri: asset.uri,
+        });
       }
     } catch (err: any) {
-      Alert.alert('Lỗi chọn tệp', err.message || 'Không thể chọn tệp tài liệu.');
+      toast.error(err?.message || 'Không thể chọn tệp tài liệu.', 'Lỗi chọn tệp');
     }
   };
 
-  // Lưu thông tin hồ sơ người phụ thuộc & giấy tờ minh chứng (thay thế Quét thông minh)
-  const handleSaveAndContinue = async () => {
-    const activeDocKeys = activeDocs.map((d) => d.key);
-    const entriesToUpload = Object.entries(selectedFiles).filter(([k]) => activeDocKeys.includes(k));
-
-    const dependentId =
-      route.params?.dependentId ||
-      (route.params?.dependentData as any)?.id ||
-      selectedDependent?.id;
+  // Upload ĐÚNG 1 chứng từ ở bước hiện tại — thành công mới tự nhảy sang chứng từ tiếp theo
+  const handleUploadCurrentStep = async () => {
+    if (!currentDoc || uploading) return;
 
     if (!dependentId) {
-      Alert.alert('Chưa có hồ sơ', 'Không tìm thấy thông tin hồ sơ người phụ thuộc để lưu.');
+      toast.warning('Không tìm thấy thông tin hồ sơ người phụ thuộc để lưu.', 'Chưa có hồ sơ');
       return;
     }
 
+    if (!currentFile) {
+      handleOpenDocPicker(currentDoc.key, currentDoc.title, currentDoc.docType);
+      return;
+    }
+
+    setUploading(true);
+    setStepErrors((prev) => ({ ...prev, [currentDoc.key]: undefined }));
+    setLastSuccessNotice(null);
+
     try {
-      setUploading(true);
-      let uploadCount = 0;
+      const res = await dependentDocumentApi.uploadDocument(
+        dependentId,
+        currentDoc.docType,
+        currentFile
+      );
+      if (!isMountedRef.current) return;
 
-      for (const [key, fileObj] of entriesToUpload) {
-        const docSpec = activeDocs.find((d) => d.key === key);
-        const docType = docSpec?.docType || 'BIRTH_CERTIFICATE';
+      const updatedDocFile: SelectedDocFile = {
+        ...currentFile,
+        sizeText: 'Đã xác thực & lưu trên hệ thống',
+        uri: res.fileUrl || currentFile.uri,
+        docId: res.docId,
+        docType: res.docType || currentDoc.docType,
+        uploadedAt: res.uploadedAt || new Date().toISOString(),
+        isReadable: res.isReadable,
+      };
 
-        // Gọi API DependentDocument uploadDocument
-        const res = await dependentDocumentApi.uploadDocument(dependentId, docType, fileObj);
-        uploadCount++;
-        setUploadedKeys((prev) => ({ ...prev, [key]: true }));
-
-        if (res) {
-          setServerDocs((prev) => {
-            const filtered = prev.filter((d) => d.docType !== docType);
-            return [
-              ...filtered,
-              {
-                docId: res.docId,
-                docType: res.docType || docType,
-                fileUrl: res.fileUrl,
-                fileMimeType: res.fileMimeType || fileObj.type,
-                uploadedAt: res.uploadedAt || new Date().toISOString(),
-                isReadable: res.isReadable,
-              },
-            ];
-          });
-        }
+      setSelectedFiles((prev) => ({ ...prev, [currentDoc.key]: updatedDocFile }));
+      setUploadedKeys((prev) => ({ ...prev, [currentDoc.key]: true }));
+      setSkippedKeys((prev) => ({ ...prev, [currentDoc.key]: false }));
+      setStepSuccesses((prev) => ({
+        ...prev,
+        [currentDoc.key]: `${currentDoc.shortLabel} đã được kiểm tra khớp hồ sơ và lưu thành công.`,
+      }));
+      if (res.isProfileComplete) {
+        setServerProfileComplete(true);
       }
 
-      setUploading(false);
+      setServerDocs((prev) => {
+        const filtered = prev.filter((d) => d.docType !== (res.docType || currentDoc.docType));
+        return [
+          ...filtered,
+          {
+            docId: res.docId,
+            docType: res.docType || currentDoc.docType,
+            fileUrl: res.fileUrl,
+            fileMimeType: res.fileMimeType || currentFile.type,
+            uploadedAt: res.uploadedAt || new Date().toISOString(),
+            isReadable: res.isReadable,
+          },
+        ];
+      });
 
-      const saved = route.params?.dependentData;
-      if (saved?.fullName && saved.relationship && saved.effectiveFromMonth) {
+      toast.success(
+        `"${currentDoc.shortLabel}" đã tải lên và xác thực thành công!`,
+        'Tải chứng từ thành công'
+      );
+
+      // Nếu còn chứng từ tiếp theo -> chuyển tự động sang chứng từ kế tiếp kèm thông báo thành công của bước vừa xong
+      if (currentStepIdx < activeDocs.length - 1) {
+        setLastSuccessNotice(
+          `Đã tải lên thành công: ${currentDoc.shortLabel}. Mời tiếp tục chứng từ tiếp theo.`
+        );
+        setCurrentStepIdx(currentStepIdx + 1);
+      } else {
+        setLastSuccessNotice(null);
+      }
+    } catch (err: unknown) {
+      if (!isMountedRef.current) return;
+      const parsed = parseDependentUploadError(err);
+      setStepErrors((prev) => ({ ...prev, [currentDoc.key]: parsed }));
+      toast.error(parsed.message, parsed.title);
+    } finally {
+      if (isMountedRef.current) {
+        setUploading(false);
+      }
+    }
+  };
+
+  const handleCompleteFlow = () => {
+    if (!dependentId) {
+      navigation.reset({ index: 1, routes: [{ name: 'Home' }, { name: 'DependentList' }] });
+      return;
+    }
+
+    const saved = route.params?.dependentData;
+    if (saved?.fullName && saved.relationship && saved.effectiveFromMonth) {
+      navigation.reset({
+        index: 1,
+        routes: [
+          { name: 'Home' },
+          {
+            name: 'DependentSaved',
+            params: {
+              dependentId,
+              fullName: saved.fullName,
+              relationship: saved.relationship,
+              groupCode: saved.groupCode,
+              groupId: saved.groupId,
+              effectiveFromMonth: saved.effectiveFromMonth,
+            },
+          },
+        ],
+      });
+      return;
+    }
+
+    setDialog({
+      title: 'Lưu hồ sơ thành công',
+      message: allMandatoryDone
+        ? 'Hồ sơ minh chứng người phụ thuộc đã được cập nhật và đủ điều kiện giảm trừ gia cảnh.'
+        : 'Các giấy tờ minh chứng đã tải lên đã được lưu vào hồ sơ người phụ thuộc.',
+      primaryLabel: 'Xem chi tiết hồ sơ',
+      onPrimary: () => {
+        setDialog(null);
         navigation.reset({
-          index: 1,
+          index: 2,
           routes: [
             { name: 'Home' },
-            {
-              name: 'DependentSaved',
-              params: {
-                fullName: saved.fullName,
-                relationship: saved.relationship,
-                groupCode: saved.groupCode,
-                groupId: saved.groupId,
-                effectiveFromMonth: saved.effectiveFromMonth,
-              },
-            },
+            { name: 'DependentList' },
+            { name: 'DependentDetail', params: { dependentId } },
           ],
         });
-        return;
-      }
+      },
+    });
+  };
 
-      const msg = uploadCount > 0
-        ? `Đã lưu hồ sơ và tải lên thành công ${uploadCount} giấy tờ minh chứng!`
-        : 'Đã lưu thông tin hồ sơ người phụ thuộc thành công!';
+  const handleSelectStepPill = (targetIdx: number) => {
+    if (uploading || targetIdx === currentStepIdx) return;
+    if (!canNavigateToProofStep(targetIdx, activeDocs, uploadedKeys, skippedKeys)) {
+      toast.warning(
+        'Vui lòng tải lên thành công chứng từ bắt buộc ở bước hiện tại trước khi chuyển sang chứng từ tiếp theo.',
+        'Chưa hoàn tất bước hiện tại'
+      );
+      return;
+    }
+    setLastSuccessNotice(null);
+    setCurrentStepIdx(targetIdx);
+  };
 
-      Alert.alert('Thành công', msg, [
-        {
-          text: 'Về trang chủ',
-          onPress: () => {
-            navigation.reset({ index: 0, routes: [{ name: 'Home' }] });
-          },
-        },
-      ]);
-    } catch (err: any) {
-      setUploading(false);
-      Alert.alert('Lỗi lưu giấy tờ minh chứng', err?.message || 'Không thể tải lên giấy tờ minh chứng. Vui lòng thử lại.');
+  const handleSkipOptionalStep = () => {
+    if (!currentDoc || currentDoc.isMandatory || uploading) return;
+    setSkippedKeys((prev) => ({ ...prev, [currentDoc.key]: true }));
+    setLastSuccessNotice(null);
+    if (!isLastStep) {
+      setCurrentStepIdx(currentStepIdx + 1);
+    } else if (allMandatoryDone) {
+      handleCompleteFlow();
+    } else {
+      const firstPending = findInitialPendingStepIndex(activeDocs, uploadedKeys);
+      setCurrentStepIdx(firstPending);
+      toast.warning(
+        'Vẫn còn chứng từ bắt buộc chưa tải lên. Vui lòng hoàn tất chứng từ bắt buộc.',
+        'Còn chứng từ bắt buộc'
+      );
     }
   };
 
-  // Nộp hồ sơ minh chứng lên Backend API
-  const handleUploadAll = async () => {
-    const activeDocKeys = activeDocs.map((d) => d.key);
-    const chosenEntries = Object.entries(selectedFiles).filter(([k]) => activeDocKeys.includes(k));
-
-    if (chosenEntries.length === 0) {
-      Alert.alert('Chưa chọn ảnh minh chứng', 'Vui lòng bấm vào ô khung bên dưới để chụp ảnh hoặc chọn tệp minh chứng.');
-      return;
-    }
-
-    const dependentId =
-      route.params?.dependentId ||
-      (route.params?.dependentData as any)?.id ||
-      selectedDependent?.id;
-
-    if (!dependentId) {
-      Alert.alert('Chưa có hồ sơ', 'Không tìm thấy hồ sơ người phụ thuộc để tải lên.');
-      return;
-    }
-
-    try {
-      setUploading(true);
-      let lastRes: any = null;
-
-      // Upload từng tệp lên Backend API thật
-      for (const [key, fileObj] of chosenEntries) {
-        const docSpec = activeDocs.find((d) => d.key === key);
-        const docType = docSpec?.docType || 'BIRTH_CERTIFICATE';
-
-        const res = await dependentDocumentApi.uploadDocument(dependentId, docType, fileObj);
-        lastRes = res;
-        setUploadedKeys((prev) => ({ ...prev, [key]: true }));
-      }
-
-      const msg = lastRes?.isProfileComplete
-        ? 'Tải lên thành công! Hồ sơ minh chứng người phụ thuộc đã đủ điều kiện giảm trừ gia cảnh.'
-        : 'Tải lên thành công! Ảnh minh chứng đã được lưu trữ bảo mật trên hệ thống Tổng cục Thuế.';
-
-      const goHome = () => navigation.reset({ index: 0, routes: [{ name: 'Home' }] });
-
-      if (Platform.OS === 'web') {
-        window.alert(msg);
-        goHome();
-      } else {
-        Alert.alert('Thành công', msg, [{ text: 'Về trang chủ', onPress: goHome }]);
-      }
-    } catch (err: any) {
-      const errMsg = err.response?.data?.message || 'Không thể tải lên tệp. Vui lòng thử lại sau.';
-      Alert.alert('Lỗi tải lên', errMsg);
-    } finally {
-      setUploading(false);
+  const handleNextStepAfterUploaded = () => {
+    setLastSuccessNotice(null);
+    if (!isLastStep) {
+      setCurrentStepIdx(currentStepIdx + 1);
+    } else {
+      handleCompleteFlow();
     }
   };
+
+  const isCurrentFileImage = currentFile?.uri
+    ? isImageDocumentUri(currentFile.uri, currentFile.type, currentFile.name)
+    : false;
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      {/* Header chuẩn Figma: Nền hoa văn quốc huy / trống đồng + Tiêu đề "Ảnh minh chứng" */}
-      <View style={styles.royalHeader}>
-        <TouchableOpacity
-          style={styles.backBtn}
-          onPress={() => navigation.goBack()}
-          accessibilityRole="button"
-          accessibilityLabel="Quay lại"
-          testID="proofBackBtn"
-        >
-          <Ionicons name="arrow-back" size={26} color="#1A1A1A" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Ảnh minh chứng</Text>
-        <View style={styles.homeSlot}><HomeHeaderButton /></View>
-      </View>
+    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+      <DrumHeader
+        title="Ảnh minh chứng"
+        onBack={() => {
+          if (navigation.canGoBack()) navigation.goBack();
+          else navigation.navigate('Home');
+        }}
+        backTestID="proofBackBtn"
+      />
 
-      {/* Đã ẩn các tab nhóm khác theo yêu cầu - Chỉ hiển thị đúng nhóm người dùng đã chọn */}
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        {/* Banner thông tin NPT từ Đơn đăng kí nộp thuế */}
-        {route.params?.dependentData && (
+      <ScrollView
+        contentContainerStyle={[
+          styles.scrollContent,
+          { paddingBottom: Math.max(insets.bottom, 20) + 28 },
+        ]}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Banner thông tin NPT */}
+        {route.params?.dependentData ? (
           <View style={styles.applicantBadge} testID="dependentInfoBanner">
             <Ionicons name="person-circle" size={22} color={theme.colors.primary} />
             <Text style={styles.applicantText} numberOfLines={1}>
-              Hồ sơ: <Text style={{ fontWeight: '700' }}>{formatPersonName(route.params.dependentData.fullName)}</Text>{' '}
+              Hồ sơ:{' '}
+              <Text style={styles.applicantName}>
+                {formatPersonName(route.params.dependentData.fullName)}
+              </Text>{' '}
               {route.params.dependentData.citizenId
                 ? `(CCCD: ${route.params.dependentData.citizenId})`
                 : route.params.dependentData.birthCertNumber
@@ -740,185 +888,416 @@ export const ProofDocumentsScreen: React.FC = () => {
                 : ''}
             </Text>
           </View>
-        )}
+        ) : null}
 
-        {/* Tiêu đề nhóm theo đúng Figma (iPhone 17 - 15) */}
+        {/* Tiêu đề nhóm điều kiện */}
         <View style={styles.titleSection}>
           <Text style={styles.groupTitleText}>{currentGroupSpec.title}</Text>
           <Text style={styles.groupSubtitleText}>{currentGroupSpec.subtitle}</Text>
         </View>
 
-        {/* Danh sách các khung tải lên tương ứng từng loại giấy tờ a, b, c, d */}
-        {activeDocs.map((docItem) => {
-          const selectedFile = selectedFiles[docItem.key];
-          const isUploaded = uploadedKeys[docItem.key];
-
-          return (
-            <View key={docItem.key} style={styles.docFieldBlock}>
-              {/* Tiêu đề mục: kèm dấu chấm than (!) nếu có quy định luật chi tiết */}
-              <View style={styles.docLabelRow}>
-                <Text style={styles.docFieldLabel}>{docItem.title}</Text>
-                {docItem.lawExplanation && (
-                  <TouchableOpacity
-                    style={styles.exclamationIconBtn}
-                    onPress={() => handleOpenLawModal(docItem.title, docItem.lawExplanation!)}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Xem quy định cho ${docItem.title}`}
-                    testID={`btnLawExclamation_${docItem.key}`}
-                  >
-                    <Ionicons name="alert-circle-outline" size={20} color="#007AFF" />
-                  </TouchableOpacity>
-                )}
-              </View>
-
-              {/* Khung upload chữ nhật bo góc lớn theo đúng Figma */}
-              <View
+        {/* Thanh tiến trình tải từng chứng từ */}
+        <View style={styles.stepperCard}>
+          <View style={styles.stepperHeaderRow}>
+            <Text style={styles.stepperStepCount}>
+              Chứng từ {currentStepIdx + 1} / {activeDocs.length}
+            </Text>
+            <View
+              style={[
+                styles.progressCountBadge,
+                allMandatoryDone && styles.progressCountBadgeDone,
+              ]}
+            >
+              <Ionicons
+                name={allMandatoryDone ? 'checkmark-circle' : 'cloud-upload-outline'}
+                size={13}
+                color={allMandatoryDone ? '#2E7D32' : theme.colors.primary}
+              />
+              <Text
                 style={[
-                  styles.uploadBox,
-                  selectedFile && styles.uploadBoxSelected,
-                  isUploaded && styles.uploadBoxUploaded,
+                  styles.progressCountText,
+                  allMandatoryDone && styles.progressCountTextDone,
                 ]}
-                testID={`docUploadBox_${docItem.key}`}
               >
-                {selectedFile ? (
-                  <View style={styles.selectedFileContent}>
-                    {selectedFile.uri && (selectedFile.type?.includes('image') || !selectedFile.type?.includes('pdf')) ? (
-                      <TouchableOpacity
-                        activeOpacity={0.85}
-                        onPress={() => {
-                          setPreviewDoc({
-                            uri: selectedFile.uri,
-                            title: docItem.title,
-                            docType: docItem.docType,
-                            fileName: selectedFile.name,
-                            uploadedAt: selectedFile.uploadedAt,
-                            isReadable: selectedFile.isReadable,
-                            mimeType: selectedFile.type,
-                          });
-                        }}
-                        style={styles.previewImageTouchable}
-                        accessibilityRole="button"
-                        accessibilityLabel="Phóng to xem ảnh minh chứng"
-                      >
-                        <Image
-                          source={{ uri: selectedFile.uri }}
-                          style={styles.thumbnailPreview}
-                          resizeMode="cover"
-                        />
-                        <View style={styles.zoomPromptBadge}>
-                          <Ionicons name="expand-outline" size={13} color="#FFFFFF" style={{ marginRight: 4 }} />
-                          <Text style={styles.zoomPromptText}>Chạm để xem ảnh lớn</Text>
-                        </View>
-                      </TouchableOpacity>
-                    ) : (
-                      <TouchableOpacity
-                        activeOpacity={0.85}
-                        onPress={() => {
-                          setPreviewDoc({
-                            uri: selectedFile.uri,
-                            title: docItem.title,
-                            docType: docItem.docType,
-                            fileName: selectedFile.name,
-                            uploadedAt: selectedFile.uploadedAt,
-                            isReadable: selectedFile.isReadable,
-                            mimeType: selectedFile.type,
-                          });
-                        }}
-                        style={styles.fileIconBadge}
-                        accessibilityRole="button"
-                        accessibilityLabel="Xem chi tiết tệp"
-                      >
-                        <Ionicons
-                          name={isUploaded ? 'checkmark-circle' : 'document-text'}
-                          size={40}
-                          color={isUploaded ? theme.colors.success : theme.colors.primary}
-                        />
-                        <Text style={styles.viewPdfNotice}>Chạm để xem tệp</Text>
-                      </TouchableOpacity>
-                    )}
-
-                    <Text style={styles.selectedFileName} numberOfLines={1}>
-                      {selectedFile.name}
-                    </Text>
-                    <Text style={styles.selectedFileSize}>
-                      {isUploaded ? '✓ Đã lưu trên máy chủ' : `Kích thước: ${selectedFile.sizeText}`}
-                    </Text>
-
-                    {/* Hàng nút hành động: Xem ảnh lớn & Đổi ảnh */}
-                    <View style={styles.docActionButtonsRow}>
-                      <TouchableOpacity
-                        style={styles.previewDocBtn}
-                        onPress={() => {
-                          setPreviewDoc({
-                            uri: selectedFile.uri,
-                            title: docItem.title,
-                            docType: docItem.docType,
-                            fileName: selectedFile.name,
-                            uploadedAt: selectedFile.uploadedAt,
-                            isReadable: selectedFile.isReadable,
-                            mimeType: selectedFile.type,
-                          });
-                        }}
-                        accessibilityRole="button"
-                        accessibilityLabel="Xem ảnh phóng to"
-                      >
-                        <Ionicons name="eye-outline" size={16} color={theme.colors.primary} style={{ marginRight: 4 }} />
-                        <Text style={styles.previewDocBtnText}>Xem ảnh lớn</Text>
-                      </TouchableOpacity>
-
-                      <TouchableOpacity
-                        style={styles.repickActionBtn}
-                        onPress={() => handleOpenDocPicker(docItem.key, docItem.title, docItem.docType)}
-                        accessibilityRole="button"
-                        accessibilityLabel="Đổi hoặc chụp lại ảnh"
-                      >
-                        <Ionicons name="camera-reverse-outline" size={16} color="#666666" style={{ marginRight: 4 }} />
-                        <Text style={styles.repickActionBtnText}>Đổi ảnh khác</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                ) : (
-                  <TouchableOpacity
-                    style={styles.emptyUploadContent}
-                    activeOpacity={0.75}
-                    onPress={() => handleOpenDocPicker(docItem.key, docItem.title, docItem.docType)}
-                  >
-                    <View style={styles.uploadIconContainer}>
-                      <Ionicons name="arrow-up" size={32} color="#8B1E1E" style={{ marginBottom: -4 }} />
-                      <View style={styles.uploadTrayLine} />
-                    </View>
-                    <Text style={styles.emptyUploadHint}>Bấm để chụp hoặc tải ảnh minh chứng</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
+                {allMandatoryDone
+                  ? `Đủ hồ sơ (${uploadedCount}/${activeDocs.length})`
+                  : `Đã tải ${uploadedCount}/${activeDocs.length}`}
+              </Text>
             </View>
-          );
-        })}
+          </View>
 
-        {/* Khoảng cách trước thanh nút bấm */}
-        <View style={{ height: 20 }} />
-
-        {/* Nút Lưu thông tin & Hoàn tất (Bỏ quét thông minh do chưa có AI) */}
-        <View style={styles.actionRow}>
-          <TouchableOpacity
-            style={styles.saveInfoBtn}
-            onPress={handleSaveAndContinue}
-            activeOpacity={0.8}
-            disabled={uploading}
-            testID="saveAndContinueBtn"
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.stepPillsRow}
           >
-            {uploading ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
-            ) : (
-              <>
-                <Ionicons name="checkmark-circle-outline" size={20} color="#FFFFFF" style={{ marginRight: 8 }} />
-                <Text style={styles.saveInfoBtnText}>Lưu thông tin hồ sơ</Text>
-              </>
-            )}
-          </TouchableOpacity>
+            {activeDocs.map((doc, idx) => {
+              const isActive = idx === currentStepIdx;
+              const isDone = Boolean(uploadedKeys[doc.key]);
+              const isSkipped = Boolean(skippedKeys[doc.key]) && !isDone;
+              const unlocked = canNavigateToProofStep(idx, activeDocs, uploadedKeys, skippedKeys);
+
+              return (
+                <TouchableOpacity
+                  key={doc.key}
+                  style={[
+                    styles.stepPill,
+                    isDone && styles.stepPillDone,
+                    isActive && styles.stepPillActive,
+                    !unlocked && !isActive && styles.stepPillLocked,
+                  ]}
+                  onPress={() => handleSelectStepPill(idx)}
+                  activeOpacity={0.8}
+                  testID={`proofStepPill_${idx}`}
+                >
+                  {isDone ? (
+                    <Ionicons
+                      name="checkmark-circle"
+                      size={14}
+                      color={isActive ? '#FFFFFF' : '#2E7D32'}
+                    />
+                  ) : (
+                    <Text
+                      style={[
+                        styles.stepPillNum,
+                        isActive && styles.stepPillNumActive,
+                      ]}
+                    >
+                      {idx + 1}.
+                    </Text>
+                  )}
+                  <Text
+                    style={[
+                      styles.stepPillText,
+                      isDone && styles.stepPillTextDone,
+                      isActive && styles.stepPillTextActive,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {doc.shortLabel}
+                    {isSkipped ? ' (Bỏ qua)' : ''}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
         </View>
 
-        <View style={{ height: 40 }} />
+        {/* Thông báo vừa tải thành công chứng từ trước đó */}
+        {lastSuccessNotice ? (
+          <View style={styles.prevSuccessBanner} testID="proofPrevStepSuccessBanner">
+            <Ionicons name="checkmark-circle" size={18} color="#2E7D32" />
+            <Text style={styles.prevSuccessText}>{lastSuccessNotice}</Text>
+          </View>
+        ) : null}
+
+        {/* CHỈ HIỂN THỊ 1 CHỨNG TỪ TẠI MỖI BƯỚC */}
+        {currentDoc ? (
+          <View style={styles.singleDocCard} testID={`docUploadBox_${currentDoc.key}`}>
+            {/* Header chứng từ hiện tại */}
+            <View style={styles.docHeaderRow}>
+              <View style={styles.docTitleCol}>
+                <View style={styles.docMetaBadges}>
+                  <View style={styles.stepTag}>
+                    <Text style={styles.stepTagText}>Bước {currentStepIdx + 1}</Text>
+                  </View>
+                  <View
+                    style={[
+                      styles.mandatoryBadge,
+                      currentDoc.isMandatory
+                        ? styles.mandatoryBadgeRequired
+                        : styles.mandatoryBadgeOptional,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.mandatoryBadgeText,
+                        currentDoc.isMandatory
+                          ? styles.mandatoryBadgeTextRequired
+                          : styles.mandatoryBadgeTextOptional,
+                      ]}
+                    >
+                      {currentDoc.isMandatory ? 'Bắt buộc' : 'Tùy chọn'}
+                    </Text>
+                  </View>
+                </View>
+
+                <Text style={styles.docFieldLabel}>{currentDoc.title}</Text>
+              </View>
+
+              {currentDoc.lawExplanation ? (
+                <TouchableOpacity
+                  style={styles.exclamationIconBtn}
+                  onPress={() => handleOpenLawModal(currentDoc.title, currentDoc.lawExplanation!)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Xem quy định cho ${currentDoc.title}`}
+                  testID={`btnLawExclamation_${currentDoc.key}`}
+                >
+                  <Ionicons name="alert-circle-outline" size={22} color="#007AFF" />
+                </TouchableOpacity>
+              ) : null}
+            </View>
+
+            {/* Banner lỗi cụ thể từ BE cho chứng từ này */}
+            {currentError ? (
+              <View style={styles.stepErrorBanner} testID="proofStepErrorBanner">
+                <Ionicons name="alert-circle" size={20} color="#B91C1C" style={styles.bannerIcon} />
+                <View style={styles.bannerTextCol}>
+                  <Text style={styles.stepErrorTitle}>{currentError.title}</Text>
+                  <Text style={styles.stepErrorMessage}>{currentError.message}</Text>
+                  <Text style={styles.stepErrorHint}>Gợi ý: {currentError.hint}</Text>
+                </View>
+              </View>
+            ) : null}
+
+            {/* Banner thành công cho chứng từ này */}
+            {!currentError && isCurrentUploaded && !hasPendingLocalFile ? (
+              <View style={styles.stepSuccessBanner} testID="proofStepSuccessBanner">
+                <Ionicons name="checkmark-circle" size={20} color="#2E7D32" style={styles.bannerIcon} />
+                <View style={styles.bannerTextCol}>
+                  <Text style={styles.stepSuccessTitle}>Đã tải lên & xác thực thành công</Text>
+                  <Text style={styles.stepSuccessMessage}>
+                    {currentSuccessMsg ||
+                      'Giấy tờ này đã được hệ thống AI đối chiếu hợp lệ và lưu vào hồ sơ.'}
+                  </Text>
+                </View>
+              </View>
+            ) : null}
+
+            {/* Khung chụp / chọn & xem trước ảnh */}
+            <View
+              style={[
+                styles.uploadBox,
+                currentFile && styles.uploadBoxSelected,
+                isCurrentUploaded && !hasPendingLocalFile && styles.uploadBoxUploaded,
+                currentError && styles.uploadBoxError,
+              ]}
+            >
+              {currentFile ? (
+                <View style={styles.selectedFileContent}>
+                  {currentFile.uri && isCurrentFileImage ? (
+                    <TouchableOpacity
+                      activeOpacity={0.85}
+                      onPress={() => {
+                        setPreviewDoc({
+                          uri: currentFile.uri,
+                          title: currentDoc.title,
+                          docType: currentDoc.docType,
+                          fileName: currentFile.name,
+                          uploadedAt: currentFile.uploadedAt,
+                          isReadable: currentFile.isReadable,
+                          mimeType: currentFile.type,
+                        });
+                      }}
+                      style={styles.previewImageTouchable}
+                      accessibilityRole="button"
+                      accessibilityLabel="Phóng to xem ảnh minh chứng"
+                    >
+                      <Image
+                        source={{ uri: currentFile.uri }}
+                        style={styles.thumbnailPreview}
+                        resizeMode="contain"
+                      />
+                      <View style={styles.zoomPromptBadge}>
+                        <Ionicons name="search-outline" size={12} color="#FFFFFF" style={styles.mr4} />
+                        <Text style={styles.zoomPromptText}>Phóng to</Text>
+                      </View>
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity
+                      activeOpacity={0.85}
+                      onPress={() => {
+                        setPreviewDoc({
+                          uri: currentFile.uri,
+                          title: currentDoc.title,
+                          docType: currentDoc.docType,
+                          fileName: currentFile.name,
+                          uploadedAt: currentFile.uploadedAt,
+                          isReadable: currentFile.isReadable,
+                          mimeType: currentFile.type,
+                        });
+                      }}
+                      style={styles.fileIconBadge}
+                      accessibilityRole="button"
+                      accessibilityLabel="Xem chi tiết tệp"
+                    >
+                      <Ionicons
+                        name={isCurrentUploaded && !hasPendingLocalFile ? 'checkmark-circle' : 'document-text'}
+                        size={44}
+                        color={
+                          isCurrentUploaded && !hasPendingLocalFile
+                            ? theme.colors.success
+                            : theme.colors.primary
+                        }
+                      />
+                      <Text style={styles.viewPdfNotice}>Chạm để xem thông tin tệp</Text>
+                    </TouchableOpacity>
+                  )}
+
+                  <Text style={styles.selectedFileName} numberOfLines={1}>
+                    {currentFile.name}
+                  </Text>
+                  <Text style={styles.selectedFileSize}>
+                    {isCurrentUploaded && !hasPendingLocalFile
+                      ? '✓ Đã xác thực & lưu trên máy chủ'
+                      : `Chưa tải lên • ${currentFile.sizeText}`}
+                  </Text>
+
+                  <View style={styles.docActionButtonsRow}>
+                    <TouchableOpacity
+                      style={styles.previewDocBtn}
+                      onPress={() => {
+                        setPreviewDoc({
+                          uri: currentFile.uri,
+                          title: currentDoc.title,
+                          docType: currentDoc.docType,
+                          fileName: currentFile.name,
+                          uploadedAt: currentFile.uploadedAt,
+                          isReadable: currentFile.isReadable,
+                          mimeType: currentFile.type,
+                        });
+                      }}
+                      disabled={uploading}
+                    >
+                      <Ionicons name="eye-outline" size={16} color={theme.colors.primary} style={styles.mr4} />
+                      <Text style={styles.previewDocBtnText}>Xem ảnh lớn</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.repickActionBtn}
+                      onPress={() =>
+                        handleOpenDocPicker(currentDoc.key, currentDoc.title, currentDoc.docType)
+                      }
+                      disabled={uploading}
+                    >
+                      <Ionicons name="camera-reverse-outline" size={16} color="#555555" style={styles.mr4} />
+                      <Text style={styles.repickActionBtnText}>Chọn ảnh khác</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  style={styles.emptyUploadContent}
+                  activeOpacity={0.75}
+                  disabled={uploading}
+                  onPress={() =>
+                    handleOpenDocPicker(currentDoc.key, currentDoc.title, currentDoc.docType)
+                  }
+                >
+                  <View style={styles.uploadIconContainer}>
+                    <Ionicons name="cloud-upload-outline" size={38} color="#8B1E1E" />
+                  </View>
+                  <Text style={styles.emptyUploadTitle}>Chụp ảnh hoặc chọn tệp minh chứng</Text>
+                  <Text style={styles.emptyUploadHint}>
+                    Hỗ trợ JPG, PNG, PDF (tối đa 10MB). Hệ thống AI sẽ đối chiếu ngay sau khi tải lên.
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* Nút hành động chính của bước hiện tại */}
+            <View style={styles.stepActionsWrap}>
+              {hasPendingLocalFile ? (
+                <TouchableOpacity
+                  style={[styles.primaryStepBtn, uploading && styles.btnDisabled]}
+                  onPress={() => void handleUploadCurrentStep()}
+                  disabled={uploading}
+                  activeOpacity={0.85}
+                  testID="uploadCurrentDocBtn"
+                >
+                  {uploading ? (
+                    <>
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                      <Text style={styles.primaryStepBtnText}>Đang tải lên & AI kiểm tra...</Text>
+                    </>
+                  ) : (
+                    <>
+                      <Ionicons name="cloud-upload-outline" size={20} color="#FFFFFF" />
+                      <Text style={styles.primaryStepBtnText}>
+                        {currentError ? 'Thử tải lên & xác thực lại' : 'Tải lên & Xác thực chứng từ'}
+                      </Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              ) : isCurrentUploaded ? (
+                <TouchableOpacity
+                  style={styles.primaryStepBtn}
+                  onPress={handleNextStepAfterUploaded}
+                  activeOpacity={0.85}
+                  testID={isLastStep ? 'saveAndContinueBtn' : 'nextDocStepBtn'}
+                >
+                  <Ionicons
+                    name={isLastStep ? 'checkmark-circle-outline' : 'arrow-forward-circle-outline'}
+                    size={20}
+                    color="#FFFFFF"
+                  />
+                  <Text style={styles.primaryStepBtnText}>
+                    {isLastStep ? 'Hoàn tất hồ sơ minh chứng' : 'Tiếp tục chứng từ tiếp theo'}
+                  </Text>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity
+                  style={styles.primaryStepBtn}
+                  onPress={() =>
+                    handleOpenDocPicker(currentDoc.key, currentDoc.title, currentDoc.docType)
+                  }
+                  activeOpacity={0.85}
+                  testID="pickCurrentDocBtn"
+                >
+                  <Ionicons name="camera-outline" size={20} color="#FFFFFF" />
+                  <Text style={styles.primaryStepBtnText}>Chọn / Chụp ảnh chứng từ này</Text>
+                </TouchableOpacity>
+              )}
+
+              {/* Nút bỏ qua cho chứng từ Tùy chọn */}
+              {!currentDoc.isMandatory && !isCurrentUploaded && !uploading ? (
+                <TouchableOpacity
+                  style={styles.secondaryStepBtn}
+                  onPress={handleSkipOptionalStep}
+                  activeOpacity={0.8}
+                  testID="skipOptionalDocBtn"
+                >
+                  <Text style={styles.secondaryStepBtnText}>
+                    {isLastStep && allMandatoryDone
+                      ? 'Bỏ qua & Hoàn tất hồ sơ'
+                      : 'Bỏ qua chứng từ tùy chọn này'}
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
+
+              {/* Nút hoàn tất sớm nếu đã đủ chứng từ bắt buộc trên BE */}
+              {allMandatoryDone && !isLastStep && !uploading && !hasPendingLocalFile ? (
+                <TouchableOpacity
+                  style={styles.finishEarlyBtn}
+                  onPress={handleCompleteFlow}
+                  activeOpacity={0.8}
+                  testID="saveAndContinueBtn"
+                >
+                  <Ionicons name="checkmark-done-outline" size={17} color="#2E7D32" />
+                  <Text style={styles.finishEarlyText}>
+                    Đã đủ giấy tờ bắt buộc — Hoàn tất hồ sơ ngay
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
+
+              {/* Nút quay lại chứng từ trước */}
+              {currentStepIdx > 0 && !uploading ? (
+                <TouchableOpacity
+                  style={styles.prevStepBtn}
+                  onPress={() => {
+                    setLastSuccessNotice(null);
+                    setCurrentStepIdx(currentStepIdx - 1);
+                  }}
+                  activeOpacity={0.75}
+                  testID="prevDocStepBtn"
+                >
+                  <Ionicons name="arrow-back-outline" size={16} color="#555555" />
+                  <Text style={styles.prevStepText}>Quay lại chứng từ trước</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          </View>
+        ) : null}
       </ScrollView>
 
       {/* Modal Bottom Sheet chọn nguồn ảnh thật từ máy */}
@@ -936,44 +1315,42 @@ export const ProofDocumentsScreen: React.FC = () => {
           <View style={styles.sheetContent}>
             <View style={styles.sheetHandle} />
             <Text style={styles.sheetTitle}>Chọn nguồn ảnh minh chứng</Text>
-            <Text style={styles.sheetSubtitle} numberOfLines={1}>
+            <Text style={styles.sheetSubtitle} numberOfLines={2}>
               {activePickingDoc?.title}
             </Text>
 
-            <TouchableOpacity style={styles.sheetOption} onPress={handleLaunchCamera}>
+            <TouchableOpacity style={styles.sheetOption} onPress={() => void handleLaunchCamera()}>
               <View style={[styles.sheetIconBox, { backgroundColor: '#E8F5E9' }]}>
                 <Ionicons name="camera" size={22} color="#2E7D32" />
               </View>
-              <View style={{ flex: 1 }}>
+              <View style={styles.flex}>
                 <Text style={styles.sheetOptionTitle}>Chụp ảnh từ Camera</Text>
                 <Text style={styles.sheetOptionDesc}>Mở camera chụp trực tiếp giấy tờ</Text>
               </View>
               <Ionicons name="chevron-forward" size={18} color="#8E8E93" />
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.sheetOption} onPress={handleLaunchGallery}>
+            <TouchableOpacity style={styles.sheetOption} onPress={() => void handleLaunchGallery()}>
               <View style={[styles.sheetIconBox, { backgroundColor: '#E3F2FD' }]}>
                 <Ionicons name="images" size={22} color="#1565C0" />
               </View>
-              <View style={{ flex: 1 }}>
+              <View style={styles.flex}>
                 <Text style={styles.sheetOptionTitle}>Chọn từ Thư viện ảnh</Text>
                 <Text style={styles.sheetOptionDesc}>Chọn ảnh chụp có sẵn trong máy</Text>
               </View>
               <Ionicons name="chevron-forward" size={18} color="#8E8E93" />
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.sheetOption} onPress={handleLaunchDocument}>
+            <TouchableOpacity style={styles.sheetOption} onPress={() => void handleLaunchDocument()}>
               <View style={[styles.sheetIconBox, { backgroundColor: '#FFF3E0' }]}>
                 <Ionicons name="document-text" size={22} color="#E65100" />
               </View>
-              <View style={{ flex: 1 }}>
+              <View style={styles.flex}>
                 <Text style={styles.sheetOptionTitle}>Chọn tệp tài liệu (PDF)</Text>
                 <Text style={styles.sheetOptionDesc}>Tải lên tệp PDF hoặc bản scan</Text>
               </View>
               <Ionicons name="chevron-forward" size={18} color="#8E8E93" />
             </TouchableOpacity>
-
-
 
             <TouchableOpacity
               style={styles.sheetCancelBtn}
@@ -985,7 +1362,7 @@ export const ProofDocumentsScreen: React.FC = () => {
         </TouchableOpacity>
       </Modal>
 
-      {/* Modal hiển thị quy định chi tiết của luật (chuẩn Frame 262, 263, 264) */}
+      {/* Modal hiển thị quy định chi tiết của luật */}
       <Modal
         visible={lawModalVisible}
         transparent
@@ -1036,88 +1413,66 @@ export const ProofDocumentsScreen: React.FC = () => {
         </TouchableOpacity>
       </Modal>
 
-      {/* Modal Xem ảnh / tài liệu minh chứng phóng to full-screen */}
+      {/* Modal Xem ảnh / tài liệu minh chứng phóng to / thu nhỏ */}
       <DocumentViewerModal
-        visible={!!previewDoc}
+        visible={Boolean(previewDoc)}
         onClose={() => setPreviewDoc(null)}
         document={previewDoc}
         onRePick={() => {
-          if (previewDoc?.docType) {
-            const targetDoc = activeDocs.find((d) => d.docType === previewDoc.docType);
-            if (targetDoc) {
-              handleOpenDocPicker(targetDoc.key, targetDoc.title, targetDoc.docType);
-            }
+          if (currentDoc) {
+            handleOpenDocPicker(currentDoc.key, currentDoc.title, currentDoc.docType);
           }
         }}
+      />
+
+      <Dialog
+        visible={Boolean(dialog)}
+        title={dialog?.title || ''}
+        message={dialog?.message || ''}
+        primaryLabel={dialog?.primaryLabel || 'Đóng'}
+        onPrimary={dialog?.onPrimary || (() => setDialog(null))}
+        onRequestClose={() => setDialog(null)}
       />
     </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
-  // Ô phải header: nút về Trang chủ, giữ độ rộng cũ để tiêu đề vẫn ở giữa
-  homeSlot: { width: 44, alignItems: 'flex-end', justifyContent: 'center' },
+  flex: { flex: 1 },
+  mr4: { marginRight: 4 },
   safeArea: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
-  },
-  royalHeader: {
-    height: 64,
-    backgroundColor: '#EBE4D5',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#DDD5C4',
-  },
-  backBtn: {
-    width: 44,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerTitle: {
-    ...theme.typography.titleLarge,
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#1A1A1A',
-    textAlign: 'center',
-  },
-  groupTabContainer: {
-    backgroundColor: '#FAF8F5',
-    borderBottomWidth: 1,
-    borderBottomColor: '#ECE7DD',
-    paddingVertical: 10,
-  },
-  groupTabScroll: {
-    paddingHorizontal: 16,
-    gap: 8,
-  },
-  groupTabChip: {
-    paddingVertical: 6,
-    paddingHorizontal: 14,
-    borderRadius: 20,
-    backgroundColor: '#EFECE6',
-  },
-  groupTabChipActive: {
-    backgroundColor: theme.colors.primary,
-  },
-  groupTabText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#555555',
-  },
-  groupTabTextActive: {
-    color: '#FFFFFF',
+    backgroundColor: theme.colors.background,
   },
   scrollContent: {
+    width: '100%',
+    maxWidth: 640,
+    alignSelf: 'center',
     paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 30,
+    paddingTop: 14,
+  },
+  applicantBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FBF5EE',
+    borderWidth: 1,
+    borderColor: '#E7DCB9',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 14,
+    gap: 8,
+  },
+  applicantText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#333333',
+  },
+  applicantName: {
+    fontWeight: '700',
   },
   titleSection: {
-    marginBottom: 20,
+    marginBottom: 14,
   },
   groupTitleText: {
     fontSize: 18,
@@ -1128,68 +1483,291 @@ const styles = StyleSheet.create({
   groupSubtitleText: {
     fontSize: 13,
     fontWeight: '500',
-    color: '#E53935',
+    color: '#B91C1C',
+    lineHeight: 18,
   },
-  docFieldBlock: {
-    marginBottom: 20,
+  stepperCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    padding: 12,
+    marginBottom: 14,
   },
-  docLabelRow: {
+  stepperHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  stepperStepCount: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1A1A1A',
+  },
+  progressCountBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FDF2F2',
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 999,
+  },
+  progressCountBadgeDone: {
+    backgroundColor: '#E8F5E9',
+  },
+  progressCountText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: theme.colors.primary,
+  },
+  progressCountTextDone: {
+    color: '#2E7D32',
+  },
+  stepPillsRow: {
+    gap: 8,
+    paddingVertical: 2,
+  },
+  stepPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: '#F3EFE6',
+    borderWidth: 1,
+    borderColor: '#E2DACB',
+    maxWidth: 190,
+  },
+  stepPillDone: {
+    backgroundColor: '#E8F5E9',
+    borderColor: '#A5D6A7',
+  },
+  stepPillActive: {
+    backgroundColor: theme.colors.primary,
+    borderColor: theme.colors.primary,
+  },
+  stepPillLocked: {
+    opacity: 0.48,
+  },
+  stepPillNum: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#555555',
+  },
+  stepPillNumActive: {
+    color: '#FFFFFF',
+  },
+  stepPillText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#333333',
+    flexShrink: 1,
+  },
+  stepPillTextDone: {
+    color: '#2E7D32',
+  },
+  stepPillTextActive: {
+    color: '#FFFFFF',
+  },
+  prevSuccessBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#E8F5E9',
+    borderWidth: 1,
+    borderColor: '#A5D6A7',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 14,
+  },
+  prevSuccessText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#1B5E20',
+    lineHeight: 18,
+  },
+  singleDocCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    padding: 16,
+  },
+  docHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginBottom: 12,
+  },
+  docTitleCol: {
+    flex: 1,
+  },
+  docMetaBadges: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 6,
+    marginBottom: 6,
+  },
+  stepTag: {
+    backgroundColor: '#F3EFE6',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  stepTagText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#5A4A22',
+  },
+  mandatoryBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  mandatoryBadgeRequired: {
+    backgroundColor: '#FEE2E2',
+  },
+  mandatoryBadgeOptional: {
+    backgroundColor: '#E0F2FE',
+  },
+  mandatoryBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  mandatoryBadgeTextRequired: {
+    color: '#B91C1C',
+  },
+  mandatoryBadgeTextOptional: {
+    color: '#0369A1',
   },
   docFieldLabel: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#262626',
-    lineHeight: 20,
-    flex: 1,
+    fontSize: 15.5,
+    fontWeight: '700',
+    color: '#1A1A1A',
+    lineHeight: 22,
   },
   exclamationIconBtn: {
     padding: 4,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  bannerIcon: {
+    marginTop: 1,
+  },
+  bannerTextCol: {
+    flex: 1,
+  },
+  stepErrorBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 14,
+  },
+  stepErrorTitle: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: '#991B1B',
+    marginBottom: 3,
+  },
+  stepErrorMessage: {
+    fontSize: 13,
+    color: '#7F1D1D',
+    lineHeight: 19,
+  },
+  stepErrorHint: {
+    fontSize: 12,
+    color: '#B91C1C',
+    marginTop: 5,
+    fontWeight: '600',
+    lineHeight: 17,
+  },
+  stepSuccessBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    backgroundColor: '#F0FDF4',
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 14,
+  },
+  stepSuccessTitle: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: '#166534',
+    marginBottom: 2,
+  },
+  stepSuccessMessage: {
+    fontSize: 12.5,
+    color: '#15803D',
+    lineHeight: 18,
+  },
   uploadBox: {
-    minHeight: 140,
-    backgroundColor: '#F7F7F8',
-    borderRadius: 18,
+    minHeight: 200,
+    backgroundColor: '#FAF8F5',
+    borderRadius: 14,
     borderWidth: 1.5,
     borderColor: '#D4D4D8',
-    borderStyle: 'solid',
+    borderStyle: 'dashed',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 12,
+    paddingVertical: 18,
+    paddingHorizontal: 14,
   },
   uploadBoxSelected: {
+    borderStyle: 'solid',
     borderColor: theme.colors.primary,
-    backgroundColor: '#FDF7F7',
+    backgroundColor: '#FDF8F8',
   },
   uploadBoxUploaded: {
+    borderStyle: 'solid',
     borderColor: theme.colors.success,
-    backgroundColor: '#F0F9F4',
+    backgroundColor: '#F2FBF5',
+  },
+  uploadBoxError: {
+    borderStyle: 'solid',
+    borderColor: '#DC2626',
+    backgroundColor: '#FFF5F5',
   },
   emptyUploadContent: {
+    width: '100%',
     alignItems: 'center',
     justifyContent: 'center',
+    paddingVertical: 10,
   },
   uploadIconContainer: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#FCECEC',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 8,
+    marginBottom: 12,
   },
-  uploadTrayLine: {
-    width: 26,
-    height: 3,
-    backgroundColor: '#8B1E1E',
-    borderRadius: 2,
-    marginTop: 2,
+  emptyUploadTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1A1A1A',
+    textAlign: 'center',
+    marginBottom: 4,
   },
   emptyUploadHint: {
-    fontSize: 12,
-    color: '#8E8E93',
+    fontSize: 12.5,
+    color: '#666666',
+    textAlign: 'center',
+    lineHeight: 18,
+    maxWidth: 320,
   },
   selectedFileContent: {
     width: '100%',
@@ -1197,15 +1775,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   previewImageTouchable: {
-    width: 220,
-    height: 130,
+    width: '100%',
+    height: 210,
     borderRadius: 10,
     overflow: 'hidden',
     position: 'relative',
-    backgroundColor: '#F0EAE1',
+    backgroundColor: '#0F172A',
     marginBottom: 10,
-    borderWidth: 1,
-    borderColor: '#E2DBD0',
   },
   thumbnailPreview: {
     width: '100%',
@@ -1213,32 +1789,34 @@ const styles = StyleSheet.create({
   },
   zoomPromptBadge: {
     position: 'absolute',
-    bottom: 6,
-    right: 6,
-    backgroundColor: 'rgba(0, 0, 0, 0.65)',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
+    bottom: 8,
+    right: 8,
+    backgroundColor: 'rgba(15, 23, 42, 0.8)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.22)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
     flexDirection: 'row',
     alignItems: 'center',
   },
   zoomPromptText: {
     color: '#FFFFFF',
     fontSize: 11,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   fileIconBadge: {
-    paddingVertical: 12,
+    paddingVertical: 16,
     alignItems: 'center',
   },
   viewPdfNotice: {
-    fontSize: 11,
+    fontSize: 12,
     color: theme.colors.primary,
-    marginTop: 4,
+    marginTop: 6,
     fontWeight: '600',
   },
   selectedFileName: {
-    fontSize: 14,
+    fontSize: 13.5,
     fontWeight: '600',
     color: '#1A1A1A',
     textAlign: 'center',
@@ -1247,27 +1825,27 @@ const styles = StyleSheet.create({
   selectedFileSize: {
     fontSize: 12,
     color: '#666666',
-    marginBottom: 8,
+    marginBottom: 10,
+    textAlign: 'center',
   },
   docActionButtonsRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 10,
-    marginTop: 4,
   },
   previewDocBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#FAF0E8',
-    paddingVertical: 7,
+    paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#E8D8CA',
   },
   previewDocBtnText: {
-    fontSize: 12,
+    fontSize: 12.5,
     fontWeight: '700',
     color: theme.colors.primary,
   },
@@ -1275,38 +1853,86 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#F0F0F2',
-    paddingVertical: 7,
+    paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 8,
   },
   repickActionBtnText: {
-    fontSize: 12,
+    fontSize: 12.5,
     fontWeight: '600',
-    color: '#555555',
+    color: '#444444',
   },
-  actionRow: {
-    marginTop: 12,
-    marginBottom: 30,
-    alignItems: 'center',
-    justifyContent: 'center',
+  stepActionsWrap: {
+    marginTop: 16,
+    gap: 10,
   },
-  saveInfoBtn: {
-    height: 48,
-    paddingHorizontal: 28,
+  primaryStepBtn: {
+    minHeight: 50,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
     backgroundColor: theme.colors.primary,
-    borderRadius: 14,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
-    minWidth: 220,
+    gap: 8,
     ...theme.shadows.button,
   },
-  saveInfoBtnText: {
+  btnDisabled: {
+    opacity: 0.72,
+  },
+  primaryStepBtnText: {
     fontSize: 15,
     fontWeight: '700',
     color: '#FFFFFF',
   },
-  // Styles Modal đọc chi tiết quy định luật (chuẩn Frame 262, 263, 264)
+  secondaryStepBtn: {
+    minHeight: 46,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1.2,
+    borderColor: '#D6CFC2',
+    backgroundColor: '#FAF8F5',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  secondaryStepBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#444444',
+  },
+  finishEarlyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    minHeight: 44,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: '#E8F5E9',
+    borderWidth: 1,
+    borderColor: '#A5D6A7',
+  },
+  finishEarlyText: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: '#2E7D32',
+  },
+  prevStepBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 8,
+  },
+  prevStepText: {
+    fontSize: 13.5,
+    fontWeight: '600',
+    color: '#555555',
+  },
+  // Modal luật
   lawModalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.45)',
@@ -1453,22 +2079,5 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: '#666666',
-  },
-  applicantBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FBF5EE',
-    borderWidth: 1,
-    borderColor: '#E7DCB9',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginBottom: 16,
-    gap: 8,
-  },
-  applicantText: {
-    fontSize: 13,
-    color: '#333333',
-    flex: 1,
   },
 });

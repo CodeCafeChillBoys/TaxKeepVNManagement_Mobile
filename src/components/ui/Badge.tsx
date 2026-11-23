@@ -19,7 +19,7 @@ interface BadgeProps {
   textStyle?: TextStyle;
 }
 
-export const Badge: React.FC<BadgeProps> = ({
+export const Badge: React.FC<BadgeProps> = React.memo(({
   children,
   variant = 'default',
   style,
@@ -83,7 +83,7 @@ export const Badge: React.FC<BadgeProps> = ({
       <Text style={[styles.baseText, vStyles.text, textStyle]}>{children}</Text>
     </View>
   );
-};
+});
 
 const styles = StyleSheet.create({
   baseBadge: {
@@ -91,6 +91,7 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     borderRadius: 9999,
     alignSelf: 'flex-start',
+    maxWidth: '100%',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -99,6 +100,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
     letterSpacing: 0.1,
+    flexShrink: 1,
   },
   defaultContainer: {
     backgroundColor: '#8B1E1E',

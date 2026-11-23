@@ -467,7 +467,7 @@ export function formatBookingStatus(
         color: '#DC2626',
         bg: '#FEF2F2',
         icon: 'alert-circle-outline',
-        desc: 'Phiên tư vấn đang có khiếu nại chất lượng. Tiền ký quỹ Escrow đã được đóng băng an toàn.',
+        desc: 'Phiên tư vấn đang có khiếu nại chất lượng. Khoản tiền tạm giữ bảo đảm đã được đóng băng an toàn.',
       };
     default:
       return {
@@ -649,7 +649,7 @@ export function formatExpertApplicationStatus(status?: ExpertApplicationStatus |
         color: '#D97706',
         bg: '#FEF3C7',
         icon: 'hourglass-outline',
-        desc: 'Hồ sơ đã gửi và đang trong quá trình xét duyệt của Quản trị viên.',
+        desc: 'Hồ sơ đã gửi và đang trong quá trình xét duyệt của Bộ phận thẩm định.',
       };
     case 'NeedSupplement':
       return {
@@ -657,7 +657,7 @@ export function formatExpertApplicationStatus(status?: ExpertApplicationStatus |
         color: '#EA580C',
         bg: '#FFEDD5',
         icon: 'alert-circle-outline',
-        desc: 'Quản trị viên yêu cầu bổ sung thông tin hoặc giấy tờ chứng chỉ.',
+        desc: 'Bộ phận thẩm định yêu cầu bổ sung thông tin hoặc giấy tờ chứng chỉ.',
       };
     case 'Rejected':
       return {
@@ -920,6 +920,60 @@ export interface UpcomingMeetingReminderDto {
   roomUrl?: string | null;
   urgencyLevel?: 'NORMAL' | 'SOON' | 'OPENED' | 'IN_PROGRESS' | null;
   reminderMessage?: string | null;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// CHAT 1-1 TRONG CA TƯ VẤN (ConsultationChatController)
+// ══════════════════════════════════════════════════════════════════
+
+export interface ConsultationMessageDto {
+  id: string;
+  bookingId: string;
+  senderId: string;
+  senderRole: string;
+  senderName: string;
+  senderAvatarUrl?: string | null;
+  content: string;
+  attachmentUrl?: string | null;
+  attachmentType?: string | null;
+  isRead: boolean;
+  createdAt: string;
+  isMine: boolean;
+}
+
+export interface ConsultationChatPartnerDto {
+  userId: string;
+  fullName: string;
+  avatarUrl?: string | null;
+  role: string;
+  jobTitle?: string | null;
+  specializationName?: string | null;
+}
+
+export interface ConsultationChatHistoryResponse {
+  bookingId: string;
+  bookingCode: string;
+  topicTitle: string;
+  sessionType: string;
+  bookingStatus: string;
+  roomUrl?: string | null;
+  partner: ConsultationChatPartnerDto;
+  messages: PagedResult<ConsultationMessageDto>;
+}
+
+export interface UserTypingEvent {
+  bookingId: string;
+  userId: string;
+  role: string;
+  isTyping: boolean;
+}
+
+/** SignalR "MessagesRead": readerId vừa đọc các tin messageIds của bên kia */
+export interface MessagesReadEvent {
+  bookingId: string;
+  readerId: string;
+  messageIds: string[];
+  readAt: string;
 }
 
 // ══════════════════════════════════════════════════════════════════

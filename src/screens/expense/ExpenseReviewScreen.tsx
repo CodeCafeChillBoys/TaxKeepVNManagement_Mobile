@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -7,24 +7,34 @@ import {
   TouchableOpacity,
   Image,
   TextInput,
-  Alert,
   Modal,
   Platform,
   ActivityIndicator,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import { useNavigation, useRoute, RouteProp, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
+import { fonts } from '../../constants/fonts';
 import { HeaderMotif } from '../../components/common/HeaderMotif';
 import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
-import { ExpenseOcrResult, InvoiceLineItem, ValidationErrorItem } from '../../types/expense';
+import { ExpenseOcrResult, InvoiceLineItem, MedicalStatement, ValidationErrorItem } from '../../types/expense';
+import {
+  isMedicalReceipt,
+  getStatementStatusMeta,
+  shouldShowMedicalStatementImage,
+  getStatementErrorLabel,
+} from './medicalStatementUtils';
 import {
   formatCurrencyVND,
   calculateItemsTotal,
+  resolveInitialInvoiceTotalAmount,
+  isValidInvoiceTotalAmount,
   validateCrucialFields,
   getValidationMatrixErrorDetails,
+  toPercent,
 } from './expenseValidationUtils';
 import { expenseApi } from '../../api/expenseApi';
 import { useExpenseStore } from '../../stores/useExpenseStore';
@@ -33,6 +43,7 @@ import {
   getGroupMetadata,
   getDocumentTypeIcon,
   isWithholdingDocType,
+  requiresReimbursementConfirmation,
 } from './expenseGroupUtils';
 import { incomeSourceApi, IncomeSourceCrossCheckResult } from '../../api/incomeSourceApi';
 import { formatMoneyInput, parseMoney } from '../income/incomeFormUtils';
@@ -43,9 +54,52 @@ import {
   useToast,
 } from '../../components/ui';
 import { Dialog } from '../../components/common/Dialog';
+import { DocumentViewerModal, DocumentViewerItem } from '../../components/common/DocumentViewerModal';
+import { isImageDocumentUri } from '../../components/common/imageZoomUtils';
 import { parseBackendError } from './expenseValidationUtils';
 
 type TabType = 'KIEM_TRA' | 'THONG_TIN';
+
+interface ReviewFieldInputProps {
+  label: string;
+  value: string;
+  onChange?: (v: string) => void;
+  placeholder?: string;
+  keyboardType?: any;
+  readOnly?: boolean;
+  required?: boolean;
+  disabled?: boolean;
+}
+
+const ReviewFieldInput = React.memo(({
+  label,
+  value,
+  onChange,
+  placeholder,
+  keyboardType = 'default',
+  readOnly = false,
+  required = false,
+  disabled = false,
+}: ReviewFieldInputProps) => (
+  <View style={styles.fieldGroup}>
+    <Text style={styles.fieldLabel}>
+      {label} {required && <Text style={{ color: '#DC2626' }}>*</Text>}
+    </Text>
+    <TextInput
+      editable={!disabled && !readOnly}
+      style={[
+        styles.textInput,
+        (disabled || readOnly) && styles.readOnlyInput,
+        required && !value.trim() && !disabled && { borderColor: '#FCA5A5' },
+      ]}
+      value={value}
+      onChangeText={onChange}
+      placeholder={placeholder}
+      placeholderTextColor="#94A3B8"
+      keyboardType={keyboardType}
+    />
+  </View>
+));
 
 export const ExpenseReviewScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
@@ -103,6 +157,28 @@ export const ExpenseReviewScreen: React.FC = () => {
     }
   }, [periodIdParam, initialData.documentId]);
 
+  // Bảng kê KCB của hóa đơn viện phí: tải lại mỗi khi quay về từ màn hình bảng kê
+  const isMedical = isMedicalReceipt(currentDocTypeCode);
+  const [medicalStatement, setMedicalStatement] = useState<MedicalStatement | null | undefined>(
+    initialData.medicalStatement
+  );
+  const [statementImageFailed, setStatementImageFailed] = useState<boolean>(false);
+  const [viewerDocument, setViewerDocument] = useState<DocumentViewerItem | null>(null);
+
+  useEffect(() => {
+    setStatementImageFailed(false);
+  }, [medicalStatement?.fileUrl]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!isMedical || !periodIdParam || !initialData.documentId) return;
+      expenseApi
+        .getDocumentById(periodIdParam, initialData.documentId)
+        .then((doc) => setMedicalStatement(doc.medicalStatement ?? null))
+        .catch(() => setMedicalStatement((prev) => (prev !== undefined ? prev : undefined)));
+    }, [isMedical, periodIdParam, initialData.documentId])
+  );
+
   const groupKey = getGroupKeyFromDocTypeCode(currentDocTypeCode);
   const groupMeta = getGroupMetadata(groupKey);
   const currentDocTypeItem = documentTypes.find((t) => t.code === currentDocTypeCode);
@@ -111,6 +187,12 @@ export const ExpenseReviewScreen: React.FC = () => {
   // Xác định linh hoạt loại chứng từ có phải là Chứng từ khấu trừ thuế TNCN hay không
   const isWithholding = useMemo(
     () => isWithholdingDocType(currentDocTypeCode, currentDocTypeName),
+    [currentDocTypeCode, currentDocTypeName]
+  );
+
+  // Ô xác nhận chưa bồi hoàn bảo hiểm chỉ hiển thị & áp dụng cho hóa đơn Y tế và Giáo dục
+  const showReimbursementConfirmation = useMemo(
+    () => requiresReimbursementConfirmation(currentDocTypeCode, currentDocTypeName),
     [currentDocTypeCode, currentDocTypeName]
   );
 
@@ -170,12 +252,9 @@ export const ExpenseReviewScreen: React.FC = () => {
   const [itemFormPrice, setItemFormPrice] = useState<string>('0');
 
   const itemsSum = calculateItemsTotal(items);
-  const [totalAmount, setTotalAmount] = useState<number>(() => {
-    if (initialData.totalAmount !== undefined && initialData.totalAmount !== null && Number(initialData.totalAmount) > 0) {
-      return Number(initialData.totalAmount);
-    }
-    return calculateItemsTotal(initialData.items || []);
-  });
+  const [totalAmount, setTotalAmount] = useState<number>(() =>
+    resolveInitialInvoiceTotalAmount(initialData.totalAmount, initialData.items)
+  );
 
   // Modal confirm action states
   const [showSaveConfirmModal, setShowSaveConfirmModal] = useState<boolean>(false);
@@ -232,13 +311,22 @@ export const ExpenseReviewScreen: React.FC = () => {
     return getCrucialFieldsForCategory(currentDocTypeCode);
   }, [getCrucialFieldsForCategory, currentDocTypeCode, systemConfigs, isWithholding]);
 
-  const effectiveConfidence = initialData.overallConfidence !== undefined ? initialData.overallConfidence : 0.95;
+  // Điểm thật do AI trả về; chứng từ cũ chưa có điểm thì để trống, không gán số mặc định
+  const effectiveConfidence: number | undefined =
+    initialData.overallConfidence != null ? Number(initialData.overallConfidence) : undefined;
+  // Ngưỡng BE đã áp dụng lúc trích xuất; chưa có thì dùng ngưỡng Admin hiện hành
+  const effectiveThreshold: number =
+    initialData.appliedThreshold != null ? Number(initialData.appliedThreshold) : dynamicThreshold;
 
   const crucialCheck = useMemo(() => {
     return validateCrucialFields(initialData.fields || [], dynamicThreshold, effectiveCrucialFields);
   }, [initialData.fields, dynamicThreshold, effectiveCrucialFields]);
 
-  const isPassedThreshold = effectiveConfidence >= dynamicThreshold && !crucialCheck.hasCrucialLowConfidence;
+  const isPassedThreshold =
+    (effectiveConfidence === undefined || effectiveConfidence >= effectiveThreshold) &&
+    !crucialCheck.hasCrucialLowConfidence;
+  const confidencePct = effectiveConfidence !== undefined ? toPercent(effectiveConfidence) : null;
+  const thresholdPct = toPercent(effectiveThreshold);
 
   // Ánh xạ nhãn tiếng Việt cho các trường cốt lõi
   const CRUCIAL_FIELD_LABELS: Record<string, string> = {
@@ -342,7 +430,7 @@ export const ExpenseReviewScreen: React.FC = () => {
 
   const handleSaveItem = () => {
     if (!itemFormName.trim()) {
-      Alert.alert('Thiếu thông tin', 'Vui lòng nhập tên dịch vụ / khoản mục.');
+      toast.warning('Vui lòng nhập tên dịch vụ hoặc khoản mục chi phí.', 'Thiếu thông tin');
       return;
     }
     const qty = parseFloat(itemFormQty) || 1;
@@ -545,8 +633,8 @@ export const ExpenseReviewScreen: React.FC = () => {
         return;
       }
 
-      if (totalAmount <= 0) {
-        toast.error('Tổng tiền thanh toán của hóa đơn phải lớn hơn 0.', 'Số tiền không hợp lệ');
+      if (!isValidInvoiceTotalAmount(totalAmount)) {
+        toast.error('Tổng tiền thanh toán của hóa đơn không được nhỏ hơn 0.', 'Số tiền không hợp lệ');
         return;
       }
     }
@@ -620,10 +708,10 @@ export const ExpenseReviewScreen: React.FC = () => {
               buyerIdCard: buyerIdCard.trim() || null,
               buyerAddress: buyerAddress.trim() || null,
               paymentMethod: paymentMethod.trim() || null,
-              totalAmount: totalAmount || null,
+              totalAmount: isValidInvoiceTotalAmount(totalAmount) ? totalAmount : 0,
               isYearValid: initialData.validationStatus?.isYearValid ?? true,
               isIdentityValid: initialData.validationStatus?.isIdentityValid ?? true,
-              isNotReimbursed: isNotReimbursed,
+              isNotReimbursed: showReimbursementConfirmation ? isNotReimbursed : null,
               items: items.map((it, idx) => ({
                 itemOrder: it.itemOrder || idx + 1,
                 itemName: it.itemName,
@@ -668,8 +756,12 @@ export const ExpenseReviewScreen: React.FC = () => {
         taxWithheld: isWithholding ? (parseMoney(taxWithheldStr) ?? 0) : undefined,
         insuranceDeducted: isWithholding ? (parseMoney(insuranceDeductedStr) ?? 0) : undefined,
         items: isWithholding ? [] : items,
-        isNotReimbursed: isWithholding ? true : isNotReimbursed,
-        appliedThreshold: dynamicThreshold,
+        isNotReimbursed: isWithholding
+          ? true
+          : showReimbursementConfirmation
+            ? isNotReimbursed
+            : null,
+        appliedThreshold: effectiveThreshold,
         overallConfidence: effectiveConfidence,
         isPassedThreshold: isPassedThreshold,
         crossCheckResult: crossCheckResult || null,
@@ -688,7 +780,8 @@ export const ExpenseReviewScreen: React.FC = () => {
       navigation.navigate('ExpenseList');
     } catch (err: any) {
       setSaving(false);
-      Alert.alert('Lỗi xác nhận', err?.message || 'Không thể xác nhận chứng từ.');
+      const parsed = parseBackendError(err);
+      toast.error(parsed.message, parsed.title);
     }
   };
 
@@ -783,8 +876,8 @@ export const ExpenseReviewScreen: React.FC = () => {
         return;
       }
 
-      if (totalAmount <= 0) {
-        toast.error('Tổng tiền thanh toán của hóa đơn phải lớn hơn 0.', 'Số tiền không hợp lệ');
+      if (!isValidInvoiceTotalAmount(totalAmount)) {
+        toast.error('Tổng tiền thanh toán của hóa đơn không được nhỏ hơn 0.', 'Số tiền không hợp lệ');
         return;
       }
     }
@@ -793,31 +886,17 @@ export const ExpenseReviewScreen: React.FC = () => {
     setShowSaveConfirmModal(true);
   };
 
-  const FieldInput = ({
-    label, value, onChange, placeholder, keyboardType = 'default', readOnly = false, required = false,
-  }: {
-    label: string; value: string; onChange?: (v: string) => void;
-    placeholder?: string; keyboardType?: any; readOnly?: boolean; required?: boolean;
+  const FieldInput = useCallback((props: {
+    label: string;
+    value: string;
+    onChange?: (v: string) => void;
+    placeholder?: string;
+    keyboardType?: any;
+    readOnly?: boolean;
+    required?: boolean;
   }) => (
-    <View style={styles.fieldGroup}>
-      <Text style={styles.fieldLabel}>
-        {label} {required && <Text style={{ color: '#DC2626' }}>*</Text>}
-      </Text>
-      <TextInput
-        editable={!isReadOnly && !readOnly}
-        style={[
-          styles.textInput,
-          (isReadOnly || readOnly) && styles.readOnlyInput,
-          required && !value.trim() && !isReadOnly && { borderColor: '#FCA5A5' },
-        ]}
-        value={value}
-        onChangeText={onChange}
-        placeholder={placeholder}
-        placeholderTextColor="#94A3B8"
-        keyboardType={keyboardType}
-      />
-    </View>
-  );
+    <ReviewFieldInput {...props} disabled={isReadOnly} />
+  ), [isReadOnly]);
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -831,8 +910,12 @@ export const ExpenseReviewScreen: React.FC = () => {
         onBack={() => navigation.goBack()}
       />
 
-      {/* STICKY HEADER: Số tiền/Thuế + Danh mục + Trạng thái */}
-      <View style={styles.stickyHeader}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={{ flex: 1 }}
+      >
+        {/* STICKY HEADER: Số tiền/Thuế + Danh mục + Trạng thái */}
+        <View style={styles.stickyHeader}>
         <View style={styles.stickyLeft}>
           <View style={[styles.stickyIconCircle, { backgroundColor: `${groupMeta.color}20` }]}>
             <Ionicons name={groupMeta.icon as any} size={18} color={groupMeta.color} />
@@ -938,18 +1021,38 @@ export const ExpenseReviewScreen: React.FC = () => {
                     {isWithholding ? 'Ảnh chứng từ khấu trừ gốc' : 'Ảnh hóa đơn gốc'}
                   </Text>
                 </View>
-                <Image
-                  source={{ uri: invoiceImageUri }}
-                  style={styles.invoiceImage}
-                  resizeMode="contain"
-                  onError={() => {
-                    if (initialData.originalFileUri && invoiceImageUri !== initialData.originalFileUri) {
-                      setInvoiceImageUri(initialData.originalFileUri);
-                      return;
-                    }
-                    setInvoiceImageFailed(true);
-                  }}
-                />
+                <TouchableOpacity
+                  activeOpacity={0.9}
+                  style={styles.imagePreviewWrap}
+                  onPress={() =>
+                    setViewerDocument({
+                      uri: invoiceImageUri,
+                      title: isWithholding ? 'Ảnh chứng từ khấu trừ gốc' : 'Ảnh hóa đơn gốc',
+                      fileName: initialData.originalFilename,
+                      subtitle: sellerName || undefined,
+                      isReadable: true,
+                    })
+                  }
+                  accessibilityRole="button"
+                  accessibilityLabel={isWithholding ? 'Phóng to ảnh chứng từ khấu trừ gốc' : 'Phóng to ảnh hóa đơn gốc'}
+                >
+                  <Image
+                    source={{ uri: invoiceImageUri }}
+                    style={styles.invoiceImage}
+                    resizeMode="contain"
+                    onError={() => {
+                      if (initialData.originalFileUri && invoiceImageUri !== initialData.originalFileUri) {
+                        setInvoiceImageUri(initialData.originalFileUri);
+                        return;
+                      }
+                      setInvoiceImageFailed(true);
+                    }}
+                  />
+                  <View style={styles.imageZoomBadge}>
+                    <Ionicons name="search-outline" size={12} color="#FFFFFF" />
+                    <Text style={styles.imageZoomBadgeText}>Phóng to</Text>
+                  </View>
+                </TouchableOpacity>
               </Card>
             ) : invoiceImageFailed ? (
               <Card style={styles.card}>
@@ -960,6 +1063,131 @@ export const ExpenseReviewScreen: React.FC = () => {
               </Card>
             ) : null}
 
+            {/* Bảng kê chi phí KCB đi kèm hóa đơn viện phí */}
+            {isMedical && periodIdParam && initialData.documentId && medicalStatement !== undefined && (
+              medicalStatement ? (
+                <Card style={styles.card}>
+                  <View style={styles.cardHeaderRow}>
+                    <View style={styles.cardHeaderLeft}>
+                      <Ionicons name="document-text-outline" size={15} color="#475569" />
+                      <Text style={styles.cardHeaderTitle} numberOfLines={1}>Bảng kê chi phí KCB</Text>
+                    </View>
+                    <Badge variant={getStatementStatusMeta(medicalStatement.status).variant}>
+                      {getStatementStatusMeta(medicalStatement.status).label}
+                    </Badge>
+                  </View>
+
+                  {shouldShowMedicalStatementImage(medicalStatement) && (
+                    isImageDocumentUri(medicalStatement.fileUrl, undefined, medicalStatement.originalFilename) ? (
+                      !statementImageFailed ? (
+                        <TouchableOpacity
+                          activeOpacity={0.9}
+                          style={[styles.imagePreviewWrap, { marginBottom: 10 }]}
+                          onPress={() =>
+                            setViewerDocument({
+                              uri: medicalStatement.fileUrl,
+                              title: 'Ảnh bảng kê chi phí KCB',
+                              fileName: medicalStatement.originalFilename || undefined,
+                              subtitle: `Được giảm trừ: ${formatCurrencyVND(medicalStatement.totalEligibleAmount ?? 0)}`,
+                              isReadable: true,
+                            })
+                          }
+                          accessibilityRole="button"
+                          accessibilityLabel="Phóng to ảnh bảng kê chi phí KCB"
+                        >
+                          <Image
+                            source={{ uri: medicalStatement.fileUrl }}
+                            style={styles.invoiceImage}
+                            resizeMode="contain"
+                            onError={() => setStatementImageFailed(true)}
+                          />
+                          <View style={styles.imageZoomBadge}>
+                            <Ionicons name="search-outline" size={12} color="#FFFFFF" />
+                            <Text style={styles.imageZoomBadgeText}>Phóng to</Text>
+                          </View>
+                        </TouchableOpacity>
+                      ) : (
+                        <View style={[styles.imageErrorBox, { marginBottom: 10 }]}>
+                          <Ionicons name="image-outline" size={26} color="#94A3B8" />
+                          <Text style={styles.imageErrorText}>Không tải được ảnh bảng kê gốc.</Text>
+                        </View>
+                      )
+                    ) : (
+                      <TouchableOpacity
+                        activeOpacity={0.8}
+                        style={styles.statementPdfBox}
+                        onPress={() =>
+                          setViewerDocument({
+                            uri: medicalStatement.fileUrl,
+                            title: 'Bảng kê chi phí KCB',
+                            fileName: medicalStatement.originalFilename || 'bang_ke_kcb.pdf',
+                            mimeType: 'application/pdf',
+                            subtitle: `Được giảm trừ: ${formatCurrencyVND(medicalStatement.totalEligibleAmount ?? 0)}`,
+                            isReadable: true,
+                          })
+                        }
+                      >
+                        <Ionicons name="document-text" size={22} color="#8B1E1E" />
+                        <Text style={styles.statementPdfName} numberOfLines={1}>
+                          {medicalStatement.originalFilename || 'Tệp bảng kê chi phí KCB (PDF)'}
+                        </Text>
+                        <Ionicons name="open-outline" size={16} color="#64748B" />
+                      </TouchableOpacity>
+                    )
+                  )}
+
+                  <TouchableOpacity
+                    activeOpacity={0.7}
+                    style={styles.statementFooterRow}
+                    onPress={() =>
+                      navigation.navigate('MedicalStatement', {
+                        periodId: periodIdParam,
+                        documentId: initialData.documentId!,
+                        readOnly: isRouteReadOnly,
+                      })
+                    }
+                  >
+                    <Text style={styles.statementSummaryText}>
+                      Được giảm trừ:{' '}
+                      <Text style={styles.statementEligibleAmount}>
+                        {formatCurrencyVND(medicalStatement.totalEligibleAmount ?? 0)}
+                      </Text>
+                    </Text>
+                    <View style={styles.statementDetailLink}>
+                      <Text style={styles.statementDetailLinkText}>Xem chi tiết</Text>
+                      <Ionicons name="chevron-forward" size={15} color="#8B1E1E" />
+                    </View>
+                  </TouchableOpacity>
+                </Card>
+              ) : (
+                <TouchableOpacity
+                  activeOpacity={0.7}
+                  onPress={() =>
+                    navigation.navigate('MedicalStatement', {
+                      periodId: periodIdParam,
+                      documentId: initialData.documentId!,
+                      readOnly: isRouteReadOnly,
+                    })
+                  }
+                >
+                  <Card style={[styles.card, styles.cardWarning]}>
+                    <View style={styles.cardHeaderRow}>
+                      <View style={styles.cardHeaderLeft}>
+                        <Ionicons name="document-text-outline" size={15} color="#475569" />
+                        <Text style={styles.cardHeaderTitle} numberOfLines={1}>Bảng kê chi phí KCB</Text>
+                      </View>
+                      <Badge variant={getStatementStatusMeta(null).variant}>
+                        {getStatementStatusMeta(null).label}
+                      </Badge>
+                    </View>
+                    <Text style={{ fontSize: 13, color: '#475569', lineHeight: 19 }}>
+                      Chưa có bảng kê nên khoản viện phí này chưa được tính giảm trừ. Bấm để tải bảng kê.
+                    </Text>
+                  </Card>
+                </TouchableOpacity>
+              )
+            )}
+
             {/* Đánh giá mức độ tin cậy AI */}
             <Card style={styles.card}>
               <View style={styles.cardHeader}>
@@ -969,14 +1197,32 @@ export const ExpenseReviewScreen: React.FC = () => {
                   {isPassedThreshold ? 'Đạt yêu cầu' : 'Cần xem lại'}
                 </Badge>
               </View>
-              <View style={styles.confidenceBar}>
-                <View style={[styles.confidenceFill, {
-                  width: `${Math.min(100, Math.round(effectiveConfidence * 100))}%`,
-                  backgroundColor: isPassedThreshold ? '#16A34A' : '#D97706',
-                }]} />
+              <View style={styles.confidenceBarWrap}>
+                <View style={styles.confidenceBar}>
+                  {confidencePct !== null ? (
+                    <View style={[styles.confidenceFill, {
+                      width: `${confidencePct}%`,
+                      backgroundColor: isPassedThreshold ? '#16A34A' : '#D97706',
+                    }]} />
+                  ) : null}
+                </View>
+                {/* Vạch mốc ngưỡng Admin */}
+                <View
+                  style={[styles.thresholdMarker, { left: `${thresholdPct}%` }]}
+                  accessibilityLabel={`Ngưỡng yêu cầu ${thresholdPct}%`}
+                />
               </View>
-              <Text style={styles.confidencePct}>
-                {Math.round(effectiveConfidence * 100)}% / Ngưỡng {Math.round(dynamicThreshold * 100)}%
+              <Text style={styles.confidenceLine} testID="expenseConfidenceLine">
+                {confidencePct !== null
+                  ? `Độ tin cậy trích xuất: ${confidencePct}% (Yêu cầu hệ thống: ≥ ${thresholdPct}%)`
+                  : `Chưa có điểm tin cậy từ AI cho chứng từ này (Yêu cầu hệ thống: ≥ ${thresholdPct}%)`}
+              </Text>
+              <Text style={[styles.confidencePct, { color: isPassedThreshold ? '#15803D' : '#B45309' }]}>
+                {confidencePct === null
+                  ? 'Vui lòng tự kiểm tra lại các trường thông tin bên dưới'
+                  : isPassedThreshold
+                    ? 'Đạt tiêu chuẩn đối soát tự động'
+                    : 'Dưới ngưỡng yêu cầu – cần kiểm tra lại'}
               </Text>
 
               {/* Các điểm kiểm tra trường cốt lõi */}
@@ -1003,10 +1249,14 @@ export const ExpenseReviewScreen: React.FC = () => {
                 </View>
                 {validationErrors.map((err, idx) => {
                   const details = getValidationMatrixErrorDetails(err.code);
+                  const displayMessage =
+                    err.code === 'ERR_AI_VALIDATION' && err.message
+                      ? getStatementErrorLabel(err.message)
+                      : details.message;
                   return (
                     <View key={idx} style={styles.errorItem}>
                       <Text style={styles.errorItemTitle}>{details.title}</Text>
-                      <Text style={styles.errorItemMsg}>{details.message}</Text>
+                      <Text style={styles.errorItemMsg}>{displayMessage}</Text>
                       <Text style={styles.errorItemHint}>💡 {details.actionHint}</Text>
                     </View>
                   );
@@ -1044,10 +1294,10 @@ export const ExpenseReviewScreen: React.FC = () => {
                     </View>
                     <Separator style={{ marginVertical: 6 }} />
                     <View style={styles.voucherSummaryRow}>
-                      <Text style={[styles.voucherSummaryLabel, { color: '#8B1E1E', fontWeight: '700' }]}>
+                      <Text style={[styles.voucherSummaryLabel, { color: '#8B1E1E', fontFamily: fonts.bodyBold }]}>
                         [19] Thuế TNCN đã khấu trừ:
                       </Text>
-                      <Text style={[styles.voucherSummaryValue, { color: '#8B1E1E', fontSize: 15, fontWeight: '800' }]}>
+                      <Text style={[styles.voucherSummaryValue, { color: '#8B1E1E', fontSize: 15, fontFamily: fonts.bodyBold }]}>
                         {formatCurrencyVND(parseMoney(taxWithheldStr) ?? initialData.taxWithheld ?? 0)}
                       </Text>
                     </View>
@@ -1177,15 +1427,15 @@ export const ExpenseReviewScreen: React.FC = () => {
                   )}
                 </Card>
               </>
-            ) : (
-              /* PHẦN DÀNH RIÊNG CHO HÓA ĐƠN: Cam kết chưa bồi hoàn */
+            ) : showReimbursementConfirmation ? (
+              /* PHẦN DÀNH RIÊNG CHO HÓA ĐƠN GIÁO DỤC & Y TẾ: Cam kết chưa bồi hoàn */
               <Card style={styles.card}>
                 <View style={styles.cardHeader}>
                   <Ionicons name="shield-checkmark-outline" size={15} color="#475569" />
                   <Text style={styles.cardHeaderTitle}>Xác nhận điều kiện giảm trừ thuế</Text>
                 </View>
                 <Text style={styles.commitDesc}>
-                  Theo quy định thuế TNCN, chi phí chỉ được giảm trừ khi chưa được bảo hiểm hoặc tổ chức khác bồi hoàn toàn bộ.
+                  Theo quy định thuế TNCN, chi phí giáo dục và y tế chỉ được giảm trừ khi chưa được bảo hiểm hoặc tổ chức khác bồi hoàn toàn bộ.
                 </Text>
                 <TouchableOpacity
                   disabled={isReadOnly}
@@ -1199,7 +1449,7 @@ export const ExpenseReviewScreen: React.FC = () => {
                     color={isNotReimbursed ? '#8B1E1E' : '#94A3B8'}
                   />
                   <View style={{ flex: 1, marginLeft: 10 }}>
-                    <Text style={[styles.commitTitle, isNotReimbursed && { color: '#8B1E1E', fontWeight: '700' }]}>
+                    <Text style={[styles.commitTitle, isNotReimbursed && { color: '#8B1E1E', fontFamily: fonts.bodyBold }]}>
                       Tôi xác nhận khoản chi phí này chưa được bồi hoàn từ bảo hiểm hoặc nguồn khác
                     </Text>
                     <Text style={styles.commitStatus}>
@@ -1208,7 +1458,7 @@ export const ExpenseReviewScreen: React.FC = () => {
                   </View>
                 </TouchableOpacity>
               </Card>
-            )}
+            ) : null}
           </View>
         )}
 
@@ -1260,7 +1510,7 @@ export const ExpenseReviewScreen: React.FC = () => {
                     label="Tên tổ chức chi trả thu nhập"
                     value={sellerName}
                     onChange={setSellerName}
-                    placeholder="Công ty Cổ phần / Cơ quan / Tổ chức chi trả"
+                    placeholder="Ví dụ: Công ty Cổ phần ABC"
                     required
                   />
                   <FieldInput
@@ -1275,13 +1525,12 @@ export const ExpenseReviewScreen: React.FC = () => {
                     label="Địa chỉ tổ chức chi trả"
                     value={sellerAddress}
                     onChange={setSellerAddress}
-                    placeholder="Địa chỉ trụ sở tổ chức chi trả"
                   />
                   <FieldInput
                     label="Số điện thoại liên hệ"
                     value={sellerPhone}
                     onChange={setSellerPhone}
-                    placeholder="Số điện thoại"
+                    placeholder="0901 234 567"
                     keyboardType="phone-pad"
                   />
                 </Card>
@@ -1341,7 +1590,6 @@ export const ExpenseReviewScreen: React.FC = () => {
                     label="Mã tra cứu chứng từ"
                     value={lookupCode}
                     onChange={setLookupCode}
-                    placeholder="Mã tra cứu"
                   />
                 </Card>
 
@@ -1355,7 +1603,7 @@ export const ExpenseReviewScreen: React.FC = () => {
                     label="Họ và tên người nộp thuế"
                     value={buyerName}
                     onChange={setBuyerName}
-                    placeholder="NGUYỄN VĂN AN"
+                    placeholder="Ví dụ: NGUYỄN VĂN A"
                     required
                   />
                   <View style={styles.rowInputs}>
@@ -1383,7 +1631,6 @@ export const ExpenseReviewScreen: React.FC = () => {
                     label="Địa chỉ thường trú / cư trú"
                     value={buyerAddress}
                     onChange={setBuyerAddress}
-                    placeholder="Địa chỉ cư trú"
                   />
                 </Card>
 
@@ -1464,10 +1711,10 @@ export const ExpenseReviewScreen: React.FC = () => {
                     <Ionicons name="business-outline" size={15} color="#475569" />
                     <Text style={styles.cardHeaderTitle}>Đơn vị phát hành hóa đơn</Text>
                   </View>
-                  <FieldInput label="Tên đơn vị / Người bán" value={sellerName} onChange={setSellerName} placeholder="Tên bệnh viện, trường học, cơ sở..." />
+                  <FieldInput label="Tên đơn vị / Người bán" value={sellerName} onChange={setSellerName} placeholder="Ví dụ: Bệnh viện, Trường học, Nhà thuốc..." />
                   <FieldInput label="Mã số thuế" value={sellerTaxCode} onChange={setSellerTaxCode} placeholder="Ví dụ: 0302221111" keyboardType="numeric" />
-                  <FieldInput label="Địa chỉ" value={sellerAddress} onChange={setSellerAddress} placeholder="Địa chỉ trụ sở" />
-                  <FieldInput label="Số điện thoại" value={sellerPhone} onChange={setSellerPhone} placeholder="Số điện thoại liên hệ" keyboardType="phone-pad" />
+                  <FieldInput label="Địa chỉ" value={sellerAddress} onChange={setSellerAddress} />
+                  <FieldInput label="Số điện thoại" value={sellerPhone} onChange={setSellerPhone} placeholder="0901 234 567" keyboardType="phone-pad" />
                 </Card>
 
                 {/* 3. Thông tin hóa đơn */}
@@ -1485,9 +1732,9 @@ export const ExpenseReviewScreen: React.FC = () => {
                     </View>
                   </View>
                   <FieldInput label="Ngày lập (YYYY-MM-DD)" value={invoiceDate} onChange={setInvoiceDate} placeholder={`${new Date().getFullYear()}-03-15`} />
-                  <FieldInput label="Tổng tiền thực thanh toán (VNĐ)" value={totalAmount ? String(totalAmount) : ''} onChange={(v) => setTotalAmount(Number(v.replace(/[^0-9]/g,''))||0)} placeholder="Nhập số tiền" keyboardType="numeric" />
+                  <FieldInput label="Tổng tiền thực thanh toán (VNĐ)" value={String(totalAmount)} onChange={(v) => setTotalAmount(Number(v.replace(/[^0-9]/g,''))||0)} placeholder="0" keyboardType="numeric" />
                   <FieldInput label="Đường dẫn tra cứu điện tử" value={lookupUrl} onChange={setLookupUrl} placeholder="https://..." />
-                  <FieldInput label="Mã tra cứu hóa đơn" value={lookupCode} onChange={setLookupCode} placeholder="Mã tra cứu" />
+                  <FieldInput label="Mã tra cứu hóa đơn" value={lookupCode} onChange={setLookupCode} />
                 </Card>
 
                 {/* 4. Người thanh toán */}
@@ -1496,10 +1743,10 @@ export const ExpenseReviewScreen: React.FC = () => {
                     <Ionicons name="person-outline" size={15} color="#475569" />
                     <Text style={styles.cardHeaderTitle}>Người thanh toán</Text>
                   </View>
-                  <FieldInput label="Họ và tên" value={buyerName} onChange={setBuyerName} placeholder="NGUYỄN VĂN AN" required />
+                  <FieldInput label="Họ và tên" value={buyerName} onChange={setBuyerName} placeholder="Ví dụ: NGUYỄN VĂN A" required />
                   <FieldInput label="Số CCCD" value={buyerIdCard} onChange={setBuyerIdCard} placeholder="12 chữ số" keyboardType="numeric" required />
-                  <FieldInput label="Địa chỉ" value={buyerAddress} onChange={setBuyerAddress} placeholder="Địa chỉ thường trú" required />
-                  <FieldInput label="Hình thức thanh toán" value={paymentMethod} onChange={setPaymentMethod} placeholder="Chuyển khoản / Tiền mặt" required />
+                  <FieldInput label="Địa chỉ" value={buyerAddress} onChange={setBuyerAddress} required />
+                  <FieldInput label="Hình thức thanh toán" value={paymentMethod} onChange={setPaymentMethod} placeholder="Chuyển khoản" required />
                 </Card>
 
                 {/* 5. Bảng kê chi tiết */}
@@ -1607,6 +1854,7 @@ export const ExpenseReviewScreen: React.FC = () => {
           </TouchableOpacity>
         )}
       </View>
+      </KeyboardAvoidingView>
 
       {/* MODAL THÊM / SỬA DÒNG CHI PHÍ (HÓA ĐƠN) */}
       <Modal visible={itemModalVisible} transparent animationType="slide">
@@ -1669,7 +1917,7 @@ export const ExpenseReviewScreen: React.FC = () => {
                     </View>
                     <View style={{ flex: 1, marginLeft: 10 }}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
-                        <Text style={[styles.docTypeOptionName, isSelected && { color: '#8B1E1E', fontWeight: '700' }]}>{t.name}</Text>
+                        <Text style={[styles.docTypeOptionName, isSelected && { color: '#8B1E1E', fontFamily: fonts.bodyBold }]}>{t.name}</Text>
                         <Badge
                           variant={isItemWithholding ? 'default' : (t.isTaxEligible ? 'teal' : 'secondary')}
                           style={{ marginTop: 1 }}
@@ -1720,9 +1968,11 @@ export const ExpenseReviewScreen: React.FC = () => {
       <Dialog
         visible={deleteItemIndex !== null}
         title="Xóa mục chi phí"
-        message={`Xóa mục "${deleteItemIndex !== null ? items[deleteItemIndex]?.itemName : ''}"?`}
-        primaryLabel="Xóa"
-        secondaryLabel="Hủy"
+        message="Quý khách có chắc chắn muốn xóa mục này khỏi danh sách chi tiết không?"
+        detail={deleteItemIndex !== null ? items[deleteItemIndex]?.itemName : ''}
+        detailLabel="Khoản mục"
+        primaryLabel="Xóa khoản mục"
+        secondaryLabel="Giữ lại"
         destructive={true}
         onPrimary={() => {
           if (deleteItemIndex !== null) {
@@ -1732,6 +1982,12 @@ export const ExpenseReviewScreen: React.FC = () => {
         }}
         onSecondary={() => setDeleteItemIndex(null)}
         onRequestClose={() => setDeleteItemIndex(null)}
+      />
+      {/* MODAL XEM ẢNH PHÓNG TO / THU NHỎ */}
+      <DocumentViewerModal
+        visible={Boolean(viewerDocument)}
+        document={viewerDocument}
+        onClose={() => setViewerDocument(null)}
       />
     </SafeAreaView>
   );
@@ -1798,7 +2054,47 @@ const styles = StyleSheet.create({
   cardHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, marginRight: 8 },
   cardHeaderTitle: { fontSize: 13, fontWeight: '700', color: '#0F172A', flexShrink: 1 },
   // Invoice image
+  imagePreviewWrap: { position: 'relative', borderRadius: 6, overflow: 'hidden' },
   invoiceImage: { width: '100%', height: 220, borderRadius: 6, backgroundColor: '#0F172A' },
+  imageZoomBadge: {
+    position: 'absolute',
+    right: 10,
+    bottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(15, 23, 42, 0.78)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.22)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+  },
+  imageZoomBadgeText: { fontSize: 11, fontWeight: '700', color: '#FFFFFF' },
+  statementPdfBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 10,
+  },
+  statementPdfName: { flex: 1, fontSize: 12.5, fontWeight: '600', color: '#0F172A' },
+  statementFooterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    paddingTop: 2,
+  },
+  statementSummaryText: { flex: 1, fontSize: 13, color: '#475569', lineHeight: 19 },
+  statementEligibleAmount: { fontWeight: '700', color: '#15803D' },
+  statementDetailLink: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  statementDetailLinkText: { fontSize: 12.5, fontWeight: '700', color: '#8B1E1E' },
   imageErrorBox: {
     height: 160,
     alignItems: 'center',
@@ -1809,8 +2105,11 @@ const styles = StyleSheet.create({
   },
   imageErrorText: { fontSize: 12, color: '#64748B' },
   // Confidence
-  confidenceBar: { height: 6, backgroundColor: '#F1F5F9', borderRadius: 3, overflow: 'hidden', marginBottom: 4 },
+  confidenceBarWrap: { position: 'relative', justifyContent: 'center', marginBottom: 6 },
+  confidenceBar: { height: 6, backgroundColor: '#F1F5F9', borderRadius: 3, overflow: 'hidden' },
   confidenceFill: { height: '100%', borderRadius: 3 },
+  thresholdMarker: { position: 'absolute', top: -3, width: 2, height: 12, marginLeft: -1, backgroundColor: '#1E293B', borderRadius: 1 },
+  confidenceLine: { fontSize: 12, color: '#334155', marginBottom: 2 },
   confidencePct: { fontSize: 11, color: '#64748B', marginBottom: 10 },
   checkGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   checkItem: { flexDirection: 'row', alignItems: 'center', gap: 4, width: '47%' },

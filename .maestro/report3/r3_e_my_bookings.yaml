@@ -1,0 +1,30 @@
+# Report 3 — Figure 3-20: My Bookings và Booking Detail. Tài khoản người nộp thuế có ít nhất một lịch hẹn.
+# 3-22 và 3-23 cần lịch hẹn ở đúng trạng thái, chụp tay qua Maestro MCP (xem README).
+appId: host.exp.exponent
+name: r3_e_my_bookings
+tags:
+  - report3
+---
+- runFlow:
+    file: _login.yaml
+    env:
+      LOGIN_ID: ${TAXPAYER_ID}
+      LOGIN_PW: ${TAXPAYER_PW}
+
+- tapOn:
+    id: mainTab_Profile
+- scrollUntilVisible:
+    element:
+      id: quickLinkMyBookings
+    direction: DOWN
+    timeout: 10000
+- tapOn:
+    id: quickLinkMyBookings
+- extendedWaitUntil:
+    visible: "Lịch hẹn của tôi"
+    timeout: 20000
+- extendedWaitUntil:
+    notVisible: ".*Đang tải.*"
+    timeout: 30000
+- waitForAnimationToEnd
+- takeScreenshot: screenshots/report3/3-20a-my-bookings

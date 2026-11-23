@@ -56,11 +56,16 @@ export function buildManualChangeGroupPlan(
 export async function runManualChangeGroup(options: {
   dependentId: string;
   newGroup: string;
+  note?: string | null;
   updateDependentGroup: UpdateDependentGroupFn;
 }): Promise<ManualChangeGroupResult> {
-  const { dependentId, newGroup, updateDependentGroup } = options;
+  const { dependentId, newGroup, note, updateDependentGroup } = options;
   try {
-    const res = await updateDependentGroup(dependentId, { newGroup });
+    const trimmedNote = typeof note === 'string' ? note.trim() : undefined;
+    const request: UpdateDependentGroupRequest = trimmedNote
+      ? { newGroup, note: trimmedNote }
+      : { newGroup };
+    const res = await updateDependentGroup(dependentId, request);
     if (!res.success || !res.data) {
       return {
         ok: false,

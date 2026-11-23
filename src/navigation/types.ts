@@ -4,9 +4,12 @@ import { OcrDependentFill, OcrFormFill, ScanIdentitySource } from '../types/ocr'
 export type RootStackParamList = {
   Login: undefined;
   Register: { ocrResult?: OcrFormFill } | undefined;
-  VerifyPending: { email: string };
-  Home: undefined;
+  VerifyEmail: { token?: string; email?: string } | undefined;
+  ForgotPassword: { email?: string } | undefined;
+  ResetPassword: { token?: string } | undefined;
+  Home: { openNotifications?: boolean } | undefined;
   Profile: undefined;
+  Settings: undefined;
   EditProfile: { autoFocusTaxId?: boolean; ocrResult?: OcrFormFill } | undefined;
   ScanIdentity: {
     source: ScanIdentitySource;
@@ -16,11 +19,15 @@ export type RootStackParamList = {
   };
   TaxRegistration: { ocrDependentFill?: OcrDependentFill } | undefined;
   DependentSaved: {
+    dependentId?: string;
     fullName: string;
     relationship: string;
     groupCode: string;
     groupId?: number;
     effectiveFromMonth: string;
+  };
+  DependentDetail: {
+    dependentId: string;
   };
   ProofDocuments:
     | {
@@ -62,6 +69,8 @@ export type RootStackParamList = {
     isReadOnly?: boolean;
     crossCheckResult?: import('../api/incomeSourceApi').IncomeSourceCrossCheckResult | null;
   };
+  /** Tải và xem bảng kê chi phí KCB của một hóa đơn viện phí */
+  MedicalStatement: { periodId: string; documentId: string; readOnly?: boolean };
   /** Chat tư vấn thuế AI. Không sessionId = phiên mới; nonce để nạp lại khi mở từ Lịch sử */
   TaxChat: { sessionId?: string; nonce?: number } | undefined;
   TaxChatHistory: undefined;
@@ -69,7 +78,6 @@ export type RootStackParamList = {
   SettlementPreview: {
     taxYear: number;
     cutoffDate?: string;
-    charityDeduction?: number;
   };
   SettlementSuccess: {
     dossierId: string;
@@ -105,6 +113,7 @@ export type RootStackParamList = {
   BookingCreate: { expertProfileId: string; initialSlotId?: string; specializationId?: number };
   MyBookings: { initialStatus?: string } | undefined;
   BookingDetail: { bookingId: string; isExpertView?: boolean; autoPay?: boolean };
+  ConsultationChat: { bookingId: string };
   ExpertBookings: { initialTab?: 'pending' | 'all' } | undefined;
   ExpertSlots: undefined;
   ExpertApplication: undefined;
@@ -120,6 +129,18 @@ export type RootStackParamList = {
       }
     | undefined;
   Wallet: { walletType?: 'EXPERT' | 'USER' } | undefined;
+  SubscriptionPlans: undefined;
+  /** Gói của tôi: hạn mức đã dùng, hủy gói */
+  SubscriptionMy: undefined;
+  SubscriptionHistory: undefined;
+  /** VNPay trả về sau khi mua gói (web: tham số nằm trên URL) */
+  SubscriptionPaymentResult: Record<string, string> | undefined;
+  SubscriptionCheckout: {
+    plan: import('../types/subscription').SubscriptionPlan;
+    cycle: import('../types/subscription').BillingCycle;
+    /** Tên gói đang dùng — cảnh báo gói cũ kết thúc ngay khi mua gói mới */
+    currentPlanName?: string;
+  };
 };
 
 export type RootNavigationProp = NativeStackNavigationProp<RootStackParamList>;

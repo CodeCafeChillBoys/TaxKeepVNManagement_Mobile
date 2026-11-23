@@ -52,15 +52,15 @@ export const registerSchema = z
       .string()
       .trim()
       .min(1, 'Vui lòng nhập họ và tên.')
-      .min(2, 'Họ và tên phải có ít nhất 2 ký tự.')
-      .max(100, 'Họ và tên không được vượt quá 100 ký tự.')
-      .regex(VIETNAMESE_NAME_REGEX, 'Họ và tên không được chứa số hoặc ký tự đặc biệt.'),
+      .min(2, 'Họ tên tối thiểu 2 ký tự.')
+      .max(100, 'Họ tên tối đa 100 ký tự.')
+      .regex(VIETNAMESE_NAME_REGEX, 'Họ tên không chứa số hoặc ký tự đặc biệt.'),
       
     citizenId: z
       .string()
       .trim()
-      .min(1, 'Vui lòng nhập số căn cước công dân.')
-      .regex(/^\d{12}$/, 'Số căn cước công dân phải gồm đúng 12 chữ số.'),
+      .min(1, 'Vui lòng nhập số CCCD.')
+      .regex(/^\d{12}$/, 'Số CCCD phải gồm 12 chữ số.'),
       
     dateOfBirth: z
       .string()
@@ -69,47 +69,38 @@ export const registerSchema = z
         if (!val) return true;
         const d = new Date(val);
         return !isNaN(d.getTime()) && d <= new Date();
-      }, 'Ngày sinh không hợp lệ hoặc ở tương lai.')
+      }, 'Ngày sinh không hợp lệ.')
       .refine((val) => {
         if (!val) return true;
         return calculateAge(val) >= 18;
-      }, 'Người đăng ký phải từ 18 tuổi trở lên.'),
+      }, 'Người đăng ký phải đủ 18 tuổi.'),
       
     email: z
       .string()
       .trim()
       .min(1, 'Vui lòng nhập email.')
-      .email('Địa chỉ email không hợp lệ.')
+      .email('Email không đúng định dạng.')
       .transform((val) => val.toLowerCase()),
       
     phoneNumber: z
       .string()
       .trim()
       .min(1, 'Vui lòng nhập số điện thoại.')
-      .regex(/^(0|\+84)[0-9]{9}$/, 'Số điện thoại không hợp lệ (gồm 10 số bắt đầu bằng 0).'),
-      
-    taxIdNumber: z
-      .string()
-      .trim()
-      .optional()
-      .refine((val) => {
-        if (!val || val === '') return true;
-        return /^\d{10}$|^\d{13}$/.test(val);
-      }, 'Mã số thuế phải gồm 10 hoặc 13 chữ số.'),
+      .regex(/^(0|\+84)[0-9]{9}$/, 'Số điện thoại không hợp lệ (10 chữ số).'),
       
     address: z
       .string()
       .trim()
-      .max(255, 'Địa chỉ không được vượt quá 255 ký tự.')
+      .max(255, 'Địa chỉ tối đa 255 ký tự.')
       .optional(),
       
     password: z
       .string()
       .min(1, 'Vui lòng nhập mật khẩu.')
-      .min(8, 'Mật khẩu phải có ít nhất 8 ký tự.')
-      .regex(/[A-Z]/, 'Mật khẩu phải chứa ít nhất một chữ hoa.')
-      .regex(/[a-z]/, 'Mật khẩu phải chứa ít nhất một chữ thường.')
-      .regex(/[0-9]/, 'Mật khẩu phải chứa ít nhất một chữ số.'),
+      .min(8, 'Mật khẩu tối thiểu 8 ký tự.')
+      .regex(/[A-Z]/, 'Mật khẩu cần ít nhất 1 chữ hoa.')
+      .regex(/[a-z]/, 'Mật khẩu cần ít nhất 1 chữ thường.')
+      .regex(/[0-9]/, 'Mật khẩu cần ít nhất 1 chữ số.'),
       
     confirmPassword: z
       .string()
@@ -117,29 +108,30 @@ export const registerSchema = z
       
     agreeTerms: z
       .boolean()
-      .refine((val) => val === true, 'Vui lòng đồng ý với điều khoản sử dụng để tiếp tục.'),
+      .refine((val) => val === true, 'Vui lòng đồng ý điều khoản sử dụng.'),
   })
   .refine((data) => data.password === data.confirmPassword, {
     message: 'Mật khẩu xác nhận không khớp.',
     path: ['confirmPassword'],
   })
   .refine((data) => data.password !== data.email, {
-    message: 'Mật khẩu không được trùng với email.',
+    message: 'Mật khẩu không được trùng email.',
     path: ['password'],
   })
   .refine((data) => !data.phoneNumber || data.password !== data.phoneNumber, {
-    message: 'Mật khẩu không được trùng với số điện thoại.',
+    message: 'Mật khẩu không được trùng số điện thoại.',
     path: ['password'],
   });
 
 export type RegisterFormData = z.infer<typeof registerSchema>;
 
-// Schema xác thực Form Đăng nhập (Figma iPhone 17 - 12)
+// Schema xác thực Form Đăng nhập (chỉ dùng số CCCD 12 số khớp với BE)
 export const loginSchema = z.object({
   account: z
     .string()
     .trim()
-    .min(1, 'Vui lòng nhập số CCCD hoặc email đăng nhập.'),
+    .min(1, 'Vui lòng nhập số CCCD.')
+    .regex(/^\d{12}$/, 'Số CCCD phải gồm 12 chữ số.'),
   password: z
     .string()
     .min(1, 'Vui lòng nhập mật khẩu.'),

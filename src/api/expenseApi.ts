@@ -1,6 +1,5 @@
 import { config } from '../constants/config';
 import { Platform } from 'react-native';
-import * as FileSystem from 'expo-file-system';
 import { apiClient, storageHelper } from './apiClient';
 import type { ApiResponse } from './authApi';
 import {
@@ -11,92 +10,13 @@ import {
   DocumentReviewResponse,
   ExpenseOcrResult,
   InvoiceLineItem,
+  MedicalStatement,
   PagedResult,
   SystemConfigItem,
   TaxDocumentTypeItem,
   TaxPeriodItem,
   ThresholdResolveResponse,
 } from '../types/expense';
-
-/**
- * Chuyển đổi file từ URI sang Base64 và MIME type trên cả Web và Mobile
- */
-async function getFileBase64AndMime(file: {
-  uri: string;
-  name?: string;
-  type?: string;
-  base64?: string;
-}): Promise<{ base64: string; mimeType: string }> {
-  let mimeType = 'image/jpeg';
-  const fileName = (file.name || '').toLowerCase();
-  if (fileName.endsWith('.png')) mimeType = 'image/png';
-  else if (fileName.endsWith('.pdf')) mimeType = 'application/pdf';
-  else if (fileName.endsWith('.webp')) mimeType = 'image/webp';
-  else if (fileName.endsWith('.heic')) mimeType = 'image/heic';
-  else if (fileName.endsWith('.heif')) mimeType = 'image/heif';
-  else if (file.type && file.type.startsWith('image/')) mimeType = file.type;
-  else if (file.type === 'application/pdf') mimeType = 'application/pdf';
-
-  // 1. Base64 có sẵn
-  if (file.base64 && file.base64.length > 50) {
-    let cleanBase64 = file.base64;
-    if (cleanBase64.includes(',')) {
-      cleanBase64 = cleanBase64.split(',')[1];
-    }
-    return { base64: cleanBase64.trim(), mimeType };
-  }
-
-  // 2. Data URL
-  if (file.uri.startsWith('data:')) {
-    const parts = file.uri.split(',');
-    const match = file.uri.match(/data:(.*?);base64/);
-    if (match && match[1] && match[1] !== 'application/octet-stream') {
-      mimeType = match[1];
-    }
-    return { base64: parts[1] || '', mimeType };
-  }
-
-  // 3. Native (Android / iOS)
-  if (Platform.OS !== 'web') {
-    try {
-      const base64 = await FileSystem.readAsStringAsync(file.uri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-      if (base64 && base64.length > 50) {
-        return { base64: base64.trim(), mimeType };
-      }
-    } catch (fsErr) {
-      console.warn('Không thể đọc Base64 qua FileSystem:', fsErr);
-    }
-  }
-
-  // 4. Web fallback
-  try {
-    const response = await fetch(file.uri);
-    const blob = await response.blob();
-    if (
-      blob.type &&
-      (blob.type.startsWith('image/') || blob.type === 'application/pdf') &&
-      blob.type !== 'application/octet-stream'
-    ) {
-      mimeType = blob.type;
-    }
-
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const result = reader.result as string;
-        const base64 = result.includes(',') ? result.split(',')[1] : result;
-        resolve({ base64, mimeType });
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
-  } catch (err) {
-    console.warn('Không thể đọc file sang Base64 qua fetch:', err);
-    throw err;
-  }
-}
 
 /**
  * Chuyển đổi dữ liệu DocumentReviewResponse từ backend sang ExpenseOcrResult dùng trong giao diện Review và Danh sách
@@ -137,8 +57,11 @@ export function mapDocumentReviewToOcrResult(
     }
   }
 
-  const overallConfidence = 0.95;
-  const isPassedThreshold = overallConfidence >= appliedThreshold;
+  // Ưu tiên ngưỡng BE đã áp dụng lúc trích xuất; không có điểm AI thì để undefined, không tự bịa điểm
+  if (doc.appliedThreshold != null) appliedThreshold = Number(doc.appliedThreshold);
+  const overallConfidence = doc.overallConfidence != null ? Number(doc.overallConfidence) : undefined;
+  const isPassedThreshold =
+    doc.isPassedThreshold ?? (overallConfidence !== undefined ? overallConfidence >= appliedThreshold : true);
 
   return {
     id: doc.id,
@@ -170,6 +93,7 @@ export function mapDocumentReviewToOcrResult(
     taxWithheld: doc.taxWithheld ?? null,
     insuranceDeducted: doc.insuranceDeducted ?? null,
     crossCheckResult: (doc as any).crossCheckResult || null,
+    medicalStatement: doc.medicalStatement ?? null,
     isNotReimbursed: doc.isNotReimbursed ?? false,
     items: (doc.items || []).map((it, idx) => ({
       itemOrder: it.itemOrder || idx + 1,
@@ -185,7 +109,7 @@ export function mapDocumentReviewToOcrResult(
     hasCrucialLowConfidence: false,
     fields: [],
     qualityEvaluation: {
-      qualityScore: 0.95,
+      qualityScore: overallConfidence ?? 0,
       requiredThreshold: 0.75,
       qualityIssues: [],
       isPassedQuality: true,
@@ -245,6 +169,26 @@ export const CATEGORY_NAMES: Record<string, string> = {};
  * Sanitize filename cho Backend & Supabase Storage.
  * Backend BE chỉ chấp nhận .jpg, .jpeg, .png, .pdf
  */
+/** Gắn một tệp vào FormData; trên web phải đổi uri thành Blob thì server mới nhận */
+async function appendFormFile(
+  formData: FormData,
+  field: string,
+  file: { uri: string; name?: string; type?: string },
+  defaultName: string
+): Promise<void> {
+  const { sanitizedName, validMime } = sanitizeFileName(file.name || defaultName, file.type);
+  if (Platform.OS === 'web') {
+    try {
+      const blob = await (await fetch(file.uri)).blob();
+      formData.append(field, blob, sanitizedName);
+      return;
+    } catch {
+      // rơi xuống cách gắn dạng { uri } bên dưới
+    }
+  }
+  formData.append(field, { uri: file.uri, name: sanitizedName, type: validMime } as any);
+}
+
 function sanitizeFileName(name: string, mimeType?: string): { sanitizedName: string; validMime: string } {
   const VIET_MAP: Record<string, string> = {
     'à':'a','á':'a','â':'a','ã':'a','ä':'a','å':'a',
@@ -396,27 +340,7 @@ export const expenseApi = {
     const formData = new FormData();
 
     for (const file of files) {
-      const { sanitizedName, validMime } = sanitizeFileName(file.name || 'expense_invoice.jpg', file.type);
-
-      if (Platform.OS === 'web') {
-        try {
-          const response = await fetch(file.uri);
-          const blob = await response.blob();
-          formData.append('files', blob, sanitizedName);
-        } catch {
-          formData.append('files', {
-            uri: file.uri,
-            name: sanitizedName,
-            type: validMime,
-          } as any);
-        }
-      } else {
-        formData.append('files', {
-          uri: file.uri,
-          name: sanitizedName,
-          type: validMime,
-        } as any);
-      }
+      await appendFormFile(formData, 'files', file, 'expense_invoice.jpg');
     }
 
     const res = await apiClient.post<ApiResponse<BatchUploadResponse>>(
@@ -525,6 +449,41 @@ export const expenseApi = {
   },
 
   /**
+   * Tải bảng kê chi phí KCB cho hóa đơn viện phí; AI bóc tách chạy nền sau đó
+   * POST /api/v1/tax-periods/{periodId}/documents/{documentId}/medical-statement
+   */
+  async uploadMedicalStatement(
+    periodId: string,
+    documentId: string,
+    file: { uri: string; name?: string; type?: string }
+  ): Promise<MedicalStatement> {
+    const formData = new FormData();
+    await appendFormFile(formData, 'file', file, 'bang_ke_kcb.jpg');
+    const res = await apiClient.post<ApiResponse<MedicalStatement>>(
+      `/api/v1/tax-periods/${periodId}/documents/${documentId}/medical-statement`,
+      formData,
+      {
+        headers: { Accept: 'application/json', 'Content-Type': undefined as unknown as string },
+        timeout: 120000,
+      }
+    );
+    if (!res.data?.success || !res.data?.data) {
+      throw new Error(res.data?.message || 'Tải bảng kê thất bại');
+    }
+    return res.data.data;
+  },
+
+  /**
+   * Xóa bảng kê chi phí KCB (chỉ khi hóa đơn chưa được xác nhận)
+   * DELETE /api/v1/tax-periods/{periodId}/documents/{documentId}/medical-statement
+   */
+  async deleteMedicalStatement(periodId: string, documentId: string): Promise<void> {
+    await apiClient.delete(
+      `/api/v1/tax-periods/${periodId}/documents/${documentId}/medical-statement`
+    );
+  },
+
+  /**
    * Nộp và khóa kỳ tính thuế (POST /api/v1/tax-periods/{periodId}/submit)
    */
   async submitTaxPeriod(periodId: string): Promise<TaxPeriodItem> {
@@ -541,14 +500,17 @@ export const expenseApi = {
     try {
       const res = await apiClient.get<any>(`/api/admin/system-configs`, {
         params: { activeOnly },
-      });
+        suppressPermissionToast: true,
+      } as any);
       const raw = res.data;
       if (Array.isArray(raw)) return raw;
       if (Array.isArray(raw?.value)) return raw.value;
       if (Array.isArray(raw?.data)) return raw.data;
       return [];
     } catch (err) {
-      console.warn('Lỗi khi tải cấu hình hệ thống từ Backend:', err);
+      if (__DEV__) {
+        console.warn('Lỗi khi tải cấu hình hệ thống từ Backend:', err);
+      }
       return [];
     }
   },
@@ -562,11 +524,13 @@ export const expenseApi = {
       const params = categoryCode ? { categoryCode } : {};
       const res = await apiClient.get<ThresholdResolveResponse>(
         `/api/admin/system-configs/threshold/test-resolve`,
-        { params }
+        { params, suppressPermissionToast: true } as any
       );
       return res.data;
     } catch (err) {
-      console.warn('Lỗi khi resolve ngưỡng nhận diện từ Backend:', err);
+      if (__DEV__) {
+        console.warn('Lỗi khi resolve ngưỡng nhận diện từ Backend:', err);
+      }
       return {
         category_code: categoryCode || null,
         resolved_threshold: 0.8,

@@ -267,13 +267,29 @@ export const dependentDocumentApi = {
     } catch (err: any) {
       const isTimeout =
         err?.code === 'ECONNABORTED' || /timeout/i.test(String(err?.message || ''));
-      const errMsg = isTimeout
-        ? 'Đã hết thời gian chờ đọc giấy tờ (OCR). Vui lòng thử lại với ảnh rõ hơn hoặc kiểm tra TaxAI đang chạy.'
-        : err?.response?.data?.message ||
-          err?.response?.data?.errors?.DocType?.[0] ||
-          err?.message ||
-          'Không thể tải lên giấy tờ minh chứng.';
-      throw new Error(errMsg);
+      const data = err?.response?.data;
+      const errorCode =
+        data?.errorCode ||
+        data?.errors?.errorCode ||
+        (isTimeout ? 'TIMEOUT' : undefined);
+      const rawMessage =
+        data?.message ||
+        data?.errors?.File?.[0] ||
+        data?.errors?.DocType?.[0] ||
+        err?.message ||
+        'Không thể tải lên giấy tờ minh chứng.';
+      const wrappedError: any = new Error(
+        isTimeout
+          ? 'Quá thời gian đọc thông tin giấy tờ. Vui lòng chụp lại ảnh rõ nét, đủ sáng và thử tải lên lại.'
+          : rawMessage
+      );
+      wrappedError.errorCode = errorCode;
+      wrappedError.httpStatus = err?.response?.status;
+      wrappedError.rawMessage = rawMessage;
+      wrappedError.code = err?.code;
+      wrappedError.response = err?.response;
+      wrappedError.request = err?.request;
+      throw wrappedError;
     }
 
     // Lưu vào bộ nhớ cục bộ để người dùng có thể xem lại ngay lập tức
@@ -314,7 +330,9 @@ export const dependentDocumentApi = {
       }
       return [];
     } catch (err: any) {
-      console.warn('getRules API error:', err?.response?.data || err?.message);
+      if (__DEV__) {
+        console.warn('getRules API error:', err?.response?.data || err?.message);
+      }
       return [];
     }
   },
@@ -331,7 +349,11 @@ export const dependentDocumentApi = {
       }
       return [];
     } catch (err: any) {
-      console.warn('getAgeTransitionReminders error:', err?.response?.data || err?.message);
+      const status = err?.response?.status;
+      const errorCode = err?.response?.data?.errors?.errorCode;
+      if (__DEV__ && status !== 403 && errorCode !== 'FORBIDDEN') {
+        console.warn('getAgeTransitionReminders error:', err?.response?.data || err?.message);
+      }
       return [];
     }
   },

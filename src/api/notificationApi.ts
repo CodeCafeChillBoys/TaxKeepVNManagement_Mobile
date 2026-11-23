@@ -48,7 +48,9 @@ export const notificationApi = {
         pagination: { page: 1, pageSize: 10, totalItems: 0, totalPages: 1 },
       };
     } catch (err: any) {
-      console.warn('notificationApi.getNotifications error:', err?.response?.data || err?.message);
+      if (__DEV__) {
+        console.warn('notificationApi.getNotifications error:', err?.response?.data || err?.message);
+      }
       return {
         items: [],
         pagination: { page: 1, pageSize: 10, totalItems: 0, totalPages: 1 },
@@ -62,7 +64,9 @@ export const notificationApi = {
       await apiClient.patch(`/api/v1/notifications/${notificationId}/read`);
       return true;
     } catch (err: any) {
-      console.warn('notificationApi.markAsRead error:', err?.response?.data || err?.message);
+      if (__DEV__) {
+        console.warn('notificationApi.markAsRead error:', err?.response?.data || err?.message);
+      }
       return false;
     }
   },

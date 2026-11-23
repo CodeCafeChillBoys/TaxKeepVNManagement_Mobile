@@ -1,0 +1,48 @@
+# Report 3 — Figure 3-18, 3-21. Tài khoản chuyên gia đã được duyệt. 3-24 chụp tay qua Maestro MCP (xem README).
+appId: host.exp.exponent
+name: r3_f_expert
+tags:
+  - report3
+---
+- runFlow:
+    file: _login.yaml
+    env:
+      LOGIN_ID: ${EXPERT_ID}
+      LOGIN_PW: ${EXPERT_PW}
+
+# ===== Figure 3-18: Consultation Working Schedule =====
+- tapOn:
+    id: mainTab_Profile
+- scrollUntilVisible:
+    element:
+      id: quickLinkExpertSlots
+    direction: DOWN
+    timeout: 10000
+- tapOn:
+    id: quickLinkExpertSlots
+- extendedWaitUntil:
+    visible: "Lịch làm việc tư vấn"
+    timeout: 20000
+- extendedWaitUntil:
+    notVisible: ".*Đang tải.*"
+    timeout: 30000
+- waitForAnimationToEnd
+- takeScreenshot: screenshots/report3/3-18-expert-slots
+- back
+
+# ===== Figure 3-21: Manage Consultations =====
+- scrollUntilVisible:
+    element:
+      id: quickLinkExpertBookings
+    direction: DOWN
+    timeout: 10000
+- tapOn:
+    id: quickLinkExpertBookings
+- extendedWaitUntil:
+    visible: "Quản lý ca tư vấn"
+    timeout: 20000
+- extendedWaitUntil:
+    notVisible: ".*Đang tải.*"
+    timeout: 30000
+- waitForAnimationToEnd
+- takeScreenshot: screenshots/report3/3-21-manage-consultations

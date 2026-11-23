@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -7,7 +7,6 @@ import {
   TextInput,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
@@ -19,11 +18,13 @@ import * as DocumentPicker from 'expo-document-picker';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
 import { DrumHeader } from '../../components/brand/DrumHeader';
+import { useToast } from '../../components/ui/Toast';
 import { expenseApi } from '../../api/expenseApi';
 import { incomeSourceApi, IncomeSourceCrossCheckResult } from '../../api/incomeSourceApi';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { DocumentReviewResponse } from '../../types/expense';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
+import { sanitizeUiMessage } from '../../utils/friendlyError';
 import { extractApiErrorMessage, formatMoneyInput } from '../income/incomeFormUtils';
 import {
   VoucherFormErrors,
@@ -46,14 +47,19 @@ const POLL_INTERVAL_MS = 1500;
 const vnd = (n?: number | null) => `${Number(n ?? 0).toLocaleString('vi-VN')} đ`;
 const wait = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
-/**
- * Tải chứng từ khấu trừ thuế TNCN (luồng riêng của Nơi chi trả, không đi qua màn hoá đơn chi phí).
- * B1 chọn năm + file → upload, chờ bóc tách. B2 kiểm tra số → cross-check với thu nhập theo tháng → khớp mới lưu.
- */
 export function WithholdingVoucherScreen() {
   const navigation = useNavigation<RootNavigationProp>();
   const { params } = useRoute<Route>();
+  const { toast } = useToast();
   const user = useAuthStore((s) => s.user);
+
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   const [year, setYear] = useState<number>(params?.year ?? new Date().getFullYear());
   const [file, setFile] = useState<PickedFile | null>(null);
@@ -73,7 +79,6 @@ export function WithholdingVoucherScreen() {
 
   const busy = uploading || checking || saving;
 
-  // ── B1: chọn file ───────────────────────────────────────────────────────────
   const pickImage = async (source: 'camera' | 'library') => {
     try {
       const perm =
@@ -81,14 +86,19 @@ export function WithholdingVoucherScreen() {
           ? await ImagePicker.requestCameraPermissionsAsync()
           : await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) {
-        Alert.alert('Cần cấp quyền', source === 'camera' ? 'Vui lòng cho phép truy cập Camera.' : 'Vui lòng cho phép truy cập Thư viện ảnh.');
+        toast.warning(
+          source === 'camera'
+            ? 'Vui lòng cấp quyền truy cập máy ảnh trong phần Cài đặt thiết bị để chụp chứng từ.'
+            : 'Vui lòng cấp quyền truy cập thư viện ảnh trong phần Cài đặt thiết bị để chọn ảnh.',
+          'Cần cấp quyền truy cập'
+        );
         return;
       }
       const result =
         source === 'camera'
-          ? await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.8 })
-          : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.85 });
-      if (result.canceled || !result.assets?.length) return;
+          ? await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.8, base64: false })
+          : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.8, base64: false });
+      if (result.canceled || !result.assets?.length || !isMountedRef.current) return;
       const asset = result.assets[0];
       setFile({
         uri: asset.uri,
@@ -97,7 +107,7 @@ export function WithholdingVoucherScreen() {
       });
       setUploadError('');
     } catch {
-      Alert.alert('Lỗi', 'Không thể mở camera hoặc thư viện ảnh.');
+      toast.error('Chưa thể mở máy ảnh hoặc thư viện ảnh. Vui lòng thử lại.', 'Không mở được ảnh');
     }
   };
 
@@ -107,47 +117,61 @@ export function WithholdingVoucherScreen() {
         type: ['application/pdf', 'image/*'],
         copyToCacheDirectory: true,
       });
-      if (result.canceled || !result.assets?.length) return;
+      if (result.canceled || !result.assets?.length || !isMountedRef.current) return;
       const asset = result.assets[0];
       const name = asset.name || `chungtu_khautru_${Date.now()}.pdf`;
       const isPdf = name.toLowerCase().endsWith('.pdf') || asset.mimeType === 'application/pdf';
       setFile({ uri: asset.uri, name, type: asset.mimeType || (isPdf ? 'application/pdf' : 'image/jpeg') });
       setUploadError('');
     } catch {
-      Alert.alert('Lỗi', 'Không thể chọn tệp.');
+      toast.error('Chưa thể mở trình chọn tệp tài liệu. Vui lòng thử lại.', 'Không chọn được tệp');
     }
   };
 
-  // ── B1: tạo kỳ thuế → upload → chờ bóc tách ────────────────────────────────
   const upload = async () => {
     if (!file) return;
     setUploading(true);
     setUploadError('');
     try {
-      setStage('Đang tạo kỳ tính thuế...');
+      setStage('Đang khởi tạo kỳ tính thuế...');
       const period = await expenseApi.initOrGetPeriod(year, user?.id);
+      if (!isMountedRef.current) return;
 
       setStage('Đang tải chứng từ lên...');
       const uploaded = await expenseApi.batchUploadDocuments(period.periodId, [file]);
-      const docId = uploaded.documents[0]?.id;
-      if (!docId) throw new Error('Máy chủ không trả về chứng từ vừa tải lên.');
+      if (!isMountedRef.current) return;
 
-      // BE tự đẩy việc bóc tách sau khi upload → chờ đến khi có kết quả
+      const docId = uploaded.documents[0]?.id;
+      if (!docId) {
+        throw new Error('Chưa nhận được thông tin chứng từ vừa tải lên. Vui lòng thử lại.');
+      }
+
       let latest: DocumentReviewResponse | null = null;
       for (let attempt = 1; attempt <= POLL_ATTEMPTS; attempt++) {
+        if (!isMountedRef.current) return;
         setStage(`Đang đọc thông tin chứng từ... (${attempt}/${POLL_ATTEMPTS})`);
         await wait(POLL_INTERVAL_MS);
+        if (!isMountedRef.current) return;
         try {
           latest = await expenseApi.getDocumentById(period.periodId, docId);
           if (isExtractionFinished(latest.status)) break;
         } catch {
-          // lỗi tạm thời khi hỏi trạng thái → thử lại lượt sau
+          // lỗi tạm thời khi kiểm tra trạng thái → thử lại lượt sau
         }
       }
 
+      if (!isMountedRef.current) return;
       const extracted = latest && latest.status === 'EXTRACTED' ? latest : null;
       const base: DocumentReviewResponse =
-        latest ?? ({ id: docId, periodId: period.periodId, fileUrl: '', status: 'UPLOADED', createdAt: '', items: [] } as DocumentReviewResponse);
+        latest ??
+        ({
+          id: docId,
+          periodId: period.periodId,
+          fileUrl: '',
+          status: 'UPLOADED',
+          createdAt: '',
+          items: [],
+        } as DocumentReviewResponse);
 
       setPeriodId(period.periodId);
       setDoc(base);
@@ -156,18 +180,20 @@ export function WithholdingVoucherScreen() {
       setErrors({});
       setCheck(null);
     } catch (err) {
-      setUploadError(extractApiErrorMessage(err, 'Tải chứng từ thất bại. Vui lòng thử lại.'));
+      if (!isMountedRef.current) return;
+      const fallback = 'Chưa tải lên được chứng từ. Vui lòng kiểm tra kết nối mạng và thử lại.';
+      setUploadError(sanitizeUiMessage(extractApiErrorMessage(err, fallback), fallback));
     } finally {
-      setUploading(false);
-      setStage('');
+      if (isMountedRef.current) {
+        setUploading(false);
+        setStage('');
+      }
     }
   };
 
-  // ── B2: sửa số → cross-check → confirm ─────────────────────────────────────
   const setField = (field: VoucherFormField, text: string) => {
     setValues((v) => (v ? { ...v, [field]: text } : v));
     if (errors[field]) setErrors((e) => ({ ...e, [field]: undefined }));
-    // Số đã đổi thì kết quả đối chiếu cũ không còn đúng
     setCheck(null);
     if (formError) setFormError('');
   };
@@ -186,30 +212,40 @@ export function WithholdingVoucherScreen() {
     let result: IncomeSourceCrossCheckResult;
     try {
       result = await incomeSourceApi.crossCheck(toCrossCheckRequest(values));
+      if (!isMountedRef.current) return;
       setCheck(result);
     } catch (err) {
-      setFormError(extractApiErrorMessage(err, 'Không đối chiếu được số liệu. Vui lòng thử lại.'));
+      if (!isMountedRef.current) return;
+      const fallback = 'Không đối chiếu được số liệu lúc này. Vui lòng thử lại.';
+      setFormError(sanitizeUiMessage(extractApiErrorMessage(err, fallback), fallback));
       return;
     } finally {
-      setChecking(false);
+      if (isMountedRef.current) {
+        setChecking(false);
+      }
     }
-    // Lệch số → không lưu, để người dùng xem chênh lệch
     if (!result.isMatch) return;
 
     setSaving(true);
     try {
       await expenseApi.confirmDocumentReview(periodId, doc.id, toVoucherConfirmRequest(values, doc));
-      Alert.alert('Đã lưu chứng từ', 'Số liệu chứng từ khớp với thu nhập đã khai và đã được cập nhật vào nơi chi trả.', [
-        { text: 'OK', onPress: () => navigation.goBack() },
-      ]);
+      if (!isMountedRef.current) return;
+      toast.success(
+        'Số liệu chứng từ khớp với thu nhập đã khai và đã được cập nhật vào nơi chi trả.',
+        'Đã lưu chứng từ'
+      );
+      navigation.goBack();
     } catch (err) {
-      setFormError(extractApiErrorMessage(err, 'Không lưu được chứng từ. Vui lòng thử lại.'));
+      if (!isMountedRef.current) return;
+      const fallback = 'Không lưu được chứng từ khấu trừ. Vui lòng thử lại.';
+      setFormError(sanitizeUiMessage(extractApiErrorMessage(err, fallback), fallback));
     } finally {
-      setSaving(false);
+      if (isMountedRef.current) {
+        setSaving(false);
+      }
     }
   };
 
-  // ── Giao diện ───────────────────────────────────────────────────────────────
   const field = (
     name: VoucherFormField,
     label: string,
@@ -264,11 +300,21 @@ export function WithholdingVoucherScreen() {
 
       <Text style={styles.sectionLabel}>Chứng từ</Text>
       <View style={styles.pickBtns}>
-        <TouchableOpacity style={styles.pickBtn} onPress={() => pickImage('camera')} disabled={busy} testID="voucherPickCamera">
+        <TouchableOpacity
+          style={styles.pickBtn}
+          onPress={() => pickImage('camera')}
+          disabled={busy}
+          testID="voucherPickCamera"
+        >
           <Ionicons name="camera-outline" size={18} color={theme.colors.primary} />
           <Text style={styles.pickBtnText}>Chụp ảnh</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.pickBtn} onPress={() => pickImage('library')} disabled={busy} testID="voucherPickLibrary">
+        <TouchableOpacity
+          style={styles.pickBtn}
+          onPress={() => pickImage('library')}
+          disabled={busy}
+          testID="voucherPickLibrary"
+        >
           <Ionicons name="images-outline" size={18} color={theme.colors.primary} />
           <Text style={styles.pickBtnText}>Chọn ảnh</Text>
         </TouchableOpacity>
@@ -315,7 +361,7 @@ export function WithholdingVoucherScreen() {
     <>
       <View style={[styles.infoBox, extractFailed && styles.infoBoxWarn]} testID="voucherExtractStatus">
         <Text style={styles.infoTitle}>
-          {extractFailed ? 'Chưa đọc được chứng từ — vui lòng nhập tay' : 'Đã đọc chứng từ — kiểm tra lại các số'}
+          {extractFailed ? 'Chưa đọc được chứng từ — vui lòng nhập tay' : 'Đã đọc chứng từ — kiểm tra lại số liệu'}
         </Text>
         <Text style={styles.infoText}>
           Tên tổ chức phải trùng với tên nơi chi trả bạn đã khai ở phần thu nhập theo tháng thì mới đối chiếu được.
@@ -337,11 +383,11 @@ export function WithholdingVoucherScreen() {
           </View>
           {check.mismatchMessages.map((m, i) => (
             <Text key={i} style={styles.mismatchText}>
-              • {m}
+              • {sanitizeUiMessage(m, m)}
             </Text>
           ))}
           <View style={styles.compare}>
-            <Text style={styles.compareText}>Hệ thống đang có: thu nhập {vnd(check.summedTotalIncome)}</Text>
+            <Text style={styles.compareText}>Đã ghi nhận theo tháng: thu nhập {vnd(check.summedTotalIncome)}</Text>
             <Text style={styles.compareText}>
               · thuế {vnd(check.summedTaxWithheld)} · bảo hiểm {vnd(check.summedInsuranceDeducted)}
             </Text>
@@ -358,7 +404,12 @@ export function WithholdingVoucherScreen() {
         </Text>
       ) : null}
 
-      <TouchableOpacity style={[styles.primaryBtn, busy && styles.disabled]} onPress={confirm} disabled={busy} testID="voucherConfirmBtn">
+      <TouchableOpacity
+        style={[styles.primaryBtn, busy && styles.disabled]}
+        onPress={confirm}
+        disabled={busy}
+        testID="voucherConfirmBtn"
+      >
         {busy ? (
           <ActivityIndicator color="#FFFFFF" />
         ) : (
@@ -372,8 +423,12 @@ export function WithholdingVoucherScreen() {
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right', 'bottom']}>
       <DrumHeader title="Chứng từ khấu trừ thuế" onBack={() => navigation.goBack()} backTestID="voucherBack" />
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" testID="voucherScroll">
-          {values ? renderReviewStep() : renderUploadStep()}
+        <ScrollView
+          contentContainerStyle={styles.scrollOuter}
+          keyboardShouldPersistTaps="handled"
+          testID="voucherScroll"
+        >
+          <View style={styles.content}>{values ? renderReviewStep() : renderUploadStep()}</View>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -383,10 +438,18 @@ export function WithholdingVoucherScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: theme.colors.background },
   flex: { flex: 1 },
-  content: { padding: 20, paddingBottom: 40, gap: 12 },
+  scrollOuter: { flexGrow: 1 },
+  content: {
+    width: '100%',
+    maxWidth: 600,
+    alignSelf: 'center',
+    padding: 20,
+    paddingBottom: 40,
+    gap: 12,
+  },
   lead: { fontFamily: fonts.body, fontSize: 13, lineHeight: 19, color: theme.colors.textSecondary },
   sectionLabel: { fontFamily: fonts.bodySemi, fontSize: 13, color: theme.colors.textPrimary },
-  chips: { flexDirection: 'row', gap: 8 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: {
     borderWidth: 1,
     borderColor: theme.colors.border,
@@ -398,9 +461,10 @@ const styles = StyleSheet.create({
   chipOn: { borderColor: theme.colors.primary, backgroundColor: theme.colors.primary },
   chipText: { fontFamily: fonts.bodyMedium, fontSize: 13, color: theme.colors.textPrimary },
   chipTextOn: { color: '#FFFFFF' },
-  pickBtns: { flexDirection: 'row', gap: 8 },
+  pickBtns: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   pickBtn: {
     flex: 1,
+    minWidth: 92,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -409,8 +473,9 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.primary,
     borderRadius: 10,
     paddingVertical: 10,
+    paddingHorizontal: 8,
   },
-  pickBtnText: { fontFamily: fonts.bodySemi, fontSize: 12, color: theme.colors.primary },
+  pickBtnText: { flexShrink: 1, fontFamily: fonts.bodySemi, fontSize: 12, color: theme.colors.primary },
   fileRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   fileName: { flex: 1, fontFamily: fonts.bodyMedium, fontSize: 12, color: theme.colors.textPrimary },
   progress: { flexDirection: 'row', alignItems: 'center', gap: 8 },
@@ -432,8 +497,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   inputError: { borderColor: theme.colors.primary },
-  input: { flex: 1, paddingVertical: 10, fontFamily: fonts.body, fontSize: 14, color: theme.colors.textPrimary },
-  unit: { fontFamily: fonts.bodyMedium, fontSize: 14, color: theme.colors.textSecondary },
+  input: { flex: 1, minHeight: 42, paddingVertical: 10, fontFamily: fonts.body, fontSize: 14, color: theme.colors.textPrimary },
+  unit: { fontFamily: fonts.bodyMedium, fontSize: 14, color: theme.colors.textSecondary, marginLeft: 4 },
   errorText: { fontFamily: fonts.body, fontSize: 11, color: theme.colors.primary },
   mismatchBox: { borderRadius: 10, padding: 12, backgroundColor: '#FDEDE8', gap: 6 },
   mismatchHead: { flexDirection: 'row', alignItems: 'center', gap: 6 },
@@ -447,9 +512,10 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.primary,
     borderRadius: 12,
     paddingVertical: 14,
+    paddingHorizontal: 16,
     alignItems: 'center',
     marginTop: 4,
   },
-  primaryText: { fontFamily: fonts.bodySemi, fontSize: 15, color: '#FFFFFF' },
+  primaryText: { fontFamily: fonts.bodySemi, fontSize: 15, color: '#FFFFFF', textAlign: 'center' },
   disabled: { opacity: 0.6 },
 });

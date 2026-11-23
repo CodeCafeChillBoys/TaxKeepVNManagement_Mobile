@@ -1,5 +1,6 @@
 import {
   formatCertVerificationNote,
+  formatCertConfidence,
   cleanRawTechnicalStrings,
   formatRefundStatus,
   toFriendlyConsultationError,
@@ -192,4 +193,17 @@ describe('formatThousands & parseThousands & formatVndWithDots', () => {
   });
 });
 
+describe('formatCertConfidence', () => {
+  it('đọc điểm tin cậy và ngưỡng từ ghi chú của BE', () => {
+    expect(formatCertConfidence('AI từ chối: Độ tin cậy trích xuất (72%) không đạt ngưỡng 80%. Hình ảnh có thể bị mờ.'))
+      .toBe('72% (yêu cầu ≥ 80%)');
+    expect(formatCertConfidence("AI tự động xác thực thành công. Khớp Họ tên ('A'). Loại: TAX_AGENT. Độ tin cậy: 92%."))
+      .toBe('92%');
+  });
 
+  it('trả null khi ghi chú không có điểm tin cậy', () => {
+    expect(formatCertVerificationNote).toBeDefined();
+    expect(formatCertConfidence("AI từ chối: Họ tên trên chứng chỉ ('A') không trùng khớp.")).toBeNull();
+    expect(formatCertConfidence(null)).toBeNull();
+  });
+});

@@ -1,0 +1,36 @@
+import {
+  getDependentStatusMeta,
+  formatDependentDate,
+  formatDependentMonth,
+  formatDependentMonthRange,
+  normalizeDependentNote,
+  calculateDependentAge,
+} from './dependentDetailUtils';
+
+describe('dependentDetailUtils', () => {
+  it('maps status and profile completeness to clear Vietnamese metadata', () => {
+    expect(getDependentStatusMeta('ACTIVE', true).tone).toBe('success');
+    expect(getDependentStatusMeta('PENDING_DOCUMENTS', false).tone).toBe('warning');
+    expect(getDependentStatusMeta('INACTIVE', false).tone).toBe('neutral');
+  });
+
+  it('formats dates and effective month ranges cleanly', () => {
+    expect(formatDependentDate('1993-11-10T00:00:00Z')).toBe('10/11/1993');
+    expect(formatDependentDate(null)).toBe('Chưa cập nhật');
+    expect(formatDependentMonth('2026-01')).toBe('01/2026');
+    expect(formatDependentMonthRange('2026-01', '2026-12')).toBe('01/2026 → 12/2026');
+  });
+
+  it('normalizes optional notes and enforces 500 char BE limit', () => {
+    expect(normalizeDependentNote('   ')).toBeUndefined();
+    expect(normalizeDependentNote('  Con học đại học  ')).toBe('Con học đại học');
+    expect(normalizeDependentNote('a'.repeat(600))?.length).toBe(500);
+  });
+
+  it('calculates age accurately relative to reference date', () => {
+    const ref = new Date(2026, 10, 23); // 2026-11-23
+    expect(calculateDependentAge('1993-11-10T00:00:00Z', ref)).toBe(33);
+    expect(calculateDependentAge('2010-12-01', ref)).toBe(15);
+    expect(calculateDependentAge(undefined, ref)).toBe(0);
+  });
+});

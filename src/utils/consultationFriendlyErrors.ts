@@ -1,3 +1,6 @@
+import { messageForErrorCode } from './apiErrorCatalog';
+import { parseForbiddenError } from './permissionError';
+
 /**
  * Chuyển đổi mã lỗi và thông điệp kỹ thuật từ máy chủ sang ngôn ngữ tiếng Việt
  * tự nhiên, chuyên nghiệp và lịch sự cho người nộp thuế và chuyên gia.
@@ -195,6 +198,13 @@ export function toFriendlyConsultationError(
   }
 
   if (upperCode === 'FORBIDDEN' || status === 403) {
+    const forbidden = parseForbiddenError(err);
+    if (forbidden) {
+      return {
+        title: forbidden.title,
+        message: forbidden.message,
+      };
+    }
     return {
       title: 'Không có quyền thao tác',
       message: 'Tài khoản của bạn không có quyền thực hiện thao tác này.',
@@ -243,7 +253,14 @@ export function toFriendlyConsultationError(
     };
   }
 
-  // 4. Làm sạch thông điệp tiếng Việt từ Backend nếu có
+  // 4. BE trả mã đã biết nhưng câu kèm theo là tiếng Anh hoặc chỉ là mã
+  const mapped = messageForErrorCode(upperCode);
+  const hasVietnamese = /[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/i.test(rawMsg);
+  if (mapped && !hasVietnamese) {
+    return { title: defaultTitle, message: mapped };
+  }
+
+  // 5. Làm sạch thông điệp tiếng Việt từ Backend nếu có
   if (rawMsg.trim()) {
     const cleaned = cleanRawTechnicalStrings(rawMsg);
     if (cleaned && !cleaned.toLowerCase().includes('request failed with status code')) {
@@ -429,6 +446,19 @@ export function formatCertVerificationNote(note?: string | null, status?: string
   }
 
   return cleanRawTechnicalStrings(trimmed);
+}
+
+/**
+ * Lấy điểm tin cậy và ngưỡng AI từ ghi chú thẩm định chứng chỉ.
+ * shortcut: BE chỉ ghi số vào câu verificationNote ("Độ tin cậy: 92%", "Độ tin cậy trích xuất (72%) không đạt ngưỡng 80%"),
+ * đổi sang đọc field số khi CertificateResponseDto có overallConfidence/appliedThreshold.
+ */
+export function formatCertConfidence(note?: string | null): string | null {
+  if (!note) return null;
+  const conf = note.match(/độ tin cậy[^\d]{0,20}(\d{1,3})\s*%/i);
+  if (!conf) return null;
+  const thr = note.match(/ngưỡng\s*(\d{1,3})\s*%/i);
+  return thr ? `${conf[1]}% (yêu cầu ≥ ${thr[1]}%)` : `${conf[1]}%`;
 }
 
 /**

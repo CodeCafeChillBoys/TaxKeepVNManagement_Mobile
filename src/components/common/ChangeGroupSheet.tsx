@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Modal,
   View,
@@ -8,31 +8,49 @@ import {
   Pressable,
   ActivityIndicator,
   ScrollView,
+  TextInput,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { getGroupTitle } from '../../api/dependentDocumentApi';
+import { normalizeDependentNote } from '../../screens/dependent/dependentDetailUtils';
 
 export type ChangeGroupSheetProps = {
   visible: boolean;
   fullName: string;
   currentGroup: string;
   options: string[];
+  initialNote?: string | null;
   loading?: boolean;
-  onSelect: (groupCode: string) => void;
+  onSelect: (groupCode: string, note?: string) => void;
   onCancel: () => void;
 };
 
-/** Bottom sheet chọn nhóm NPT — đồng bộ palette TaxKeep (không dùng Alert hệ thống). */
-export const ChangeGroupSheet: React.FC<ChangeGroupSheetProps> = ({
+const NOOP = () => undefined;
+
+/** Bottom sheet chọn nhóm NPT & ghi chú tùy chọn — đồng bộ BE PATCH /api/v1/dependents/{id}/group. */
+export const ChangeGroupSheet: React.FC<ChangeGroupSheetProps> = React.memo(({
   visible,
   fullName,
   currentGroup,
   options,
+  initialNote,
   loading = false,
   onSelect,
   onCancel,
 }) => {
+  const [noteInput, setNoteInput] = useState<string>(initialNote ?? '');
+
+  useEffect(() => {
+    if (visible) {
+      setNoteInput(initialNote ?? '');
+    }
+  }, [visible, initialNote]);
+
+  if (!visible) return null;
+
   return (
     <Modal
       visible={visible}
@@ -40,72 +58,100 @@ export const ChangeGroupSheet: React.FC<ChangeGroupSheetProps> = ({
       animationType="fade"
       onRequestClose={onCancel}
     >
-      <Pressable style={styles.scrim} onPress={loading ? undefined : onCancel}>
-        <Pressable style={styles.sheet} onPress={() => undefined}>
-          <View style={styles.handle} />
-          <Text style={styles.title}>Đổi nhóm điều kiện</Text>
-          <Text style={styles.message}>
-            Chọn nhóm mới cho{' '}
-            <Text style={styles.nameEmph}>{fullName}</Text>
-          </Text>
-          <View style={styles.currentBox}>
-            <Text style={styles.currentLabel}>Hiện tại</Text>
-            <Text style={styles.currentValue}>{getGroupTitle(currentGroup)}</Text>
-          </View>
-
-          <ScrollView
-            style={styles.optionsScroll}
-            contentContainerStyle={styles.optionsContent}
-            showsVerticalScrollIndicator={false}
-          >
-            {options.map((code) => (
-              <TouchableOpacity
-                key={code}
-                style={[styles.optionCard, loading && styles.optionDisabled]}
-                activeOpacity={0.85}
-                disabled={loading}
-                onPress={() => onSelect(code)}
-                testID={`changeGroupOption_${code}`}
-                accessibilityRole="button"
-                accessibilityLabel={getGroupTitle(code)}
-              >
-                <View style={styles.optionIcon}>
-                  <Ionicons name="people-outline" size={20} color={theme.colors.primary} />
-                </View>
-                <Text style={styles.optionTitle}>{getGroupTitle(code)}</Text>
-                <Ionicons name="chevron-forward" size={18} color={theme.colors.textSecondary} />
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-
-          {loading ? (
-            <View style={styles.loadingRow}>
-              <ActivityIndicator color={theme.colors.primary} />
-              <Text style={styles.loadingText}>Đang chuyển nhóm…</Text>
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <Pressable style={styles.scrim} onPress={loading ? undefined : onCancel}>
+          <Pressable style={styles.sheet} onPress={NOOP}>
+            <View style={styles.handle} />
+            <Text style={styles.title}>Đổi nhóm điều kiện giảm trừ</Text>
+            <Text style={styles.message}>
+              Chọn nhóm điều kiện mới cho{' '}
+              <Text style={styles.nameEmph}>{fullName}</Text>
+            </Text>
+            <View style={styles.currentBox}>
+              <Text style={styles.currentLabel}>Nhóm hiện tại</Text>
+              <Text style={styles.currentValue}>{getGroupTitle(currentGroup)}</Text>
             </View>
-          ) : (
-            <TouchableOpacity
-              style={styles.cancelBtn}
-              onPress={onCancel}
-              accessibilityRole="button"
-              accessibilityLabel="Hủy"
+
+            <View style={styles.noteBox}>
+              <Text style={styles.noteLabel}>Ghi chú cập nhật (tùy chọn)</Text>
+              <TextInput
+                style={styles.noteInput}
+                value={noteInput}
+                onChangeText={setNoteInput}
+                placeholder="VD: Con đủ 18 tuổi đang học đại học..."
+                placeholderTextColor={theme.colors.textPlaceholder}
+                multiline
+                maxLength={500}
+                editable={!loading}
+                textAlignVertical="top"
+                testID="changeGroupNoteInput"
+              />
+            </View>
+
+            <ScrollView
+              style={styles.optionsScroll}
+              contentContainerStyle={styles.optionsContent}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
             >
-              <Text style={styles.cancelBtnText}>Hủy</Text>
-            </TouchableOpacity>
-          )}
+              {options.map((code) => (
+                <TouchableOpacity
+                  key={code}
+                  style={[styles.optionCard, loading && styles.optionDisabled]}
+                  activeOpacity={0.85}
+                  disabled={loading}
+                  onPress={() => onSelect(code, normalizeDependentNote(noteInput))}
+                  testID={`changeGroupOption_${code}`}
+                  accessibilityRole="button"
+                  accessibilityLabel={getGroupTitle(code)}
+                >
+                  <View style={styles.optionIcon}>
+                    <Ionicons name="people-outline" size={20} color={theme.colors.primary} />
+                  </View>
+                  <Text style={styles.optionTitle}>{getGroupTitle(code)}</Text>
+                  <Ionicons name="chevron-forward" size={18} color={theme.colors.textSecondary} />
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            {loading ? (
+              <View style={styles.loadingRow}>
+                <ActivityIndicator color={theme.colors.primary} />
+                <Text style={styles.loadingText}>Đang cập nhật nhóm điều kiện…</Text>
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={styles.cancelBtn}
+                onPress={onCancel}
+                accessibilityRole="button"
+                accessibilityLabel="Giữ nguyên nhóm cũ"
+              >
+                <Text style={styles.cancelBtnText}>Giữ lại nhóm cũ</Text>
+              </TouchableOpacity>
+            )}
+          </Pressable>
         </Pressable>
-      </Pressable>
+      </KeyboardAvoidingView>
     </Modal>
   );
-};
+});
 
 const styles = StyleSheet.create({
+  flex: {
+    flex: 1,
+  },
   scrim: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.45)',
     justifyContent: 'flex-end',
   },
   sheet: {
+    width: '100%',
+    maxWidth: 520,
+    alignSelf: 'center',
     backgroundColor: theme.colors.surface,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
@@ -114,7 +160,7 @@ const styles = StyleSheet.create({
     paddingBottom: theme.spacing.lg,
     borderWidth: 1,
     borderColor: theme.colors.border,
-    maxHeight: '78%',
+    maxHeight: '86%',
   },
   handle: {
     alignSelf: 'center',
@@ -144,7 +190,7 @@ const styles = StyleSheet.create({
     borderRadius: theme.borderRadius.md,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    marginBottom: theme.spacing.md,
+    marginBottom: theme.spacing.sm,
     borderWidth: 1,
     borderColor: theme.colors.border,
   },
@@ -159,6 +205,28 @@ const styles = StyleSheet.create({
     ...theme.typography.bodyMedium,
     fontWeight: '600',
     color: theme.colors.textPrimary,
+  },
+  noteBox: {
+    marginBottom: theme.spacing.md,
+  },
+  noteLabel: {
+    ...theme.typography.caption,
+    color: theme.colors.textSecondary,
+    fontWeight: '600',
+    marginBottom: 6,
+  },
+  noteInput: {
+    minHeight: 68,
+    maxHeight: 110,
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.background,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    ...theme.typography.bodyMedium,
+    color: theme.colors.textPrimary,
+    textAlignVertical: 'top',
   },
   optionsScroll: {
     flexGrow: 0,
@@ -191,6 +259,7 @@ const styles = StyleSheet.create({
   },
   optionTitle: {
     flex: 1,
+    flexShrink: 1,
     ...theme.typography.bodyMedium,
     fontWeight: '600',
     color: theme.colors.textPrimary,

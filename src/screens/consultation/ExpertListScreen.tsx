@@ -12,12 +12,14 @@ import {
   ScrollView,
   Modal,
   BackHandler,
-  Dimensions,
   NativeSyntheticEvent,
   NativeScrollEvent,
+  LayoutChangeEvent,
+  Platform,
+  AppState,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
@@ -26,6 +28,7 @@ import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
 import { RootNavigationProp } from '../../navigation/types';
 import { consultationApi } from '../../api/consultationApi';
 import { useAuthStore } from '../../stores/useAuthStore';
+import { useDebounce } from '../../hooks/useDebounce';
 import type {
   ExpertListItemResponse,
   SpecializationDto,
@@ -33,6 +36,20 @@ import type {
   ExpertTimeFilter,
 } from '../../types/consultation';
 import { formatVnd, formatVietnameseDate, isValidAvatarUrl } from '../../types/consultation';
+import { toFriendlyErrorMessage } from '../../utils/friendlyError';
+import {
+  DEFAULT_FEATURED_COUNT,
+  DEFAULT_SORT_OPTIONS,
+  buildFeaturedListSignature,
+  formatExpertRatingDisplay,
+  getDefaultSortLabel,
+  getFeaturedBannerSubtitle,
+  isSelfExpertProfile,
+  reconcileUserSelectedSort,
+  resolveAdminSortConfig,
+  selectDisplayedFeaturedExperts,
+  type SortOptionItem,
+} from './expertFeaturedUtils';
 
 const TIME_FILTERS: { key: ExpertTimeFilter; label: string }[] = [
   { key: 'All', label: 'Tất cả lịch' },
@@ -42,41 +59,40 @@ const TIME_FILTERS: { key: ExpertTimeFilter; label: string }[] = [
   { key: 'Next7Days', label: '7 ngày tới' },
 ];
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const BANNER_CARD_WIDTH = Math.max(280, SCREEN_WIDTH - 32);
 const BANNER_CARD_GAP = 12;
-const BANNER_SNAP_INTERVAL = BANNER_CARD_WIDTH + BANNER_CARD_GAP;
-
-const SORT_OPTIONS: { key: ExpertSortBy; label: string }[] = [
-  { key: 'Recommended', label: 'Đề xuất ưu tiên' },
-  { key: 'RatingDesc', label: 'Đánh giá cao nhất' },
-  { key: 'FeeAsc', label: 'Mức phí thấp nhất' },
-  { key: 'FeeDesc', label: 'Mức phí cao nhất' },
-  { key: 'ExperienceDesc', label: 'Kinh nghiệm nhiều nhất' },
-  { key: 'CompletedSessionsDesc', label: 'Nhiều ca hoàn thành' },
-];
 
 interface FeaturedBannerSlideItemProps {
   item: ExpertListItemResponse;
   rank: number;
-  onPress: () => void;
+  defaultSortBy: ExpertSortBy;
+  onPress: (expertId: string) => void;
 }
 
-const FeaturedBannerSlideItem: React.FC<FeaturedBannerSlideItemProps> = ({
+const FeaturedBannerSlideItem = React.memo<FeaturedBannerSlideItemProps>(({
   item,
   rank,
+  defaultSortBy,
   onPress,
 }) => {
   const [imgError, setImgError] = useState(false);
+
+  useEffect(() => {
+    setImgError(false);
+  }, [item.avatarUrl]);
+
   const isValidHttp = isValidAvatarUrl(item.avatarUrl);
   const nameParts = (item.fullName || 'Chuyên gia').trim().split(/\s+/);
   const displayInitial = (nameParts[nameParts.length - 1]?.charAt(0) || 'C').toUpperCase();
+  const ratingDisplay = formatExpertRatingDisplay(item.rating, item.totalReviews);
+  const highlightRating = defaultSortBy === 'RatingDesc';
+  const highlightExperience = defaultSortBy === 'ExperienceDesc';
+  const highlightSessions = defaultSortBy === 'CompletedSessionsDesc';
 
   return (
     <TouchableOpacity
       style={styles.bannerSlideCard}
       activeOpacity={0.9}
-      onPress={onPress}
+      onPress={() => onPress(item.id)}
       accessibilityRole="button"
       accessibilityLabel={`Chuyên gia đề xuất hạng ${rank} ${item.fullName}`}
     >
@@ -147,54 +163,71 @@ const FeaturedBannerSlideItem: React.FC<FeaturedBannerSlideItemProps> = ({
 
           {/* Metrics Row */}
           <View style={styles.bannerMetricsRow}>
-            <View style={styles.bannerRatingPill}>
+            <View
+              style={[
+                styles.bannerRatingPill,
+                highlightRating && styles.bannerMetricHighlightedPill,
+              ]}
+            >
               <Ionicons name="star" size={11} color="#FBBF24" />
-              <Text style={styles.bannerRatingVal}>
-                {item.rating > 0 ? item.rating.toFixed(1) : '5.0'}
-              </Text>
-              <Text style={styles.bannerReviewCnt}>({item.totalReviews})</Text>
+              <Text style={styles.bannerRatingVal}>{ratingDisplay.label}</Text>
+              {ratingDisplay.hasReviews && (
+                <Text style={styles.bannerReviewCnt}>({item.totalReviews})</Text>
+              )}
             </View>
 
             {item.yearsOfExperience > 0 && (
-              <View style={styles.bannerMetricDividerPill}>
+              <View
+                style={[
+                  styles.bannerMetricDividerPill,
+                  highlightExperience && styles.bannerMetricHighlightedPill,
+                ]}
+              >
                 <Text style={styles.bannerMetricText}>{item.yearsOfExperience} năm KN</Text>
               </View>
             )}
 
-            <View style={styles.bannerMetricDividerPill}>
+            <View
+              style={[
+                styles.bannerMetricDividerPill,
+                highlightSessions && styles.bannerMetricHighlightedPill,
+              ]}
+            >
               <Text style={styles.bannerMetricText}>
                 {item.completedConsultationsCount} ca tư vấn
               </Text>
             </View>
           </View>
+        </View>
+      </View>
 
-          {/* Specializations Row */}
-          {item.specializationNames && item.specializationNames.length > 0 && (
-            <View style={styles.bannerSpecsRow}>
-              {item.specializationNames.slice(0, 2).map((specName, idx) => (
-                <View key={idx} style={styles.bannerSpecChip}>
-                  <Text style={styles.bannerSpecChipText} numberOfLines={1}>
-                    {specName}
-                  </Text>
-                </View>
-              ))}
-              {item.specializationNames.length > 2 && (
-                <View style={styles.bannerSpecMoreChip}>
-                  <Text style={styles.bannerSpecMoreText}>
-                    +{item.specializationNames.length - 2}
-                  </Text>
-                </View>
-              )}
+      {/* Specializations Row (Full Card Width, Neatly Truncated) */}
+      {item.specializationNames && item.specializationNames.length > 0 && (
+        <View style={styles.bannerSpecsRow}>
+          <View style={styles.bannerSpecChip}>
+            <Text style={styles.bannerSpecChipText} numberOfLines={1} ellipsizeMode="tail">
+              {item.specializationNames[0]}
+            </Text>
+          </View>
+          {item.specializationNames.length > 1 && (
+            <View style={styles.bannerSpecMoreChip}>
+              <Text style={styles.bannerSpecMoreText}>
+                +{item.specializationNames.length - 1} lĩnh vực
+              </Text>
             </View>
           )}
         </View>
-      </View>
+      )}
 
       {/* Bottom Footer Bar: Starting Fee + Book Now CTA */}
       <View style={styles.bannerFooterBar}>
         <View style={styles.bannerFeeWrap}>
-          <Text style={styles.bannerFeeLabel}>Phí tư vấn từ </Text>
-          <Text style={styles.bannerFeeValue}>{formatVnd(item.startingFee)}</Text>
+          <Text style={styles.bannerFeeLabel} numberOfLines={1}>
+            Phí tư vấn từ{' '}
+          </Text>
+          <Text style={styles.bannerFeeValue} numberOfLines={1} adjustsFontSizeToFit>
+            {formatVnd(item.startingFee)}
+          </Text>
         </View>
 
         <View style={styles.bannerCtaBtn}>
@@ -204,79 +237,160 @@ const FeaturedBannerSlideItem: React.FC<FeaturedBannerSlideItemProps> = ({
       </View>
     </TouchableOpacity>
   );
-};
+});
 
 interface FeaturedExpertBannerCarouselProps {
   items: ExpertListItemResponse[];
+  defaultSortBy: ExpertSortBy;
+  defaultSortLabel: string;
   onPressExpert: (expertId: string) => void;
 }
 
-const FeaturedExpertBannerCarousel: React.FC<FeaturedExpertBannerCarouselProps> = ({
+const FeaturedExpertBannerCarousel = React.memo<FeaturedExpertBannerCarouselProps>(({
   items,
+  defaultSortBy,
+  defaultSortLabel,
   onPressExpert,
 }) => {
   const [activeIndex, setActiveIndex] = useState(0);
+  const [containerWidth, setContainerWidth] = useState(0);
   const flatListRef = useRef<FlatList<ExpertListItemResponse>>(null);
   const isUserDraggingRef = useRef(false);
+  const isProgrammaticScrollRef = useRef(false);
+  const programmaticTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dragReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const itemsSignature = useMemo(() => buildFeaturedListSignature(items), [items]);
+  const subtitleText = useMemo(
+    () => getFeaturedBannerSubtitle(defaultSortBy, defaultSortLabel),
+    [defaultSortBy, defaultSortLabel]
+  );
+
+  useEffect(() => {
+    return () => {
+      if (programmaticTimerRef.current) {
+        clearTimeout(programmaticTimerRef.current);
+      }
+      if (dragReleaseTimerRef.current) {
+        clearTimeout(dragReleaseTimerRef.current);
+      }
+    };
+  }, []);
 
   const safeIndex = items.length > 0 ? Math.min(activeIndex, items.length - 1) : 0;
+  const snapInterval = containerWidth > 0 ? containerWidth + BANNER_CARD_GAP : 0;
+
+  // Khi danh sách chuyên gia đề xuất thay đổi thứ tự/dữ liệu theo cấu hình Admin, luôn reset về TOP #1
+  useEffect(() => {
+    setActiveIndex(0);
+    isUserDraggingRef.current = false;
+    isProgrammaticScrollRef.current = false;
+    if (programmaticTimerRef.current) {
+      clearTimeout(programmaticTimerRef.current);
+      programmaticTimerRef.current = null;
+    }
+    if (snapInterval > 0) {
+      flatListRef.current?.scrollToOffset({ offset: 0, animated: false });
+    }
+  }, [itemsSignature, snapInterval]);
+
+  const handleContainerLayout = useCallback((e: LayoutChangeEvent) => {
+    const measured = Math.floor(e.nativeEvent.layout.width);
+    if (measured > 0) {
+      setContainerWidth((prev) => (prev !== measured ? measured : prev));
+    }
+  }, []);
 
   const scrollToSlide = useCallback(
     (targetIndex: number) => {
       if (items.length === 0) return;
       const clamped = ((targetIndex % items.length) + items.length) % items.length;
       setActiveIndex(clamped);
-      flatListRef.current?.scrollToOffset({
-        offset: clamped * BANNER_SNAP_INTERVAL,
-        animated: true,
-      });
+      if (snapInterval > 0) {
+        isProgrammaticScrollRef.current = true;
+        flatListRef.current?.scrollToOffset({
+          offset: clamped * snapInterval,
+          animated: true,
+        });
+        if (programmaticTimerRef.current) {
+          clearTimeout(programmaticTimerRef.current);
+        }
+        programmaticTimerRef.current = setTimeout(() => {
+          isProgrammaticScrollRef.current = false;
+        }, 450);
+      }
     },
-    [items.length]
+    [items.length, snapInterval]
   );
 
   // Auto-slide every 4 seconds when there are multiple featured experts
   useEffect(() => {
-    if (items.length <= 1) return;
+    if (items.length <= 1 || snapInterval <= 0) return;
     const interval = setInterval(() => {
       if (isUserDraggingRef.current) return;
       setActiveIndex((prev) => {
         const next = (prev + 1) % items.length;
+        isProgrammaticScrollRef.current = true;
         flatListRef.current?.scrollToOffset({
-          offset: next * BANNER_SNAP_INTERVAL,
+          offset: next * snapInterval,
           animated: true,
         });
+        if (programmaticTimerRef.current) {
+          clearTimeout(programmaticTimerRef.current);
+        }
+        programmaticTimerRef.current = setTimeout(() => {
+          isProgrammaticScrollRef.current = false;
+        }, 450);
         return next;
       });
     }, 4000);
 
     return () => clearInterval(interval);
-  }, [items.length]);
+  }, [items.length, snapInterval, itemsSignature]);
+
+  const handleScroll = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      if (snapInterval <= 0 || isProgrammaticScrollRef.current) return;
+      const offsetX = e.nativeEvent.contentOffset.x;
+      const idx = Math.round(offsetX / snapInterval);
+      if (idx >= 0 && idx < items.length) {
+        setActiveIndex((prev) => (prev !== idx ? idx : prev));
+      }
+    },
+    [items.length, snapInterval]
+  );
 
   const handleMomentumScrollEnd = useCallback(
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
       isUserDraggingRef.current = false;
+      isProgrammaticScrollRef.current = false;
+      if (snapInterval <= 0) return;
       const offsetX = e.nativeEvent.contentOffset.x;
-      const idx = Math.round(offsetX / BANNER_SNAP_INTERVAL);
+      const idx = Math.round(offsetX / snapInterval);
       if (idx >= 0 && idx < items.length) {
         setActiveIndex(idx);
       }
     },
-    [items.length]
+    [items.length, snapInterval]
   );
 
   if (items.length === 0) return null;
 
   return (
-    <View style={styles.featuredContainer}>
+    <View style={styles.featuredContainer} onLayout={handleContainerLayout}>
       {/* Header Row with Title & Slide Controls */}
       <View style={styles.bannerHeaderRow}>
         <View style={styles.sectionTitleRow}>
           <View style={styles.sectionIconBadge}>
             <Ionicons name="ribbon" size={14} color="#FFFDF7" />
           </View>
-          <View>
-            <Text style={styles.sectionTitle}>Chuyên gia đề xuất hàng đầu</Text>
-            <Text style={styles.sectionSubtitle}>Xếp hạng tự động theo tiêu chí hệ thống</Text>
+          <View style={styles.sectionTitleTextWrap}>
+            <Text style={styles.sectionTitle} numberOfLines={1}>
+              Chuyên gia đề xuất hàng đầu
+            </Text>
+            <Text style={styles.sectionSubtitle} numberOfLines={1}>
+              {subtitleText}
+            </Text>
           </View>
         </View>
 
@@ -305,46 +419,66 @@ const FeaturedExpertBannerCarousel: React.FC<FeaturedExpertBannerCarouselProps> 
         )}
       </View>
 
-      {/* Horizontal Paging Banner Slide */}
-      <FlatList
-        ref={flatListRef}
-        data={items}
-        keyExtractor={(item) => `featured-slide-${item.id}`}
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        snapToInterval={BANNER_SNAP_INTERVAL}
-        snapToAlignment="start"
-        decelerationRate="fast"
-        contentContainerStyle={styles.bannerFlatListContent}
-        onScrollBeginDrag={() => {
-          isUserDraggingRef.current = true;
-        }}
-        onScrollEndDrag={() => {
-          setTimeout(() => {
-            isUserDraggingRef.current = false;
-          }, 600);
-        }}
-        onMomentumScrollEnd={handleMomentumScrollEnd}
-        getItemLayout={(_, index) => ({
-          length: BANNER_SNAP_INTERVAL,
-          offset: BANNER_SNAP_INTERVAL * index,
-          index,
-        })}
-        renderItem={({ item, index }) => (
-          <View
-            style={{
-              width: BANNER_CARD_WIDTH,
-              marginRight: index === items.length - 1 ? 0 : BANNER_CARD_GAP,
-            }}
-          >
-            <FeaturedBannerSlideItem
-              item={item}
-              rank={index + 1}
-              onPress={() => onPressExpert(item.id)}
-            />
-          </View>
-        )}
-      />
+      {/* Horizontal Paging Banner Slide (Measured to Exact Container Width) */}
+      {containerWidth > 0 ? (
+        <FlatList
+          ref={flatListRef}
+          data={items}
+          extraData={`${itemsSignature}|${defaultSortBy}|${containerWidth}`}
+          keyExtractor={(item) => `featured-slide-${item.id}`}
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          snapToInterval={snapInterval}
+          snapToAlignment="start"
+          decelerationRate="fast"
+          scrollEventThrottle={16}
+          style={{ width: containerWidth }}
+          contentContainerStyle={styles.bannerFlatListContent}
+          onScroll={handleScroll}
+          onScrollBeginDrag={() => {
+            isUserDraggingRef.current = true;
+            isProgrammaticScrollRef.current = false;
+          }}
+          onScrollEndDrag={() => {
+            if (dragReleaseTimerRef.current) {
+              clearTimeout(dragReleaseTimerRef.current);
+            }
+            dragReleaseTimerRef.current = setTimeout(() => {
+              isUserDraggingRef.current = false;
+            }, 600);
+          }}
+          onMomentumScrollEnd={handleMomentumScrollEnd}
+          getItemLayout={(_, index) => ({
+            length: snapInterval,
+            offset: snapInterval * index,
+            index,
+          })}
+          renderItem={({ item, index }) => (
+            <View
+              style={{
+                width: containerWidth,
+                marginRight: index === items.length - 1 ? 0 : BANNER_CARD_GAP,
+              }}
+            >
+              <FeaturedBannerSlideItem
+                item={item}
+                rank={index + 1}
+                defaultSortBy={defaultSortBy}
+                onPress={onPressExpert}
+              />
+            </View>
+          )}
+        />
+      ) : (
+        <View style={{ width: '100%' }}>
+          <FeaturedBannerSlideItem
+            item={items[safeIndex]}
+            rank={safeIndex + 1}
+            defaultSortBy={defaultSortBy}
+            onPress={onPressExpert}
+          />
+        </View>
+      )}
 
       {/* Pagination Indicator Dots */}
       {items.length > 1 && (
@@ -364,24 +498,30 @@ const FeaturedExpertBannerCarousel: React.FC<FeaturedExpertBannerCarouselProps> 
       )}
     </View>
   );
-};
+});
 
 interface ExpertListItemCardProps {
   item: ExpertListItemResponse;
-  onPress: () => void;
+  onPress: (expertId: string) => void;
 }
 
-const ExpertListItemCard: React.FC<ExpertListItemCardProps> = ({ item, onPress }) => {
+const ExpertListItemCard = React.memo<ExpertListItemCardProps>(({ item, onPress }) => {
   const [imgError, setImgError] = useState(false);
+
+  useEffect(() => {
+    setImgError(false);
+  }, [item.avatarUrl]);
+
   const isValidHttp = isValidAvatarUrl(item.avatarUrl);
   const nameParts = (item.fullName || 'Chuyên gia').trim().split(/\s+/);
   const displayInitial = (nameParts[nameParts.length - 1]?.charAt(0) || 'C').toUpperCase();
+  const ratingDisplay = formatExpertRatingDisplay(item.rating, item.totalReviews);
 
   return (
     <TouchableOpacity
       style={styles.expertCard}
       activeOpacity={0.88}
-      onPress={onPress}
+      onPress={() => onPress(item.id)}
       accessibilityRole="button"
       accessibilityLabel={`Chuyên gia ${item.fullName}`}
     >
@@ -423,10 +563,10 @@ const ExpertListItemCard: React.FC<ExpertListItemCardProps> = ({ item, onPress }
           <View style={styles.cardHighlights}>
             <View style={styles.ratingBadge}>
               <Ionicons name="star" size={12} color="#F59E0B" />
-              <Text style={styles.ratingText}>
-                {item.rating > 0 ? item.rating.toFixed(1) : '5.0'}
-              </Text>
-              <Text style={styles.reviewCount}>({item.totalReviews})</Text>
+              <Text style={styles.ratingText}>{ratingDisplay.label}</Text>
+              {ratingDisplay.hasReviews && (
+                <Text style={styles.reviewCount}>({item.totalReviews})</Text>
+              )}
             </View>
 
             {item.yearsOfExperience > 0 && (
@@ -482,7 +622,9 @@ const ExpertListItemCard: React.FC<ExpertListItemCardProps> = ({ item, onPress }
         <View style={styles.footerLeft}>
           <View style={styles.feeRow}>
             <Text style={styles.feeLabel}>Mức phí từ: </Text>
-            <Text style={styles.feeValue}>{formatVnd(item.startingFee)}</Text>
+            <Text style={styles.feeValue} numberOfLines={1} adjustsFontSizeToFit>
+              {formatVnd(item.startingFee)}
+            </Text>
           </View>
 
           {item.hasAvailableSlotSoon ? (
@@ -509,19 +651,33 @@ const ExpertListItemCard: React.FC<ExpertListItemCardProps> = ({ item, onPress }
       </View>
     </TouchableOpacity>
   );
-};
+});
 
 export const ExpertListScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
   const currentUser = useAuthStore((s) => s.user);
 
+  const isMountedRef = useRef(true);
+  const requestSeqRef = useRef(0);
+  const metadataSeqRef = useRef(0);
+  const hasLoadedOnceRef = useRef(false);
+  const featuredLoadFailedRef = useRef(false);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   const [keyword, setKeyword] = useState('');
-  const [debouncedKeyword, setDebouncedKeyword] = useState('');
+  const debouncedKeyword = useDebounce(keyword.trim(), 350);
   const [selectedSpecId, setSelectedSpecId] = useState<number | null>(null);
   const [timeFilter, setTimeFilter] = useState<ExpertTimeFilter>('All');
   const [userSelectedSortBy, setUserSelectedSortBy] = useState<ExpertSortBy | null>(null);
-  const [dynamicSortOptions, setDynamicSortOptions] = useState<{ key: ExpertSortBy; label: string }[]>(SORT_OPTIONS);
+  const [dynamicSortOptions, setDynamicSortOptions] = useState<SortOptionItem[]>(DEFAULT_SORT_OPTIONS);
   const [defaultSortKey, setDefaultSortKey] = useState<ExpertSortBy>('Recommended');
+  const [defaultSortLabel, setDefaultSortLabel] = useState<string>('Đề xuất ưu tiên');
   const sortBy: ExpertSortBy = userSelectedSortBy ?? defaultSortKey;
 
   const [sortModalVisible, setSortModalVisible] = useState(false);
@@ -539,32 +695,18 @@ export const ExpertListScreen: React.FC = () => {
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
 
-  // Debounce từ khóa tìm kiếm để đồng bộ mượt với SearchableFields của Admin
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedKeyword(keyword.trim());
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [keyword]);
+  const isCurrentUserExpert = useMemo(() => {
+    const role = String(currentUser?.role || '').toLowerCase();
+    return role === 'expert' || role.includes('expert');
+  }, [currentUser?.role]);
+
+  const featuredFetchCount = isCurrentUserExpert
+    ? DEFAULT_FEATURED_COUNT + 1
+    : DEFAULT_FEATURED_COUNT;
 
   // Hàm xác định xem chuyên gia có phải là chính bản thân người dùng đang đăng nhập hay không
   const isSelfExpert = useCallback(
-    (exp: ExpertListItemResponse) => {
-      if (!currentUser) return false;
-      const myId = String(currentUser.id || '').trim().toLowerCase();
-      const myName = String(currentUser.fullName || '').trim().toLowerCase();
-      const expUserId = String(exp.userId || '').trim().toLowerCase();
-      const expProfileId = String(exp.id || '').trim().toLowerCase();
-      const expName = String(exp.fullName || '').trim().toLowerCase();
-
-      if (myId && (myId === expUserId || myId === expProfileId)) {
-        return true;
-      }
-      if (myName && expName && myName === expName) {
-        return true;
-      }
-      return false;
-    },
+    (exp: ExpertListItemResponse) => isSelfExpertProfile(exp, currentUser),
     [currentUser]
   );
 
@@ -574,53 +716,60 @@ export const ExpertListScreen: React.FC = () => {
   }, [experts, isSelfExpert]);
 
   const displayedFeatured = useMemo(() => {
-    return featuredExperts.filter((e) => !isSelfExpert(e));
-  }, [featuredExperts, isSelfExpert]);
+    return selectDisplayedFeaturedExperts(
+      featuredExperts,
+      currentUser,
+      DEFAULT_FEATURED_COUNT
+    );
+  }, [featuredExperts, currentUser]);
 
-  // Tải danh mục lĩnh vực, chuyên gia đề xuất (6 chuyên gia chuẩn BE) & cấu hình sắp xếp từ Admin
+  // Tải danh mục lĩnh vực, chuyên gia đề xuất (chuẩn cấu hình Admin trên BE) & cấu hình sắp xếp hệ thống
   const loadMetadataAndFeatured = useCallback(async () => {
+    const seq = ++metadataSeqRef.current;
     try {
-      const [specs, featured, sortConfig] = await Promise.all([
-        consultationApi.getSpecializations(true).catch(() => []),
-        consultationApi.getFeaturedExperts(6).catch(() => []),
-        consultationApi.getExpertSortOptions().catch(() => null),
+      const [specsRes, featuredRes, sortConfigRes] = await Promise.allSettled([
+        consultationApi.getSpecializations(true),
+        consultationApi.getFeaturedExperts(featuredFetchCount),
+        consultationApi.getExpertSortOptions(),
       ]);
-      if (specs.length > 0) {
-        setSpecializations(specs);
+      if (!isMountedRef.current || seq !== metadataSeqRef.current) return;
+
+      if (specsRes.status === 'fulfilled' && specsRes.value.length > 0) {
+        setSpecializations(specsRes.value);
       }
-      setFeaturedExperts(featured);
-      if (sortConfig?.options && sortConfig.options.length > 0) {
-        const mappedOptions = sortConfig.options.map((opt) => ({
-          key: opt.value as ExpertSortBy,
-          label: opt.label,
-        }));
-        setDynamicSortOptions(mappedOptions);
-        if (sortConfig.defaultSortBy) {
-          const defKey = sortConfig.defaultSortBy as ExpertSortBy;
-          setDefaultSortKey(defKey);
-        }
-        setUserSelectedSortBy((prev) => {
-          if (prev && !mappedOptions.some((o) => o.key === prev)) {
-            return null;
-          }
-          return prev;
-        });
+
+      if (featuredRes.status === 'fulfilled') {
+        featuredLoadFailedRef.current = false;
+        setFeaturedExperts(featuredRes.value);
+      } else {
+        featuredLoadFailedRef.current = true;
+      }
+
+      if (sortConfigRes.status === 'fulfilled' && sortConfigRes.value) {
+        const resolved = resolveAdminSortConfig(sortConfigRes.value, DEFAULT_SORT_OPTIONS);
+        setDynamicSortOptions(resolved.options);
+        setDefaultSortKey(resolved.defaultSortBy);
+        setDefaultSortLabel(resolved.defaultSortLabel);
+        setUserSelectedSortBy((prev) =>
+          reconcileUserSelectedSort(prev, resolved.defaultSortBy, resolved.options)
+        );
       }
     } catch (e) {
-      console.warn('Load specs/featured/sortConfig error:', e);
+      if (__DEV__) {
+        console.warn('Load specs/featured/sortConfig error:', e);
+      }
     }
-  }, []);
+  }, [featuredFetchCount]);
 
-  useEffect(() => {
-    loadMetadataAndFeatured();
-  }, [loadMetadataAndFeatured]);
-
-  // Fetch danh sách chuyên gia (Khi userSelectedSortBy === null, truyền sortBy: undefined để BE tự lấy DefaultSortBy của Admin)
+  // Fetch danh sách chuyên gia
   const fetchExperts = useCallback(
-    async (isRefresh = false, pageNum = 1) => {
-      if (isRefresh) setRefreshing(true);
-      else if (pageNum === 1) setLoading(true);
-      else setLoadingMore(true);
+    async (isRefresh = false, pageNum = 1, manageRefreshState = true) => {
+      if (!isMountedRef.current) return;
+      const reqId = ++requestSeqRef.current;
+
+      if (isRefresh && manageRefreshState) setRefreshing(true);
+      else if (!isRefresh && pageNum === 1) setLoading(true);
+      else if (pageNum > 1) setLoadingMore(true);
 
       setError(null);
       try {
@@ -633,53 +782,118 @@ export const ExpertListScreen: React.FC = () => {
           size: 10,
         });
 
+        if (!isMountedRef.current || reqId !== requestSeqRef.current) return;
+
         if (pageNum === 1) {
           setExperts(result.items);
+          // Nếu API /experts/featured lỗi tạm thời, fallback từ trang 1 danh sách mặc định (BE dùng cùng cấu hình Admin)
+          const isDefaultUnfilteredView =
+            !debouncedKeyword &&
+            selectedSpecId === null &&
+            timeFilter === 'All' &&
+            userSelectedSortBy === null;
+          if (featuredLoadFailedRef.current && isDefaultUnfilteredView) {
+            setFeaturedExperts(result.items.slice(0, featuredFetchCount));
+          }
         } else {
           setExperts((prev) => [...prev, ...result.items]);
         }
         setPage(pageNum);
         setHasMore(result.pagination.page < result.pagination.totalPages);
       } catch (err: any) {
-        setError(err?.response?.data?.message || err?.message || 'Không thể tải danh sách chuyên gia.');
+        if (isMountedRef.current && reqId === requestSeqRef.current) {
+          setError(
+            toFriendlyErrorMessage(err, 'Không thể tải danh sách chuyên gia.')
+          );
+        }
       } finally {
-        setLoading(false);
-        setRefreshing(false);
-        setLoadingMore(false);
+        if (isMountedRef.current && reqId === requestSeqRef.current) {
+          setLoading(false);
+          if (manageRefreshState) setRefreshing(false);
+          setLoadingMore(false);
+        }
       }
     },
-    [debouncedKeyword, selectedSpecId, timeFilter, userSelectedSortBy]
+    [debouncedKeyword, selectedSpecId, timeFilter, userSelectedSortBy, featuredFetchCount]
   );
+
+  useEffect(() => {
+    loadMetadataAndFeatured();
+  }, [loadMetadataAndFeatured]);
 
   useEffect(() => {
     fetchExperts(false, 1);
   }, [fetchExperts]);
 
-  const handleRefresh = () => {
-    loadMetadataAndFeatured();
-    fetchExperts(true, 1);
-  };
+  // Đồng bộ lại cấu hình Admin & Top chuyên gia đề xuất mỗi khi quay lại màn hình
+  useFocusEffect(
+    useCallback(() => {
+      if (!hasLoadedOnceRef.current) {
+        hasLoadedOnceRef.current = true;
+        return;
+      }
+      void loadMetadataAndFeatured();
+      void fetchExperts(true, 1, false);
+    }, [loadMetadataAndFeatured, fetchExperts])
+  );
 
-  const handleLoadMore = () => {
+  // Đồng bộ lại khi người dùng quay lại ứng dụng từ nền (VD: vừa đổi cấu hình trên Web Admin)
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active' && hasLoadedOnceRef.current) {
+        void loadMetadataAndFeatured();
+        void fetchExperts(true, 1, false);
+      }
+    });
+    return () => sub.remove();
+  }, [loadMetadataAndFeatured, fetchExperts]);
+
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await Promise.all([
+        loadMetadataAndFeatured(),
+        fetchExperts(true, 1, false),
+      ]);
+    } finally {
+      if (isMountedRef.current) {
+        setRefreshing(false);
+      }
+    }
+  }, [loadMetadataAndFeatured, fetchExperts]);
+
+  const handleLoadMore = useCallback(() => {
     if (!loading && !loadingMore && hasMore) {
       fetchExperts(false, page + 1);
     }
-  };
+  }, [loading, loadingMore, hasMore, fetchExperts, page]);
+
+  const handlePressExpert = useCallback(
+    (expertId: string) => {
+      navigation.navigate('ExpertDetail', { expertProfileId: expertId });
+    },
+    [navigation]
+  );
+
+  const keyExtractor = useCallback((item: ExpertListItemResponse) => item.id, []);
+
+  const renderExpertItem = useCallback(
+    ({ item }: { item: ExpertListItemResponse }) => (
+      <ExpertListItemCard item={item} onPress={handlePressExpert} />
+    ),
+    [handlePressExpert]
+  );
 
   const resetFilters = () => {
     setKeyword('');
-    setDebouncedKeyword('');
     setSelectedSpecId(null);
     setTimeFilter('All');
     setUserSelectedSortBy(null);
+    void loadMetadataAndFeatured();
   };
 
   const currentSortLabel = useMemo(() => {
-    return (
-      dynamicSortOptions.find((s) => s.key === sortBy)?.label ||
-      SORT_OPTIONS.find((s) => s.key === sortBy)?.label ||
-      'Sắp xếp'
-    );
+    return getDefaultSortLabel(sortBy, dynamicSortOptions);
   }, [sortBy, dynamicSortOptions]);
 
   const selectedSpecName = useMemo(() => {
@@ -690,6 +904,43 @@ export const ExpertListScreen: React.FC = () => {
   const currentTimeFilterLabel = useMemo(() => {
     return TIME_FILTERS.find((tf) => tf.key === timeFilter)?.label || 'Thời gian';
   }, [timeFilter]);
+
+  const listHeaderElement = useMemo(
+    () => (
+      <>
+        {/* Banner Slide Chuyên gia đề xuất hàng đầu (Hiển thị theo cấu hình Admin khi không gõ tìm kiếm) */}
+        {displayedFeatured.length > 0 && !keyword.trim() && (
+          <FeaturedExpertBannerCarousel
+            items={displayedFeatured}
+            defaultSortBy={defaultSortKey}
+            defaultSortLabel={defaultSortLabel}
+            onPressExpert={handlePressExpert}
+          />
+        )}
+
+        <View style={styles.listHeaderRow}>
+          <Text style={styles.listCountText}>
+            Tìm thấy <Text style={styles.boldText}>{displayedExperts.length}</Text> chuyên gia
+          </Text>
+          {sortBy && (
+            <Text style={styles.listSortHintText}>
+              Xếp theo: <Text style={styles.boldText}>{currentSortLabel}</Text>
+            </Text>
+          )}
+        </View>
+      </>
+    ),
+    [
+      displayedFeatured,
+      defaultSortKey,
+      defaultSortLabel,
+      keyword,
+      handlePressExpert,
+      displayedExperts.length,
+      sortBy,
+      currentSortLabel,
+    ]
+  );
 
   const hasActiveFilters = Boolean(
     selectedSpecId !== null || timeFilter !== 'All' || (userSelectedSortBy !== null && userSelectedSortBy !== defaultSortKey)
@@ -763,7 +1014,9 @@ export const ExpertListScreen: React.FC = () => {
             placeholderTextColor="#999999"
             value={keyword}
             onChangeText={setKeyword}
-            onSubmitEditing={() => fetchExperts(false, 1)}
+            onSubmitEditing={() => {
+              fetchExperts(false, 1);
+            }}
             returnKeyType="search"
           />
           {keyword.length > 0 && (
@@ -917,16 +1170,27 @@ export const ExpertListScreen: React.FC = () => {
           <Ionicons name="alert-circle-outline" size={44} color={theme.colors.error} />
           <Text style={styles.errorTitle}>Không thể tải dữ liệu</Text>
           <Text style={styles.errorMsg}>{error}</Text>
-          <TouchableOpacity style={styles.retryBtn} onPress={() => fetchExperts(false, 1)}>
+          <TouchableOpacity
+            style={styles.retryBtn}
+            onPress={() => {
+              void loadMetadataAndFeatured();
+              void fetchExperts(false, 1);
+            }}
+          >
             <Text style={styles.retryBtnText}>Thử lại</Text>
           </TouchableOpacity>
         </View>
       ) : (
         <FlatList
           data={displayedExperts}
-          keyExtractor={(item) => item.id}
+          keyExtractor={keyExtractor}
+          renderItem={renderExpertItem}
           contentContainerStyle={styles.listContent}
           keyboardShouldPersistTaps="handled"
+          initialNumToRender={8}
+          maxToRenderPerBatch={8}
+          windowSize={7}
+          removeClippedSubviews={Platform.OS === 'android'}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -936,30 +1200,7 @@ export const ExpertListScreen: React.FC = () => {
           }
           onEndReached={handleLoadMore}
           onEndReachedThreshold={0.3}
-          ListHeaderComponent={
-            <>
-              {/* Banner Slide Chuyên gia đề xuất hàng đầu (Hiển thị khi không gõ tìm kiếm) */}
-              {displayedFeatured.length > 0 && !keyword.trim() && (
-                <FeaturedExpertBannerCarousel
-                  items={displayedFeatured}
-                  onPressExpert={(expertId) =>
-                    navigation.navigate('ExpertDetail', { expertProfileId: expertId })
-                  }
-                />
-              )}
-
-              <View style={styles.listHeaderRow}>
-                <Text style={styles.listCountText}>
-                  Tìm thấy <Text style={styles.boldText}>{displayedExperts.length}</Text> chuyên gia
-                </Text>
-                {sortBy && (
-                  <Text style={styles.listSortHintText}>
-                    Xếp theo: <Text style={styles.boldText}>{currentSortLabel}</Text>
-                  </Text>
-                )}
-              </View>
-            </>
-          }
+          ListHeaderComponent={listHeaderElement}
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
               <Ionicons name="search-outline" size={48} color="#CCCCCC" />
@@ -972,21 +1213,13 @@ export const ExpertListScreen: React.FC = () => {
               </TouchableOpacity>
             </View>
           }
-          renderItem={({ item }) => (
-            <ExpertListItemCard
-              item={item}
-              onPress={() =>
-                navigation.navigate('ExpertDetail', { expertProfileId: item.id })
-              }
-            />
-          )}
           ListFooterComponent={
             loadingMore ? (
               <View style={styles.footerLoading}>
                 <ActivityIndicator size="small" color={theme.colors.primary} />
                 <Text style={styles.footerLoadingText}>Đang tải thêm chuyên gia...</Text>
               </View>
-            ) : null
+            ) : undefined
           }
         />
       )}
@@ -1225,6 +1458,9 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
+    maxWidth: 720,
+    width: '100%',
+    alignSelf: 'center',
   },
   searchBar: {
     flexDirection: 'row',
@@ -1334,10 +1570,14 @@ const styles = StyleSheet.create({
   listContent: {
     padding: 16,
     paddingBottom: 32,
+    maxWidth: 720,
+    width: '100%',
+    alignSelf: 'center',
   },
 
   // Featured experts Banner Slide Carousel
   featuredContainer: {
+    width: '100%',
     marginBottom: 18,
   },
   bannerHeaderRow: {
@@ -1345,12 +1585,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 10,
+    gap: 8,
   },
   sectionTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     flex: 1,
+    minWidth: 0,
+  },
+  sectionTitleTextWrap: {
+    flex: 1,
+    minWidth: 0,
   },
   sectionIconBadge: {
     width: 28,
@@ -1361,6 +1607,7 @@ const styles = StyleSheet.create({
     borderColor: '#D4AF37',
     justifyContent: 'center',
     alignItems: 'center',
+    flexShrink: 0,
   },
   sectionTitle: {
     fontFamily: fonts.serifBold,
@@ -1383,6 +1630,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 3,
     gap: 6,
+    flexShrink: 0,
   },
   bannerArrowBtn: {
     width: 20,
@@ -1401,6 +1649,7 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   bannerSlideCard: {
+    width: '100%',
     backgroundColor: '#7A1616',
     borderRadius: 16,
     padding: 14,
@@ -1427,12 +1676,14 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: 12,
     gap: 8,
+    minWidth: 0,
   },
   bannerTopLeftBadges: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     flexShrink: 1,
+    minWidth: 0,
   },
   bannerRankBadge: {
     flexDirection: 'row',
@@ -1442,6 +1693,7 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     borderRadius: 6,
     gap: 4,
+    flexShrink: 0,
   },
   bannerRankText: {
     fontFamily: fonts.bodyBold,
@@ -1459,6 +1711,7 @@ const styles = StyleSheet.create({
     paddingVertical: 2.5,
     borderRadius: 6,
     gap: 3,
+    flexShrink: 0,
   },
   bannerCertText: {
     fontFamily: fonts.bodySemi,
@@ -1475,13 +1728,16 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     borderRadius: 12,
     gap: 4,
-    maxWidth: '46%',
+    flexShrink: 1,
+    minWidth: 0,
+    maxWidth: '42%',
   },
   bannerSlotDot: {
     width: 6,
     height: 6,
     borderRadius: 3,
     backgroundColor: '#34D399',
+    flexShrink: 0,
   },
   bannerSlotReadyText: {
     fontFamily: fonts.bodySemi,
@@ -1497,6 +1753,7 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     borderRadius: 12,
     gap: 3,
+    flexShrink: 0,
   },
   bannerSlotFlexText: {
     fontFamily: fonts.body,
@@ -1507,22 +1764,24 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+    minWidth: 0,
   },
   bannerAvatarContainer: {
     position: 'relative',
+    flexShrink: 0,
   },
   bannerAvatarImg: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
     borderWidth: 2,
     borderColor: '#FDE68A',
     backgroundColor: '#5C1010',
   },
   bannerAvatarFallback: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
     borderWidth: 2,
     borderColor: '#FDE68A',
     backgroundColor: '#5C1010',
@@ -1531,7 +1790,7 @@ const styles = StyleSheet.create({
   },
   bannerAvatarInitial: {
     fontFamily: fonts.serifBold,
-    fontSize: 24,
+    fontSize: 22,
     color: '#FDE68A',
   },
   bannerVerifiedBadge: {
@@ -1549,11 +1808,12 @@ const styles = StyleSheet.create({
   },
   bannerInfoCol: {
     flex: 1,
+    minWidth: 0,
     justifyContent: 'center',
   },
   bannerExpertName: {
     fontFamily: fonts.serifBold,
-    fontSize: 16.5,
+    fontSize: 16,
     color: '#FFFDF7',
   },
   bannerJobCompany: {
@@ -1596,6 +1856,11 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderRadius: 5,
   },
+  bannerMetricHighlightedPill: {
+    backgroundColor: 'rgba(253, 230, 138, 0.24)',
+    borderWidth: 0.75,
+    borderColor: '#FDE68A',
+  },
   bannerMetricText: {
     fontFamily: fonts.bodySemi,
     fontSize: 10.5,
@@ -1605,44 +1870,49 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginTop: 7,
+    marginTop: 10,
+    minWidth: 0,
   },
   bannerSpecChip: {
     backgroundColor: 'rgba(255, 253, 247, 0.12)',
     borderWidth: 0.5,
     borderColor: 'rgba(235, 221, 192, 0.35)',
-    paddingHorizontal: 7,
-    paddingVertical: 2.5,
-    borderRadius: 5,
-    maxWidth: '46%',
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 6,
     flexShrink: 1,
+    minWidth: 0,
   },
   bannerSpecChipText: {
     fontFamily: fonts.body,
-    fontSize: 10.5,
+    fontSize: 11,
     color: '#F5EFE6',
   },
   bannerSpecMoreChip: {
     backgroundColor: 'rgba(253, 230, 138, 0.2)',
-    paddingHorizontal: 6,
-    paddingVertical: 2.5,
-    borderRadius: 5,
+    paddingHorizontal: 7,
+    paddingVertical: 3.5,
+    borderRadius: 6,
+    flexShrink: 0,
   },
   bannerSpecMoreText: {
     fontFamily: fonts.bodyBold,
-    fontSize: 10,
+    fontSize: 10.5,
     color: '#FDE68A',
   },
   bannerFooterBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: 12,
+    gap: 8,
+    marginTop: 11,
     paddingTop: 10,
     borderTopWidth: 1,
     borderTopColor: 'rgba(253, 230, 138, 0.22)',
   },
   bannerFeeWrap: {
+    flex: 1,
+    minWidth: 0,
     flexDirection: 'row',
     alignItems: 'baseline',
   },
@@ -1650,12 +1920,14 @@ const styles = StyleSheet.create({
     fontFamily: fonts.body,
     fontSize: 11.5,
     color: '#E5D5B5',
+    flexShrink: 0,
   },
   bannerFeeValue: {
     fontFamily: fonts.serifBold,
     fontSize: 16,
     color: '#FDE68A',
     fontVariant: ['tabular-nums'],
+    flexShrink: 1,
   },
   bannerCtaBtn: {
     flexDirection: 'row',
@@ -1665,6 +1937,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6.5,
     borderRadius: 8,
     gap: 5,
+    flexShrink: 0,
   },
   bannerCtaBtnText: {
     fontFamily: fonts.bodyBold,
@@ -1888,23 +2161,27 @@ const styles = StyleSheet.create({
   },
   footerLeft: {
     flex: 1,
+    minWidth: 0,
     marginRight: 10,
   },
   feeRow: {
     flexDirection: 'row',
     alignItems: 'baseline',
     marginBottom: 3,
+    minWidth: 0,
   },
   feeLabel: {
     fontFamily: fonts.body,
     fontSize: 11,
     color: '#6B7280',
+    flexShrink: 0,
   },
   feeValue: {
     fontFamily: fonts.serifBold,
     fontSize: 15,
     color: '#8B1E1E',
     fontVariant: ['tabular-nums'],
+    flexShrink: 1,
   },
   slotAvailableBadge: {
     flexDirection: 'row',
@@ -1945,6 +2222,7 @@ const styles = StyleSheet.create({
     height: 36,
     borderRadius: 8,
     gap: 2,
+    flexShrink: 0,
     shadowColor: theme.colors.primary,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.2,

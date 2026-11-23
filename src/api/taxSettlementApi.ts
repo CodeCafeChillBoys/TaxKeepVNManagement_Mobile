@@ -132,7 +132,6 @@ export const taxSettlementApi = {
     const res = await apiClient.post<ApiResponse<TaxSettlementPreview>>(`${BASE}/preview`, {
       taxYear: request.taxYear,
       cutoffDate: request.cutoffDate || null,
-      charityDeduction: request.charityDeduction ?? 0,
     });
     return unwrap(res, 'Không tính được xem trước quyết toán.');
   },
@@ -142,7 +141,6 @@ export const taxSettlementApi = {
     const res = await apiClient.post<ApiResponse<TaxSettlementPreview>>(`${BASE}/export`, {
       taxYear: request.taxYear,
       cutoffDate: request.cutoffDate || null,
-      charityDeduction: request.charityDeduction ?? 0,
       selectedIncomeSourceIds: request.selectedIncomeSourceIds ?? null,
       note: request.note ?? null,
     });

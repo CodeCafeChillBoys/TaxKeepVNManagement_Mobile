@@ -63,14 +63,14 @@ export const OCR_FIELD_META: {
     label: 'Họ và tên',
     usedInRegister: true,
     required: true,
-    placeholder: 'Nhập họ và tên trên căn cước',
+    placeholder: '',
   },
   {
     key: 'citizenId',
     label: 'Số căn cước công dân',
     usedInRegister: true,
     required: true,
-    placeholder: 'Nhập 12 chữ số',
+    placeholder: '12 chữ số',
   },
   {
     key: 'dateOfBirth',
@@ -84,7 +84,7 @@ export const OCR_FIELD_META: {
     label: 'Địa chỉ thường trú',
     usedInRegister: true,
     required: false,
-    placeholder: 'Nhập địa chỉ trên căn cước',
+    placeholder: '',
   },
   {
     key: 'gender',

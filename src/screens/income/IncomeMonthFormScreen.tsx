@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -7,7 +7,6 @@ import {
   TextInput,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Platform,
   Image,
@@ -19,11 +18,14 @@ import * as ImagePicker from 'expo-image-picker';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
 import { DrumHeader } from '../../components/brand/DrumHeader';
+import { Dialog } from '../../components/common/Dialog';
 import { DocumentViewerModal } from '../../components/common/DocumentViewerModal';
+import { useToast } from '../../components/ui/Toast';
 import { incomeApi } from '../../api/incomeApi';
 import type { OcrImagePart } from '../../api/ocrApi';
 import { PayslipOcrData } from '../../types/income';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
+import { sanitizeUiMessage } from '../../utils/friendlyError';
 import {
   IncomeFormErrors,
   IncomeFormField,
@@ -48,7 +50,16 @@ const vnd = (n?: number | null) => `${Number(n ?? 0).toLocaleString('vi-VN')} đ
 export function IncomeMonthFormScreen() {
   const navigation = useNavigation<RootNavigationProp>();
   const { params } = useRoute<Route>();
+  const { toast } = useToast();
   const editing = params.item;
+
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   const [values, setValues] = useState<IncomeFormValues>(() =>
     editing ? fromIncomeItem(editing) : emptyIncomeForm(params.year, new Date().getMonth() + 1)
@@ -61,10 +72,10 @@ export function IncomeMonthFormScreen() {
   const [formError, setFormError] = useState('');
   const [scanError, setScanError] = useState('');
   const [viewerOpen, setViewerOpen] = useState(false);
-  // Ảnh phiếu lương đã quét — BE chỉ lưu ảnh khi gửi kèm lúc tạo thu nhập
+  const [duplicateDialogOpen, setDuplicateDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [payslipFile, setPayslipFile] = useState<OcrImagePart | null>(null);
 
-  // Tháng có sẵn: mở ở chế độ xem, bấm Sửa mới cho chỉnh
   const [mode, setMode] = useState<IncomeFormMode>(editing ? 'view' : 'edit');
   const ui = incomeFormUi(mode, editing);
 
@@ -72,15 +83,17 @@ export function IncomeMonthFormScreen() {
   const duplicate = findDuplicateMonth(params.groups ?? [], values, editing?.id);
   const busy = scanning || saving || deleting;
 
-  const setField = (field: IncomeFormField, text: string) => {
+  const setField = useCallback((field: IncomeFormField, text: string) => {
     setValues((v) => ({ ...v, [field]: text }));
-    if (errors[field]) setErrors((e) => ({ ...e, [field]: undefined }));
-    // Câu lỗi chung của lần lưu trước không còn đúng khi người dùng đã sửa
-    if (formError) setFormError('');
-  };
-  const setMoney = (field: IncomeFormField) => (text: string) => setField(field, formatMoneyInput(text));
+    setErrors((e) => (e[field] ? { ...e, [field]: undefined } : e));
+    setFormError((prev) => (prev ? '' : prev));
+  }, []);
 
-  // ── Quét phiếu lương ────────────────────────────────────────────────────────
+  const setMoney = useCallback(
+    (field: IncomeFormField) => (text: string) => setField(field, formatMoneyInput(text)),
+    [setField]
+  );
+
   const scan = async (source: 'camera' | 'library') => {
     try {
       const perm =
@@ -88,14 +101,19 @@ export function IncomeMonthFormScreen() {
           ? await ImagePicker.requestCameraPermissionsAsync()
           : await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) {
-        Alert.alert('Cần cấp quyền', source === 'camera' ? 'Vui lòng cho phép truy cập Camera.' : 'Vui lòng cho phép truy cập Thư viện ảnh.');
+        toast.warning(
+          source === 'camera'
+            ? 'Vui lòng cấp quyền truy cập máy ảnh trong phần Cài đặt thiết bị để chụp phiếu lương.'
+            : 'Vui lòng cấp quyền truy cập thư viện ảnh trong phần Cài đặt thiết bị để chọn ảnh.',
+          'Cần cấp quyền truy cập'
+        );
         return;
       }
       const result =
         source === 'camera'
-          ? await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.8 })
-          : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.8 });
-      if (result.canceled || !result.assets?.length) return;
+          ? await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.8, base64: false })
+          : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.8, base64: false });
+      if (result.canceled || !result.assets?.length || !isMountedRef.current) return;
 
       const asset = result.assets[0];
       const picked: OcrImagePart = {
@@ -108,9 +126,10 @@ export function IncomeMonthFormScreen() {
       const month = Number(values.month) || undefined;
       const year = Number(values.year) || params.year;
       const data = await incomeApi.extractPayslip(picked, month, year);
+      if (!isMountedRef.current) return;
+
       setOcr(data);
       setPayslipFile(picked);
-      // Ô nào AI không đọc được (rỗng) thì giữ giá trị người dùng đã nhập
       const filled = fromPayslipOcr(data, { month, year });
       setValues((prev) => {
         const next = { ...prev };
@@ -122,25 +141,38 @@ export function IncomeMonthFormScreen() {
       });
       setErrors({});
     } catch (err) {
-      setScanError(extractApiErrorMessage(err, 'Không đọc được phiếu lương. Vui lòng thử ảnh khác hoặc nhập tay.'));
+      if (!isMountedRef.current) return;
+      const fallback = 'Không đọc được phiếu lương. Vui lòng thử ảnh rõ nét hơn hoặc nhập tay.';
+      setScanError(sanitizeUiMessage(extractApiErrorMessage(err, fallback), fallback));
     } finally {
-      setScanning(false);
+      if (isMountedRef.current) {
+        setScanning(false);
+      }
     }
   };
 
-  // ── Lưu / xóa ───────────────────────────────────────────────────────────────
   const doSave = async () => {
+    setDuplicateDialogOpen(false);
     setSaving(true);
     setFormError('');
     try {
       const body = toIncomeRequest(values);
       if (editing) await incomeApi.update(editing.id, body);
       else await incomeApi.create(body, payslipFile ?? undefined);
+      if (!isMountedRef.current) return;
+      toast.success(
+        editing ? 'Đã cập nhật thông tin thu nhập tháng.' : 'Đã lưu thông tin thu nhập tháng mới.',
+        'Đã lưu thu nhập'
+      );
       navigation.goBack();
     } catch (err) {
-      setFormError(extractApiErrorMessage(err, 'Không lưu được thu nhập. Vui lòng thử lại.'));
+      if (!isMountedRef.current) return;
+      const fallback = 'Không lưu được thông tin thu nhập. Vui lòng kiểm tra lại và thử lại.';
+      setFormError(sanitizeUiMessage(extractApiErrorMessage(err, fallback), fallback));
     } finally {
-      setSaving(false);
+      if (isMountedRef.current) {
+        setSaving(false);
+      }
     }
   };
 
@@ -152,16 +184,7 @@ export function IncomeMonthFormScreen() {
       return;
     }
     if (duplicate) {
-      Alert.alert(
-        'Có thể bị trùng',
-        `Đã có thu nhập tháng ${duplicate.month}/${duplicate.year} của "${duplicate.organizationName}" (${vnd(
-          duplicate.totalTaxableIncome
-        )}). Lưu thêm sẽ bị cộng 2 lần. Bạn vẫn muốn lưu?`,
-        [
-          { text: 'Xem lại', style: 'cancel' },
-          { text: 'Vẫn lưu', style: 'destructive', onPress: doSave },
-        ]
-      );
+      setDuplicateDialogOpen(true);
       return;
     }
     doSave();
@@ -178,29 +201,29 @@ export function IncomeMonthFormScreen() {
     setMode('view');
   };
 
-  const remove = () => {
+  const confirmRemove = async () => {
     if (!editing) return;
-    Alert.alert('Xóa thu nhập tháng này?', `Tháng ${editing.month}/${editing.year} · ${editing.organizationName}`, [
-      { text: 'Hủy', style: 'cancel' },
-      {
-        text: 'Xóa',
-        style: 'destructive',
-        onPress: async () => {
-          setDeleting(true);
-          try {
-            await incomeApi.remove(editing.id);
-            navigation.goBack();
-          } catch (err) {
-            setFormError(extractApiErrorMessage(err, 'Không xóa được. Vui lòng thử lại.'));
-          } finally {
-            setDeleting(false);
-          }
-        },
-      },
-    ]);
+    setDeleteDialogOpen(false);
+    setDeleting(true);
+    try {
+      await incomeApi.remove(editing.id);
+      if (!isMountedRef.current) return;
+      toast.success(
+        `Đã xóa khoản thu nhập tháng ${editing.month}/${editing.year}.`,
+        'Đã xóa khoản thu'
+      );
+      navigation.goBack();
+    } catch (err) {
+      if (!isMountedRef.current) return;
+      const fallback = 'Không xóa được khoản thu nhập này. Vui lòng thử lại.';
+      setFormError(sanitizeUiMessage(extractApiErrorMessage(err, fallback), fallback));
+    } finally {
+      if (isMountedRef.current) {
+        setDeleting(false);
+      }
+    }
   };
 
-  // ── Giao diện ───────────────────────────────────────────────────────────────
   const field = (
     name: IncomeFormField,
     label: string,
@@ -214,9 +237,16 @@ export function IncomeMonthFormScreen() {
             {label}
             {opts.required ? <Text style={styles.required}> *</Text> : null}
           </Text>
-          {low ? <Text style={styles.lowTag}>AI chưa chắc — kiểm tra lại</Text> : null}
+          {low ? <Text style={styles.lowTag}>Cần đối chiếu lại</Text> : null}
         </View>
-        <View style={[styles.inputWrap, !ui.editable && styles.inputReadOnly, low && styles.inputLow, errors[name] && styles.inputError]}>
+        <View
+          style={[
+            styles.inputWrap,
+            !ui.editable && styles.inputReadOnly,
+            low && styles.inputLow,
+            errors[name] && styles.inputError,
+          ]}
+        >
           <TextInput
             style={styles.input}
             value={values[name]}
@@ -234,6 +264,10 @@ export function IncomeMonthFormScreen() {
     );
   };
 
+  const warningMessageClean = ocr?.thresholdValidation?.warningMessage
+    ? sanitizeUiMessage(ocr.thresholdValidation.warningMessage)
+    : '';
+
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right', 'bottom']}>
       <DrumHeader
@@ -242,152 +276,234 @@ export function IncomeMonthFormScreen() {
         backTestID="incomeFormBack"
       />
       <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" testID="incomeFormScroll">
-          {/* Quét phiếu lương — chỉ khi thêm mới hoặc đang sửa */}
-          {ui.showScan ? (
-          <View style={styles.scanCard}>
-            <Text style={styles.scanTitle}>Quét phiếu lương</Text>
-            <Text style={styles.scanDesc}>
-              Chụp hoặc chọn ảnh phiếu lương, hệ thống sẽ tự điền các ô bên dưới. Bạn vẫn kiểm tra lại trước khi lưu.
-            </Text>
-            <View style={styles.scanBtns}>
-              <TouchableOpacity style={styles.scanBtn} onPress={() => scan('camera')} disabled={busy} testID="scanPayslipCamera">
-                <Ionicons name="camera-outline" size={18} color={theme.colors.primary} />
-                <Text style={styles.scanBtnText}>Chụp ảnh</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.scanBtn} onPress={() => scan('library')} disabled={busy} testID="scanPayslipLibrary">
-                <Ionicons name="images-outline" size={18} color={theme.colors.primary} />
-                <Text style={styles.scanBtnText}>Chọn ảnh</Text>
-              </TouchableOpacity>
-            </View>
-            {scanError ? (
-              <Text style={styles.scanError} testID="payslipScanError">
-                {scanError}
-              </Text>
-            ) : null}
-            {scanning ? (
-              <View style={styles.scanning}>
-                <ActivityIndicator color={theme.colors.primary} />
-                <Text style={styles.scanningText}>Đang đọc phiếu lương, có thể mất 20–60 giây...</Text>
+        <ScrollView
+          contentContainerStyle={styles.scrollOuter}
+          keyboardShouldPersistTaps="handled"
+          testID="incomeFormScroll"
+        >
+          <View style={styles.content}>
+            {ui.showScan ? (
+              <View style={styles.scanCard}>
+                <Text style={styles.scanTitle}>Quét phiếu lương</Text>
+                <Text style={styles.scanDesc}>
+                  Chụp hoặc chọn ảnh phiếu lương để tự động điền các chỉ tiêu bên dưới. Vui lòng kiểm tra lại số liệu trước khi lưu.
+                </Text>
+                <View style={styles.scanBtns}>
+                  <TouchableOpacity
+                    style={styles.scanBtn}
+                    onPress={() => scan('camera')}
+                    disabled={busy}
+                    testID="scanPayslipCamera"
+                  >
+                    <Ionicons name="camera-outline" size={18} color={theme.colors.primary} />
+                    <Text style={styles.scanBtnText}>Chụp ảnh</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.scanBtn}
+                    onPress={() => scan('library')}
+                    disabled={busy}
+                    testID="scanPayslipLibrary"
+                  >
+                    <Ionicons name="images-outline" size={18} color={theme.colors.primary} />
+                    <Text style={styles.scanBtnText}>Chọn ảnh</Text>
+                  </TouchableOpacity>
+                </View>
+                {scanError ? (
+                  <Text style={styles.scanError} testID="payslipScanError">
+                    {scanError}
+                  </Text>
+                ) : null}
+                {scanning ? (
+                  <View style={styles.scanning}>
+                    <ActivityIndicator color={theme.colors.primary} />
+                    <Text style={styles.scanningText}>Đang đọc phiếu lương, có thể mất 20–60 giây...</Text>
+                  </View>
+                ) : null}
               </View>
             ) : null}
-          </View>
-          ) : null}
 
-          {/* Kết quả OCR */}
-          {ui.showScan && ocr ? (
-            <View style={[styles.ocrBox, ocr.thresholdValidation?.isPassedThreshold === false && styles.ocrBoxWarn]} testID="payslipOcrResult">
-              <Text style={styles.ocrTitle}>
-                {ocr.thresholdValidation?.isPassedThreshold === false ? 'Đã đọc, nhưng độ tin cậy thấp' : 'Đã đọc phiếu lương'}
-                {ocr.thresholdValidation?.overallConfidence != null
-                  ? ` · độ tin cậy ${Math.round(ocr.thresholdValidation.overallConfidence * 100)}%`
-                  : ''}
-              </Text>
-              {ocr.thresholdValidation?.warningMessage ? (
-                <Text style={styles.ocrText}>{ocr.thresholdValidation.warningMessage}</Text>
-              ) : null}
-              {lowFields.length > 0 ? (
-                <Text style={styles.ocrText}>Các ô tô vàng là AI chưa chắc chắn, vui lòng đối chiếu với phiếu lương.</Text>
-              ) : null}
-              {ocr.employeeName || ocr.grossSalary != null || ocr.netSalary != null ? (
-                <Text style={styles.ocrRef}>
-                  Tham khảo trên phiếu: {ocr.employeeName ? `${ocr.employeeName} · ` : ''}
-                  {ocr.grossSalary != null ? `Lương gộp ${vnd(ocr.grossSalary)} · ` : ''}
-                  {ocr.netSalary != null ? `Thực nhận ${vnd(ocr.netSalary)}` : ''}
+            {ui.showScan && ocr ? (
+              <View
+                style={[styles.ocrBox, ocr.thresholdValidation?.isPassedThreshold === false && styles.ocrBoxWarn]}
+                testID="payslipOcrResult"
+              >
+                <Text style={styles.ocrTitle}>
+                  {ocr.thresholdValidation?.isPassedThreshold === false
+                    ? 'Đã đọc phiếu lương, cần kiểm tra kỹ'
+                    : 'Đã đọc phiếu lương'}
+                  {ocr.thresholdValidation?.overallConfidence != null
+                    ? ` · độ tin cậy ${Math.round(ocr.thresholdValidation.overallConfidence * 100)}%`
+                    : ''}
                 </Text>
-              ) : null}
+                {warningMessageClean ? <Text style={styles.ocrText}>{warningMessageClean}</Text> : null}
+                {lowFields.length > 0 ? (
+                  <Text style={styles.ocrText}>
+                    Các ô tô vàng có độ tin cậy thấp, vui lòng đối chiếu lại với phiếu lương gốc.
+                  </Text>
+                ) : null}
+                {ocr.employeeName || ocr.grossSalary != null || ocr.netSalary != null ? (
+                  <Text style={styles.ocrRef}>
+                    Tham khảo trên phiếu: {ocr.employeeName ? `${ocr.employeeName} · ` : ''}
+                    {ocr.grossSalary != null ? `Lương gộp ${vnd(ocr.grossSalary)} · ` : ''}
+                    {ocr.netSalary != null ? `Thực nhận ${vnd(ocr.netSalary)}` : ''}
+                  </Text>
+                ) : null}
+              </View>
+            ) : null}
+
+            {field('organizationName', 'Tổ chức chi trả', { required: true, placeholder: 'Ví dụ: Công ty Cổ phần ABC' })}
+            {field('taxIdNumber', 'Mã số thuế tổ chức', { numeric: false, placeholder: '10 hoặc 13 chữ số' })}
+            <View style={styles.row2}>
+              <View style={styles.flex}>{field('month', 'Tháng', { numeric: true, required: true, placeholder: '1–12' })}</View>
+              <View style={styles.flex}>{field('year', 'Năm', { numeric: true, required: true })}</View>
             </View>
-          ) : null}
+            {field('totalTaxableIncome', 'Thu nhập chịu thuế', { money: true, required: true, placeholder: '0' })}
+            {field('insuranceDeducted', 'Bảo hiểm bắt buộc đã trích (BHXH, BHYT, BHTN)', {
+              money: true,
+              required: true,
+              placeholder: '0',
+            })}
+            {field('taxAlreadyDeducted', 'Thuế TNCN đã khấu trừ', { money: true, placeholder: '0' })}
 
-          {/* Form */}
-          {field('organizationName', 'Tổ chức chi trả', { required: true, placeholder: 'Ví dụ: Công ty Cổ phần ABC' })}
-          {field('taxIdNumber', 'Mã số thuế tổ chức', { numeric: false, placeholder: '10 chữ số' })}
-          <View style={styles.row2}>
-            <View style={styles.flex}>{field('month', 'Tháng', { numeric: true, required: true, placeholder: '1–12' })}</View>
-            <View style={styles.flex}>{field('year', 'Năm', { numeric: true, required: true })}</View>
-          </View>
-          {field('totalTaxableIncome', 'Thu nhập chịu thuế', { money: true, required: true, placeholder: '0' })}
-          {field('insuranceDeducted', 'Bảo hiểm bắt buộc đã trích (BHXH, BHYT, BHTN)', { money: true, required: true, placeholder: '0' })}
-          {field('taxAlreadyDeducted', 'Thuế TNCN đã khấu trừ', { money: true, placeholder: '0' })}
+            {ui.showPayslipPreview ? (
+              <View style={styles.previewCard} testID="payslipPreview">
+                <Text style={styles.label}>Ảnh phiếu lương</Text>
+                {values.payslipFileUrl ? (
+                  <TouchableOpacity onPress={() => setViewerOpen(true)} testID="payslipPreviewImage">
+                    <Image source={{ uri: values.payslipFileUrl }} style={styles.previewImage} resizeMode="contain" />
+                    <Text style={styles.previewHint}>Bấm vào ảnh để phóng to</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <Text style={styles.previewEmpty}>Tháng này chưa đính kèm ảnh phiếu lương.</Text>
+                )}
+              </View>
+            ) : values.payslipFileUrl || payslipFile ? (
+              <TouchableOpacity
+                style={styles.attach}
+                onPress={() => setViewerOpen(true)}
+                testID="payslipAttachment"
+              >
+                <Ionicons name="document-attach-outline" size={16} color={theme.colors.primary} />
+                <Text style={styles.attachText}>
+                  {values.payslipFileUrl
+                    ? 'Đã đính kèm ảnh phiếu lương · bấm để xem'
+                    : 'Ảnh phiếu lương sẽ được lưu kèm · bấm để xem'}
+                </Text>
+              </TouchableOpacity>
+            ) : null}
 
-          {ui.showPayslipPreview ? (
-            <View style={styles.previewCard} testID="payslipPreview">
-              <Text style={styles.label}>Ảnh phiếu lương</Text>
-              {values.payslipFileUrl ? (
-                <TouchableOpacity onPress={() => setViewerOpen(true)} testID="payslipPreviewImage">
-                  <Image source={{ uri: values.payslipFileUrl }} style={styles.previewImage} resizeMode="contain" />
-                  <Text style={styles.previewHint}>Bấm vào ảnh để phóng to</Text>
-                </TouchableOpacity>
-              ) : (
-                <Text style={styles.previewEmpty}>Tháng này chưa đính kèm ảnh phiếu lương.</Text>
-              )}
-            </View>
-          ) : values.payslipFileUrl || payslipFile ? (
-            <TouchableOpacity
-              style={styles.attach}
-              onPress={() => setViewerOpen(true)}
-              testID="payslipAttachment"
-            >
-              <Ionicons name="document-attach-outline" size={16} color={theme.colors.primary} />
-              <Text style={styles.attachText}>
-              {values.payslipFileUrl ? 'Đã đính kèm ảnh phiếu lương · bấm để xem' : 'Ảnh phiếu lương sẽ được lưu kèm · bấm để xem'}
-            </Text>
-            </TouchableOpacity>
-          ) : null}
+            {ui.editable && duplicate ? (
+              <View style={styles.warnBox} testID="duplicateMonthWarning">
+                <Ionicons name="warning-outline" size={16} color="#8A5A00" />
+                <Text style={styles.warnText}>
+                  Đã có thu nhập tháng {duplicate.month}/{duplicate.year} của "{duplicate.organizationName}" (
+                  {vnd(duplicate.totalTaxableIncome)}). Kiểm tra lại để tránh khai trùng.
+                </Text>
+              </View>
+            ) : null}
 
-          {ui.editable && duplicate ? (
-            <View style={styles.warnBox} testID="duplicateMonthWarning">
-              <Ionicons name="warning-outline" size={16} color="#8A5A00" />
-              <Text style={styles.warnText}>
-                Đã có thu nhập tháng {duplicate.month}/{duplicate.year} của "{duplicate.organizationName}" (
-                {vnd(duplicate.totalTaxableIncome)}). Kiểm tra lại để tránh khai trùng.
+            {ui.editable ? (
+              <View style={styles.note}>
+                <Ionicons name="information-circle-outline" size={14} color="#7A5A14" />
+                <Text style={styles.noteText}>
+                  Chỉ khai thu nhập chịu thuế đã được tổ chức chi trả bóc tách. Bảo hiểm là số doanh nghiệp đã trích trên
+                  phiếu lương, không tự tính.
+                </Text>
+              </View>
+            ) : null}
+
+            {formError ? (
+              <Text style={styles.formError} testID="incomeFormError">
+                {formError}
               </Text>
-            </View>
-          ) : null}
+            ) : null}
 
-          {ui.editable ? (
-          <View style={styles.note}>
-            <Ionicons name="information-circle-outline" size={14} color="#7A5A14" />
-            <Text style={styles.noteText}>
-              Chỉ khai thu nhập chịu thuế đã được tổ chức chi trả bóc tách. Bảo hiểm là số doanh nghiệp đã trích trên
-              phiếu lương, không tự tính.
-            </Text>
+            {ui.showEditButton ? (
+              <TouchableOpacity style={styles.saveBtn} onPress={() => setMode('edit')} disabled={busy} testID="editMonthlyIncomeBtn">
+                <Text style={styles.saveText}>Sửa</Text>
+              </TouchableOpacity>
+            ) : null}
+
+            {ui.showSave ? (
+              <TouchableOpacity
+                style={[styles.saveBtn, busy && styles.disabled]}
+                onPress={save}
+                disabled={busy}
+                testID="saveMonthlyIncomeBtn"
+              >
+                {saving ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.saveText}>{editing ? 'Lưu thay đổi' : 'Lưu thu nhập tháng'}</Text>
+                )}
+              </TouchableOpacity>
+            ) : null}
+
+            {ui.showCancelEdit ? (
+              <TouchableOpacity
+                style={styles.deleteBtn}
+                onPress={cancelEdit}
+                disabled={busy}
+                testID="cancelEditMonthlyIncomeBtn"
+              >
+                <Text style={styles.cancelText}>Hủy sửa</Text>
+              </TouchableOpacity>
+            ) : null}
+
+            {ui.showEditButton ? (
+              <TouchableOpacity
+                style={styles.deleteBtn}
+                onPress={() => setDeleteDialogOpen(true)}
+                disabled={busy}
+                testID="deleteMonthlyIncomeBtn"
+              >
+                {deleting ? (
+                  <ActivityIndicator color={theme.colors.primary} />
+                ) : (
+                  <Text style={styles.deleteText}>Xóa tháng này</Text>
+                )}
+              </TouchableOpacity>
+            ) : null}
           </View>
-          ) : null}
-
-          {formError ? (
-            <Text style={styles.formError} testID="incomeFormError">
-              {formError}
-            </Text>
-          ) : null}
-
-          {ui.showEditButton ? (
-            <TouchableOpacity style={styles.saveBtn} onPress={() => setMode('edit')} disabled={busy} testID="editMonthlyIncomeBtn">
-              <Text style={styles.saveText}>Sửa</Text>
-            </TouchableOpacity>
-          ) : null}
-
-          {ui.showSave ? (
-            <TouchableOpacity style={[styles.saveBtn, busy && styles.disabled]} onPress={save} disabled={busy} testID="saveMonthlyIncomeBtn">
-              {saving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.saveText}>{editing ? 'Lưu thay đổi' : 'Lưu thu nhập tháng'}</Text>}
-            </TouchableOpacity>
-          ) : null}
-
-          {ui.showCancelEdit ? (
-            <TouchableOpacity style={styles.deleteBtn} onPress={cancelEdit} disabled={busy} testID="cancelEditMonthlyIncomeBtn">
-              <Text style={styles.cancelText}>Hủy sửa</Text>
-            </TouchableOpacity>
-          ) : null}
-
-          {ui.showEditButton ? (
-            <TouchableOpacity style={styles.deleteBtn} onPress={remove} disabled={busy} testID="deleteMonthlyIncomeBtn">
-              {deleting ? <ActivityIndicator color={theme.colors.primary} /> : <Text style={styles.deleteText}>Xóa tháng này</Text>}
-            </TouchableOpacity>
-          ) : null}
         </ScrollView>
       </KeyboardAvoidingView>
 
-      {/* Xem ảnh phiếu lương ngay trong app — mở trình duyệt ngoài dễ làm mất dữ liệu form khi quay lại */}
+      <Dialog
+        visible={duplicateDialogOpen && !!duplicate}
+        title="Có thể bị trùng tháng khai"
+        message="Khoản thu nhập cùng tháng của đơn vị này đã tồn tại. Nếu lưu thêm, số liệu sẽ được cộng dồn khi quyết toán."
+        detailLabel="Khoản đã khai trước đó"
+        detail={
+          duplicate
+            ? `Tháng ${duplicate.month}/${duplicate.year} · ${duplicate.organizationName} (${vnd(duplicate.totalTaxableIncome)})`
+            : undefined
+        }
+        destructive
+        primaryLabel="Vẫn lưu"
+        secondaryLabel="Xem lại"
+        onPrimary={doSave}
+        onSecondary={() => setDuplicateDialogOpen(false)}
+        onRequestClose={() => setDuplicateDialogOpen(false)}
+      />
+
+      <Dialog
+        visible={deleteDialogOpen && !!editing}
+        title="Xóa thu nhập tháng này?"
+        message="Khoản thu nhập này sẽ bị gỡ khỏi bảng kê theo tháng. Bạn vẫn có thể kê khai lại nếu cần."
+        detailLabel="Khoản thu nhập"
+        detail={
+          editing
+            ? `Tháng ${editing.month}/${editing.year} · ${editing.organizationName} (${vnd(editing.totalTaxableIncome)})`
+            : undefined
+        }
+        destructive
+        primaryLabel="Xóa"
+        secondaryLabel="Giữ lại"
+        onPrimary={confirmRemove}
+        onSecondary={() => setDeleteDialogOpen(false)}
+        onRequestClose={() => setDeleteDialogOpen(false)}
+      />
+
       <DocumentViewerModal
         visible={viewerOpen}
         onClose={() => setViewerOpen(false)}
@@ -410,7 +526,15 @@ export function IncomeMonthFormScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: theme.colors.background },
   flex: { flex: 1 },
-  content: { padding: 20, paddingBottom: 40, gap: 12 },
+  scrollOuter: { flexGrow: 1 },
+  content: {
+    width: '100%',
+    maxWidth: 600,
+    alignSelf: 'center',
+    padding: 20,
+    paddingBottom: 40,
+    gap: 12,
+  },
   scanCard: {
     borderWidth: 1,
     borderColor: theme.colors.border,
@@ -432,8 +556,9 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.primary,
     borderRadius: 10,
     paddingVertical: 10,
+    paddingHorizontal: 8,
   },
-  scanBtnText: { fontFamily: fonts.bodySemi, fontSize: 13, color: theme.colors.primary },
+  scanBtnText: { flexShrink: 1, fontFamily: fonts.bodySemi, fontSize: 13, color: theme.colors.primary },
   scanError: { fontFamily: fonts.bodyMedium, fontSize: 12, lineHeight: 17, color: theme.colors.primary },
   scanning: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   scanningText: { flex: 1, fontFamily: fonts.body, fontSize: 12, color: theme.colors.textSecondary },
@@ -443,10 +568,16 @@ const styles = StyleSheet.create({
   ocrText: { fontFamily: fonts.body, fontSize: 12, lineHeight: 17, color: '#5A4A22' },
   ocrRef: { fontFamily: fonts.body, fontSize: 11, lineHeight: 16, color: theme.colors.textSecondary },
   field: { gap: 4 },
-  labelRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  labelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
   label: { flexShrink: 1, fontFamily: fonts.bodyMedium, fontSize: 13, color: theme.colors.textPrimary },
   required: { color: theme.colors.primary },
-  lowTag: { fontFamily: fonts.bodyMedium, fontSize: 10, color: '#8A5A00' },
+  lowTag: { fontFamily: fonts.bodyMedium, fontSize: 11, color: '#8A5A00' },
   inputWrap: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -459,8 +590,8 @@ const styles = StyleSheet.create({
   inputReadOnly: { backgroundColor: theme.colors.background },
   inputLow: { borderColor: '#E0A800', backgroundColor: '#FFF9E6' },
   inputError: { borderColor: theme.colors.primary },
-  input: { flex: 1, paddingVertical: 10, fontFamily: fonts.body, fontSize: 14, color: theme.colors.textPrimary },
-  unit: { fontFamily: fonts.bodyMedium, fontSize: 14, color: theme.colors.textSecondary },
+  input: { flex: 1, minHeight: 42, paddingVertical: 10, fontFamily: fonts.body, fontSize: 14, color: theme.colors.textPrimary },
+  unit: { fontFamily: fonts.bodyMedium, fontSize: 14, color: theme.colors.textSecondary, marginLeft: 4 },
   errorText: { fontFamily: fonts.body, fontSize: 11, color: theme.colors.primary },
   row2: { flexDirection: 'row', gap: 10 },
   attach: { flexDirection: 'row', alignItems: 'center', gap: 6 },
@@ -475,7 +606,7 @@ const styles = StyleSheet.create({
   previewImage: { width: '100%', height: 260, borderRadius: 8, backgroundColor: theme.colors.background },
   previewHint: { fontFamily: fonts.body, fontSize: 11, color: theme.colors.textSecondary, textAlign: 'center', marginTop: 4 },
   previewEmpty: { fontFamily: fonts.body, fontSize: 12, color: theme.colors.textSecondary },
-  attachText: { fontFamily: fonts.bodyMedium, fontSize: 12, color: theme.colors.primary },
+  attachText: { flex: 1, fontFamily: fonts.bodyMedium, fontSize: 12, color: theme.colors.primary },
   warnBox: { flexDirection: 'row', gap: 6, padding: 10, borderRadius: 8, backgroundColor: '#FFF1D6' },
   warnText: { flex: 1, fontFamily: fonts.body, fontSize: 12, lineHeight: 17, color: '#6B4600' },
   note: { flexDirection: 'row', gap: 6, padding: 8, borderRadius: 8, backgroundColor: '#FBF6E9' },
@@ -485,10 +616,11 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.primary,
     borderRadius: 12,
     paddingVertical: 14,
+    paddingHorizontal: 16,
     alignItems: 'center',
     marginTop: 4,
   },
-  saveText: { fontFamily: fonts.bodySemi, fontSize: 15, color: '#FFFFFF' },
+  saveText: { fontFamily: fonts.bodySemi, fontSize: 15, color: '#FFFFFF', textAlign: 'center' },
   disabled: { opacity: 0.6 },
   deleteBtn: { alignItems: 'center', paddingVertical: 10 },
   deleteText: { fontFamily: fonts.bodySemi, fontSize: 14, color: theme.colors.primary },

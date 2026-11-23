@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -6,22 +6,26 @@ import {
   FlatList,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
   TextInput,
   Modal,
   Switch,
   Platform,
   RefreshControl,
   ScrollView,
+  KeyboardAvoidingView,
+  ListRenderItemInfo,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RouteProp, useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
 import { DrumHeader } from '../../components/brand/DrumHeader';
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
+import { Dialog } from '../../components/common/Dialog';
 import { MainTabBar } from '../../components/navigation/MainTabBar';
+import { useToast } from '../../components/ui/Toast';
+import { useDebounce } from '../../hooks/useDebounce';
 import {
   incomeSourceApi,
   IncomeSourceItem,
@@ -31,15 +35,119 @@ import {
   PaginationMeta,
 } from '../../api/incomeSourceApi';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
+import { toFriendlyErrorMessage } from '../../utils/friendlyError';
 import { MonthlyIncomePanel } from '../income/MonthlyIncomePanel';
 import { evaluateManualIncomeSource } from './manualIncomeSourceCheck';
 
 const TAX_YEAR_OPTIONS = [2026, 2025, 2024];
 
+const formatDate = (dateStr?: string) => {
+  if (!dateStr) return 'Chưa cập nhật';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return dateStr;
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
+const formatCurrency = (val?: number) => {
+  if (typeof val !== 'number' || isNaN(val)) return '0';
+  return val.toLocaleString('vi-VN');
+};
+
+interface IncomeSourceRowProps {
+  item: IncomeSourceItem;
+  index: number;
+  onEdit: (item: IncomeSourceItem) => void;
+  onDelete: (item: IncomeSourceItem) => void;
+}
+
+const IncomeSourceRow = React.memo<IncomeSourceRowProps>(({ item, index, onEdit, onDelete }) => (
+  <View style={styles.card} testID={`incomeSourceCard_${item.id}`}>
+    <View style={styles.cardHeader}>
+      <Text style={styles.ledgerIndex}>{String(index + 1).padStart(2, '0')}</Text>
+      <View style={styles.cardMainInfo}>
+        <Text style={styles.companyName} numberOfLines={2}>
+          {item.companyName}
+        </Text>
+        <Text style={styles.companyMeta}>
+          MST {item.companyTaxCode || item.companyTaxId} · Năm {item.taxYear || 2026} ·{' '}
+          <Text style={item.isActive ? styles.statusActiveText : styles.statusInactiveText}>
+            {item.isActive ? 'Đang chi trả' : 'Đã dừng'}
+          </Text>
+        </Text>
+      </View>
+    </View>
+
+    <View style={styles.financialRow}>
+      <View style={styles.financialCol}>
+        <Text style={styles.financialLabel}>Thu nhập năm</Text>
+        <Text
+          style={styles.incomeValueText}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.72}
+        >
+          {formatCurrency(item.totalIncome)} đ
+        </Text>
+      </View>
+      <View style={styles.financialCol}>
+        <Text style={styles.financialLabel}>Thuế đã khấu trừ</Text>
+        <Text
+          style={styles.taxValueText}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.72}
+        >
+          {formatCurrency(item.taxWithheld)} đ
+        </Text>
+      </View>
+    </View>
+
+    <Text style={styles.metaValue}>
+      Khai báo {formatDate(item.createdAt)}
+      {item.updatedAt && item.updatedAt !== item.createdAt ? ` · Cập nhật ${formatDate(item.updatedAt)}` : ''}
+    </Text>
+
+    <View style={styles.cardActions}>
+      <TouchableOpacity
+        style={styles.actionBtn}
+        onPress={() => onEdit(item)}
+        testID={`editIncomeSourceBtn_${item.id}`}
+      >
+        <Text style={styles.actionBtnText}>Sửa</Text>
+      </TouchableOpacity>
+      <Text style={styles.actionDivider}>·</Text>
+      <TouchableOpacity
+        style={styles.actionBtn}
+        onPress={() => onDelete(item)}
+        testID={`deleteIncomeSourceBtn_${item.id}`}
+      >
+        <Text style={styles.actionBtnDanger}>Xóa</Text>
+      </TouchableOpacity>
+    </View>
+  </View>
+));
+
+interface CrossCheckConfirmState {
+  title: string;
+  message: string;
+  detail: string;
+}
+
 export const IncomeSourceListScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
   const route = useRoute<RouteProp<RootStackParamList, 'IncomeSourceList'>>();
-  // "Theo năm" = nơi chi trả (quyết toán hiện dùng) · "Theo tháng" = bảng incomes mới (OCR phiếu lương)
+  const insets = useSafeAreaInsets();
+  const { toast } = useToast();
+
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   const [viewMode, setViewMode] = useState<'yearly' | 'monthly'>(route.params?.view ?? 'yearly');
 
   const [loading, setLoading] = useState<boolean>(true);
@@ -47,27 +155,11 @@ export const IncomeSourceListScreen: React.FC = () => {
   const [sources, setSources] = useState<IncomeSourceItem[]>([]);
   const [pagination, setPagination] = useState<PaginationMeta | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const debouncedSearchQuery = useDebounce(searchQuery, 300);
 
-  // Lọc theo năm tính thuế (mặc định năm hiện hành 2026, 0 = tất cả)
   const [selectedYearFilter, setSelectedYearFilter] = useState<number>(2026);
   const [summary, setSummary] = useState<IncomeSourceSummaryDto | null>(null);
 
-  // Định dạng ngày giờ chuẩn Việt Nam (DD/MM/YYYY HH:mm)
-  const formatDate = (dateStr?: string) => {
-    if (!dateStr) return 'Chưa cập nhật';
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return dateStr;
-    const pad = (n: number) => n.toString().padStart(2, '0');
-    return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  };
-
-  // Định dạng số tiền VNĐ
-  const formatCurrency = (val?: number) => {
-    if (typeof val !== 'number' || isNaN(val)) return '0';
-    return val.toLocaleString('vi-VN');
-  };
-
-  // Modal State cho Thêm / Sửa
   const [modalVisible, setModalVisible] = useState<boolean>(false);
   const [editingItem, setEditingItem] = useState<IncomeSourceItem | null>(null);
   const [companyName, setCompanyName] = useState<string>('');
@@ -79,6 +171,9 @@ export const IncomeSourceListScreen: React.FC = () => {
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [formErrors, setFormErrors] = useState<{ [key: string]: string }>({});
 
+  const [deleteTarget, setDeleteTarget] = useState<IncomeSourceItem | null>(null);
+  const [crossCheckDialog, setCrossCheckDialog] = useState<CrossCheckConfirmState | null>(null);
+
   const fetchIncomeSources = useCallback(
     async (isRefresh = false) => {
       try {
@@ -88,40 +183,44 @@ export const IncomeSourceListScreen: React.FC = () => {
           setLoading(true);
         }
 
-        const queryParams: any = {};
+        const queryParams: { taxYear?: number } = {};
         if (selectedYearFilter > 0) {
           queryParams.taxYear = selectedYearFilter;
         }
+        const summaryYear = selectedYearFilter > 0 ? selectedYearFilter : 2026;
 
-        // 1. Gọi API lấy danh sách nơi chi trả
-        const data = await incomeSourceApi.getAll(queryParams);
+        const [data, summaryData] = await Promise.all([
+          incomeSourceApi.getAll(queryParams),
+          incomeSourceApi.getSummary(summaryYear),
+        ]);
+        if (!isMountedRef.current) return;
+
         setSources(data.items || []);
         setPagination(data.pagination || null);
-
-        // 2. Gọi API lấy bảng tổng hợp thu nhập năm (Summary endpoint mới của BE)
-        const summaryYear = selectedYearFilter > 0 ? selectedYearFilter : 2026;
-        const summaryData = await incomeSourceApi.getSummary(summaryYear);
         setSummary(summaryData);
-      } catch (err: any) {
-        const msg = err.response?.data?.message || 'Không thể tải danh sách nơi chi trả thu nhập.';
-        Alert.alert('Lỗi', msg);
+      } catch (err: unknown) {
+        if (!isMountedRef.current) return;
+        toast.error(
+          toFriendlyErrorMessage(err, 'Không thể tải danh sách nơi chi trả thu nhập. Vui lòng thử lại.'),
+          'Chưa tải được dữ liệu'
+        );
       } finally {
-        setLoading(false);
-        setRefreshing(false);
+        if (isMountedRef.current) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
     },
-    [selectedYearFilter]
+    [selectedYearFilter, toast]
   );
 
-  // Tải lại mỗi khi quay về màn (vd. sau khi lưu chứng từ khấu trừ) và khi đổi năm
   useFocusEffect(
     useCallback(() => {
       fetchIncomeSources();
     }, [fetchIncomeSources])
   );
 
-  // Mở modal thêm mới
-  const handleOpenCreateModal = () => {
+  const handleOpenCreateModal = useCallback(() => {
     setEditingItem(null);
     setCompanyName('');
     setCompanyTaxCode('');
@@ -131,10 +230,9 @@ export const IncomeSourceListScreen: React.FC = () => {
     setIsActive(true);
     setFormErrors({});
     setModalVisible(true);
-  };
+  }, [selectedYearFilter]);
 
-  // Mở modal chỉnh sửa
-  const handleOpenEditModal = (item: IncomeSourceItem) => {
+  const handleOpenEditModal = useCallback((item: IncomeSourceItem) => {
     setEditingItem(item);
     setCompanyName(item.companyName);
     setCompanyTaxCode(item.companyTaxCode || item.companyTaxId || '');
@@ -144,24 +242,22 @@ export const IncomeSourceListScreen: React.FC = () => {
     setIsActive(item.isActive);
     setFormErrors({});
     setModalVisible(true);
-  };
+  }, []);
 
-  // Đóng modal
-  const handleCloseModal = () => {
+  const handleCloseModal = useCallback(() => {
     if (!submitting) {
       setModalVisible(false);
       setEditingItem(null);
       setFormErrors({});
     }
-  };
+  }, [submitting]);
 
-  // Kiểm tra tính hợp lệ của Form
   const validateForm = (): boolean => {
     const errs: { [key: string]: string } = {};
 
     const cleanName = companyName.trim();
     if (!cleanName) {
-      errs.companyName = 'Vui lòng nhập tên cơ quan / doanh nghiệp.';
+      errs.companyName = 'Vui lòng nhập tên cơ quan hoặc doanh nghiệp chi trả.';
     } else if (cleanName.length > 255) {
       errs.companyName = 'Tên cơ quan không được vượt quá 255 ký tự.';
     }
@@ -171,7 +267,7 @@ export const IncomeSourceListScreen: React.FC = () => {
       errs.companyTaxCode = 'Vui lòng nhập mã số thuế tổ chức.';
     } else if (!/^\d{10}$|^\d{10}-\d{3}$/.test(cleanTax)) {
       errs.companyTaxCode =
-        'Mã số thuế tổ chức phải gồm 10 chữ số (VD: 0100109107) hoặc 13 số có gạch ngang (VD: 0100109107-001).';
+        'Mã số thuế tổ chức gồm 10 chữ số (ví dụ: 0100109107) hoặc 13 chữ số chi nhánh (ví dụ: 0100109107-001).';
     }
 
     const cleanYear = Number(taxYear);
@@ -193,50 +289,7 @@ export const IncomeSourceListScreen: React.FC = () => {
     return Object.keys(errs).length === 0;
   };
 
-  // Hỏi lại người dùng (web không có Alert nhiều nút)
-  const confirmProceed = (title: string, message: string, okText: string): Promise<boolean> => {
-    if (Platform.OS === 'web') return Promise.resolve(window.confirm(`${title}\n\n${message}`));
-    return new Promise((resolve) =>
-      Alert.alert(title, message, [
-        { text: 'Xem lại', style: 'cancel', onPress: () => resolve(false) },
-        { text: okText, style: 'destructive', onPress: () => resolve(true) },
-      ])
-    );
-  };
-
-  /**
-   * Khai tay ở tab Theo năm không đi qua chứng từ khấu trừ → đối chiếu với thu nhập các tháng
-   * (cùng API cross-check của luồng chứng từ). Lệch thì hỏi lại trước khi lưu.
-   */
-  const confirmAgainstMonthly = async (name: string, year: number, income: number, tax: number): Promise<boolean> => {
-    try {
-      const result = await incomeSourceApi.crossCheck({
-        companyName: name,
-        taxYear: year,
-        certificateTotalIncome: income,
-        certificateTaxWithheld: tax,
-        certificateInsuranceDeducted: 0,
-      });
-      const outcome = evaluateManualIncomeSource(result, { income, tax });
-      if (outcome.status !== 'mismatch') return true;
-      return confirmProceed(
-        'Chưa khớp với thu nhập theo tháng',
-        `${outcome.messages.join('\n')}\n\nSố khai ở đây được dùng để quyết toán. Kiểm tra lại số liệu, hoặc vẫn lưu nếu bạn chắc chắn.`,
-        'Vẫn lưu'
-      );
-    } catch {
-      return confirmProceed(
-        'Chưa đối chiếu được',
-        'Không kiểm tra được với thu nhập theo tháng lúc này. Bạn vẫn muốn lưu?',
-        'Vẫn lưu'
-      );
-    }
-  };
-
-  // Gửi Form lưu thông tin
-  const handleSave = async () => {
-    if (!validateForm()) return;
-
+  const persistIncomeSource = async () => {
     try {
       setSubmitting(true);
       const cleanName = companyName.trim();
@@ -245,10 +298,7 @@ export const IncomeSourceListScreen: React.FC = () => {
       const cleanIncome = Number(totalIncome.replace(/[^\d.]/g, '')) || 0;
       const cleanWithheld = Number(taxWithheld.replace(/[^\d.]/g, '')) || 0;
 
-      if (!(await confirmAgainstMonthly(cleanName, cleanYear, cleanIncome, cleanWithheld))) return;
-
       if (editingItem) {
-        // Cập nhật: gửi đầy đủ các field mới của BE
         const updatePayload: IncomeSourceUpdateDto = {
           companyName: cleanName,
           companyTaxCode: cleanTax,
@@ -256,11 +306,10 @@ export const IncomeSourceListScreen: React.FC = () => {
           taxYear: cleanYear,
           totalIncome: cleanIncome,
           taxWithheld: cleanWithheld,
-          isActive: isActive,
+          isActive,
         };
         await incomeSourceApi.update(editingItem.id, updatePayload);
       } else {
-        // Thêm mới: gửi đầy đủ các field mới của BE
         const createPayload: IncomeSourceCreateDto = {
           companyName: cleanName,
           companyTaxCode: cleanTax,
@@ -272,73 +321,138 @@ export const IncomeSourceListScreen: React.FC = () => {
         await incomeSourceApi.create(createPayload);
       }
 
+      if (!isMountedRef.current) return;
+      const wasEditing = !!editingItem;
+      setCrossCheckDialog(null);
       setModalVisible(false);
+      setEditingItem(null);
       await fetchIncomeSources();
+      if (!isMountedRef.current) return;
 
-      const successMsg = editingItem
-        ? 'Cập nhật nơi chi trả thu nhập thành công!'
-        : 'Khai báo nơi chi trả thu nhập thành công!';
-
-      if (Platform.OS === 'web') {
-        window.alert(successMsg);
-      } else {
-        Alert.alert('Thành công', successMsg);
-      }
-    } catch (err: any) {
-      const respMsg =
-        err.response?.data?.message || 'Đã xảy ra lỗi khi lưu thông tin. Vui lòng kiểm tra lại MST.';
-      Alert.alert('Lưu thất bại', respMsg);
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  // Xóa nơi chi trả thu nhập
-  const handleDelete = (item: IncomeSourceItem) => {
-    const confirmDelete = async () => {
-      try {
-        setLoading(true);
-        await incomeSourceApi.delete(item.id);
-        await fetchIncomeSources();
-        if (Platform.OS === 'web') {
-          window.alert('Đã xóa nơi chi trả thu nhập.');
-        } else {
-          Alert.alert('Thành công', 'Đã xóa nơi chi trả thu nhập.');
-        }
-      } catch (err: any) {
-        const msg = err.response?.data?.message || 'Không thể xóa nơi chi trả này.';
-        Alert.alert('Lỗi', msg);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    if (Platform.OS === 'web') {
-      if (window.confirm(`Bạn có chắc muốn xóa "${item.companyName}" khỏi danh sách nơi chi trả?`)) {
-        confirmDelete();
-      }
-    } else {
-      Alert.alert(
-        'Xác nhận xóa',
-        `Bạn có chắc chắn muốn xóa "${item.companyName}" khỏi danh sách nơi chi trả thu nhập?`,
-        [
-          { text: 'Hủy', style: 'cancel' },
-          { text: 'Xóa', style: 'destructive', onPress: confirmDelete },
-        ]
+      toast.success(
+        wasEditing
+          ? 'Đã cập nhật thông tin nơi chi trả thu nhập.'
+          : 'Đã khai báo nơi chi trả thu nhập mới.',
+        'Đã lưu nơi chi trả'
       );
+    } catch (err: unknown) {
+      if (!isMountedRef.current) return;
+      toast.error(
+        toFriendlyErrorMessage(err, 'Chưa thể lưu thông tin nơi chi trả. Vui lòng kiểm tra lại mã số thuế.'),
+        'Chưa lưu được thông tin'
+      );
+    } finally {
+      if (isMountedRef.current) {
+        setSubmitting(false);
+      }
     }
   };
 
-  // Lọc theo tìm kiếm
-  const filteredSources = sources.filter((item) => {
-    if (!searchQuery.trim()) return true;
-    const query = searchQuery.toLowerCase().trim();
-    return (
-      item.companyName.toLowerCase().includes(query) ||
-      (item.companyTaxCode && item.companyTaxCode.toLowerCase().includes(query)) ||
-      (item.companyTaxId && item.companyTaxId.toLowerCase().includes(query))
+  const handleSave = async () => {
+    if (!validateForm()) return;
+
+    const cleanName = companyName.trim();
+    const cleanYear = Number(taxYear) || 2026;
+    const cleanIncome = Number(totalIncome.replace(/[^\d.]/g, '')) || 0;
+    const cleanWithheld = Number(taxWithheld.replace(/[^\d.]/g, '')) || 0;
+
+    setSubmitting(true);
+    try {
+      const result = await incomeSourceApi.crossCheck({
+        companyName: cleanName,
+        taxYear: cleanYear,
+        certificateTotalIncome: cleanIncome,
+        certificateTaxWithheld: cleanWithheld,
+        certificateInsuranceDeducted: 0,
+      });
+      if (!isMountedRef.current) return;
+      const outcome = evaluateManualIncomeSource(result, { income: cleanIncome, tax: cleanWithheld });
+      if (outcome.status === 'mismatch') {
+        setSubmitting(false);
+        setModalVisible(false);
+        setCrossCheckDialog({
+          title: 'Số liệu lệch với thu nhập tháng',
+          message:
+            'Số liệu tổng năm được dùng trực tiếp khi quyết toán thuế. Vui lòng kiểm tra lại hoặc xác nhận vẫn lưu.',
+          detail: outcome.messages.join('\n'),
+        });
+        return;
+      }
+    } catch {
+      if (!isMountedRef.current) return;
+      setSubmitting(false);
+      setModalVisible(false);
+      setCrossCheckDialog({
+        title: 'Chưa đối chiếu được số liệu tháng',
+        message:
+          'Hiện chưa kiểm tra được với bảng thu nhập theo tháng. Bạn có thể xem lại hoặc vẫn lưu thông tin này.',
+        detail: `${cleanName} · Năm ${cleanYear} (${formatCurrency(cleanIncome)} đ)`,
+      });
+      return;
+    }
+
+    await persistIncomeSource();
+  };
+
+  const handleRequestDelete = useCallback((item: IncomeSourceItem) => {
+    setDeleteTarget(item);
+  }, []);
+
+  const handleConfirmDelete = async () => {
+    const item = deleteTarget;
+    if (!item) return;
+    setDeleteTarget(null);
+    try {
+      setLoading(true);
+      await incomeSourceApi.delete(item.id);
+      if (!isMountedRef.current) return;
+      await fetchIncomeSources();
+      if (!isMountedRef.current) return;
+      toast.success(`Đã xóa "${item.companyName}" khỏi danh sách nơi chi trả.`, 'Đã xóa nơi chi trả');
+    } catch (err: unknown) {
+      if (!isMountedRef.current) return;
+      toast.error(
+        toFriendlyErrorMessage(err, 'Không thể xóa nơi chi trả này. Vui lòng thử lại.'),
+        'Chưa xóa được đơn vị'
+      );
+      setLoading(false);
+    }
+  };
+
+  const filteredSources = useMemo(() => {
+    const query = debouncedSearchQuery.toLowerCase().trim();
+    if (!query) return sources;
+    return sources.filter(
+      (item) =>
+        item.companyName.toLowerCase().includes(query) ||
+        (item.companyTaxCode && item.companyTaxCode.toLowerCase().includes(query)) ||
+        (item.companyTaxId && item.companyTaxId.toLowerCase().includes(query))
     );
-  });
+  }, [sources, debouncedSearchQuery]);
+
+  const counts = useMemo(() => {
+    let active = 0;
+    let inactive = 0;
+    for (const s of sources) {
+      if (s.isActive) active += 1;
+      else inactive += 1;
+    }
+    return { active, inactive };
+  }, [sources]);
+
+  const keyExtractor = useCallback((item: IncomeSourceItem) => item.id, []);
+
+  const renderItem = useCallback(
+    ({ item, index }: ListRenderItemInfo<IncomeSourceItem>) => (
+      <IncomeSourceRow
+        item={item}
+        index={index}
+        onEdit={handleOpenEditModal}
+        onDelete={handleRequestDelete}
+      />
+    ),
+    [handleOpenEditModal, handleRequestDelete]
+  );
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
@@ -366,245 +480,213 @@ export const IncomeSourceListScreen: React.FC = () => {
         }
       />
 
-      {/* Chế độ xem: theo năm (nơi chi trả) / theo tháng (phiếu lương) */}
-      <View style={styles.viewToggle}>
-        {(['yearly', 'monthly'] as const).map((mode) => {
-          const on = viewMode === mode;
-          return (
-            <TouchableOpacity
-              key={mode}
-              style={[styles.viewToggleBtn, on && styles.viewToggleBtnOn]}
-              onPress={() => setViewMode(mode)}
-              accessibilityRole="button"
-              testID={`incomeView_${mode}`}
-            >
-              <Text style={[styles.viewToggleText, on && styles.viewToggleTextOn]}>
-                {mode === 'yearly' ? 'Theo năm' : 'Theo tháng'}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
+      <View style={styles.mainConstraint}>
+        <View style={styles.viewToggle}>
+          {(['yearly', 'monthly'] as const).map((mode) => {
+            const on = viewMode === mode;
+            return (
+              <TouchableOpacity
+                key={mode}
+                style={[styles.viewToggleBtn, on && styles.viewToggleBtnOn]}
+                onPress={() => setViewMode(mode)}
+                accessibilityRole="button"
+                testID={`incomeView_${mode}`}
+              >
+                <Text style={[styles.viewToggleText, on && styles.viewToggleTextOn]}>
+                  {mode === 'yearly' ? 'Theo năm' : 'Theo tháng'}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
       </View>
 
       {viewMode === 'monthly' ? (
         <MonthlyIncomePanel />
       ) : (
-        <>
-      <Text style={styles.pageLead}>
-        Cơ quan chi trả lương, dùng khi đối soát và quyết toán thuế thu nhập cá nhân.
-      </Text>
+        <View style={styles.yearlyContainer}>
+          <Text style={styles.pageLead}>
+            Cơ quan chi trả lương, dùng khi đối soát và quyết toán thuế thu nhập cá nhân.
+          </Text>
 
-      <TouchableOpacity
-        style={styles.voucherBtn}
-        onPress={() =>
-          navigation.navigate('WithholdingVoucher', {
-            year: selectedYearFilter || new Date().getFullYear(),
-          })
-        }
-        accessibilityRole="button"
-        testID="uploadWithholdingVoucherBtn"
-      >
-        <Ionicons name="document-text-outline" size={18} color={theme.colors.primary} />
-        <Text style={styles.voucherBtnText}>Tải chứng từ khấu trừ</Text>
-      </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.voucherBtn}
+            onPress={() =>
+              navigation.navigate('WithholdingVoucher', {
+                year: selectedYearFilter || new Date().getFullYear(),
+              })
+            }
+            accessibilityRole="button"
+            testID="uploadWithholdingVoucherBtn"
+          >
+            <Ionicons name="document-text-outline" size={18} color={theme.colors.primary} />
+            <Text style={styles.voucherBtnText}>Tải chứng từ khấu trừ</Text>
+          </TouchableOpacity>
 
-      {/* 2.1 Bộ chọn năm tính thuế (Tabs TaxYear) */}
-      <View style={styles.yearFilterRow}>
-        <Text style={styles.yearFilterLabel}>Năm tính thuế:</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.yearFilterScroll}>
-          {TAX_YEAR_OPTIONS.map((yr) => {
-            const isSelected = selectedYearFilter === yr;
-            return (
+          <View style={styles.yearFilterRow}>
+            <Text style={styles.yearFilterLabel}>Năm tính thuế:</Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.yearFilterScroll}
+            >
+              {TAX_YEAR_OPTIONS.map((yr) => {
+                const isSelected = selectedYearFilter === yr;
+                return (
+                  <TouchableOpacity
+                    key={yr}
+                    style={[styles.yearChip, isSelected && styles.yearChipSelected]}
+                    onPress={() => setSelectedYearFilter(yr)}
+                    testID={`yearFilterTab_${yr}`}
+                  >
+                    <Text style={[styles.yearChipText, isSelected && styles.yearChipTextSelected]}>
+                      Năm {yr}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
               <TouchableOpacity
-                key={yr}
-                style={[styles.yearChip, isSelected && styles.yearChipSelected]}
-                onPress={() => setSelectedYearFilter(yr)}
-                testID={`yearFilterTab_${yr}`}
+                style={[styles.yearChip, selectedYearFilter === 0 && styles.yearChipSelected]}
+                onPress={() => setSelectedYearFilter(0)}
+                testID="yearFilterTab_all"
               >
-                <Text style={[styles.yearChipText, isSelected && styles.yearChipTextSelected]}>
-                  Năm {yr}
+                <Text style={[styles.yearChipText, selectedYearFilter === 0 && styles.yearChipTextSelected]}>
+                  Tất cả
                 </Text>
               </TouchableOpacity>
-            );
-          })}
-          <TouchableOpacity
-            style={[styles.yearChip, selectedYearFilter === 0 && styles.yearChipSelected]}
-            onPress={() => setSelectedYearFilter(0)}
-            testID="yearFilterTab_all"
-          >
-            <Text style={[styles.yearChipText, selectedYearFilter === 0 && styles.yearChipTextSelected]}>
-              Tất cả
-            </Text>
-          </TouchableOpacity>
-        </ScrollView>
-      </View>
+            </ScrollView>
+          </View>
 
-      {/* 2.2 Bảng tổng hợp thu nhập & thuế khấu trừ (Gọi từ GET /summary) */}
-      {summary && (
-        <View style={styles.summaryCard} testID="incomeSummaryCard">
-          <Text style={styles.summaryTitle}>
-            Thu nhập {selectedYearFilter > 0 ? `năm ${selectedYearFilter}` : 'năm 2026'}
-          </Text>
-          <Text style={styles.summaryIncomeValue}>{formatCurrency(summary.totalIncome)} đ</Text>
-          <Text style={styles.summaryTaxValue}>
-            Thuế đã khấu trừ {formatCurrency(summary.totalTaxWithheld)} đ ·{' '}
-            {summary.totalSources || sources.length} nơi chi trả
-          </Text>
-          <GoldDoubleRule style={styles.summaryRule} />
-        </View>
-      )}
-
-      {/* 3. Thanh tìm kiếm */}
-      <View style={styles.searchContainer}>
-        <View style={styles.searchBox}>
-          <Ionicons name="search" size={18} color={theme.colors.textSecondary} style={{ marginRight: 8 }} />
-          <TextInput
-            style={styles.searchInput}
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            placeholder="Tìm theo tên công ty hoặc mã số thuế..."
-            placeholderTextColor={theme.colors.textPlaceholder}
-            testID="incomeSourceSearchInput"
-          />
-          {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setSearchQuery('')}>
-              <Ionicons name="close-circle" size={18} color={theme.colors.textSecondary} />
-            </TouchableOpacity>
-          )}
-        </View>
-      </View>
-
-      {/* 3.1 Thống kê danh sách */}
-      {!loading && sources.length > 0 && (
-        <View style={styles.listHeaderBar}>
-          <Text style={styles.listHeaderTitle}>Danh sách</Text>
-          <Text style={styles.listHeaderSubtext}>
-            {pagination ? pagination.totalItems : sources.length} đơn vị ·{' '}
-            {sources.filter((s) => s.isActive).length} đang chi trả ·{' '}
-            {sources.filter((s) => !s.isActive).length} đã dừng
-          </Text>
-        </View>
-      )}
-
-      {/* 4. Danh sách hoặc Trạng thái trống */}
-      {loading && !refreshing ? (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={theme.colors.primary} />
-          <Text style={styles.loadingText}>Đang tải danh sách nơi chi trả...</Text>
-        </View>
-      ) : (
-        <FlatList
-          style={styles.list}
-          data={filteredSources}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.listContent}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={() => fetchIncomeSources(true)}
-              colors={[theme.colors.primary]}
-            />
-          }
-          ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <Text style={styles.emptyTitle}>Chưa có nơi chi trả nào</Text>
-              <Text style={styles.emptySubtext}>
-                {searchQuery
-                  ? 'Không tìm thấy đơn vị chi trả phù hợp với từ khóa.'
-                  : `Chưa có đơn vị chi trả nào cho kỳ tính thuế ${selectedYearFilter > 0 ? selectedYearFilter : ''}. Hãy khai báo thông tin nơi làm việc của bạn.`}
+          {summary && (
+            <View style={styles.summaryCard} testID="incomeSummaryCard">
+              <Text style={styles.summaryTitle}>
+                Thu nhập {selectedYearFilter > 0 ? `năm ${selectedYearFilter}` : 'năm 2026'}
               </Text>
+              <Text
+                style={styles.summaryIncomeValue}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.68}
+              >
+                {formatCurrency(summary.totalIncome)} đ
+              </Text>
+              <Text style={styles.summaryTaxValue}>
+                Thuế đã khấu trừ {formatCurrency(summary.totalTaxWithheld)} đ ·{' '}
+                {summary.totalSources || sources.length} nơi chi trả
+              </Text>
+              <GoldDoubleRule style={styles.summaryRule} />
+            </View>
+          )}
 
-              {!searchQuery && (
-                <TouchableOpacity
-                  style={styles.emptyAddBtn}
-                  onPress={handleOpenCreateModal}
-                  testID="emptyAddBtn"
-                >
-                  <Ionicons name="add" size={20} color="#FFFFFF" style={{ marginRight: 6 }} />
-                  <Text style={styles.emptyAddBtnText}>Khai báo nơi chi trả đầu tiên</Text>
+          <View style={styles.searchContainer}>
+            <View style={styles.searchBox}>
+              <Ionicons name="search" size={18} color={theme.colors.textSecondary} style={styles.searchIcon} />
+              <TextInput
+                style={styles.searchInput}
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                placeholder="Tìm theo tên đơn vị hoặc mã số thuế"
+                placeholderTextColor={theme.colors.textPlaceholder}
+                testID="incomeSourceSearchInput"
+              />
+              {searchQuery.length > 0 && (
+                <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                  <Ionicons name="close-circle" size={18} color={theme.colors.textSecondary} />
                 </TouchableOpacity>
               )}
             </View>
-          }
-          renderItem={({ item, index }) => (
-            <View style={styles.card} testID={`incomeSourceCard_${item.id}`}>
-              <View style={styles.cardHeader}>
-                <Text style={styles.ledgerIndex}>{String(index + 1).padStart(2, '0')}</Text>
-                <View style={styles.cardMainInfo}>
-                  <Text style={styles.companyName} numberOfLines={2}>
-                    {item.companyName}
-                  </Text>
-                  <Text style={styles.companyMeta}>
-                    MST {item.companyTaxCode || item.companyTaxId} · Năm {item.taxYear || 2026} ·{' '}
-                    <Text style={item.isActive ? styles.statusActiveText : styles.statusInactiveText}>
-                      {item.isActive ? 'Đang chi trả' : 'Đã dừng'}
-                    </Text>
-                  </Text>
-                </View>
-              </View>
+          </View>
 
-              <View style={styles.financialRow}>
-                <View style={styles.financialCol}>
-                  <Text style={styles.financialLabel}>Thu nhập năm</Text>
-                  <Text style={styles.incomeValueText}>{formatCurrency(item.totalIncome)} đ</Text>
-                </View>
-                <View style={styles.financialCol}>
-                  <Text style={styles.financialLabel}>Thuế đã khấu trừ</Text>
-                  <Text style={styles.taxValueText}>{formatCurrency(item.taxWithheld)} đ</Text>
-                </View>
-              </View>
-
-              <Text style={styles.metaValue}>
-                Khai báo {formatDate(item.createdAt)}
-                {item.updatedAt && item.updatedAt !== item.createdAt
-                  ? ` · Cập nhật ${formatDate(item.updatedAt)}`
-                  : ''}
+          {!loading && sources.length > 0 && (
+            <View style={styles.listHeaderBar}>
+              <Text style={styles.listHeaderTitle}>Danh sách</Text>
+              <Text style={styles.listHeaderSubtext}>
+                {pagination ? pagination.totalItems : sources.length} đơn vị · {counts.active} đang chi trả ·{' '}
+                {counts.inactive} đã dừng
               </Text>
-
-              <View style={styles.cardActions}>
-                <TouchableOpacity
-                  style={styles.actionBtn}
-                  onPress={() => handleOpenEditModal(item)}
-                  testID={`editIncomeSourceBtn_${item.id}`}
-                >
-                  <Text style={styles.actionBtnText}>Sửa</Text>
-                </TouchableOpacity>
-                <Text style={styles.actionDivider}>·</Text>
-                <TouchableOpacity
-                  style={styles.actionBtn}
-                  onPress={() => handleDelete(item)}
-                  testID={`deleteIncomeSourceBtn_${item.id}`}
-                >
-                  <Text style={styles.actionBtnDanger}>Xóa</Text>
-                </TouchableOpacity>
-              </View>
             </View>
           )}
-        />
-      )}
-        </>
+
+          {loading && !refreshing ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color={theme.colors.primary} />
+              <Text style={styles.loadingText}>Đang tải danh sách nơi chi trả...</Text>
+            </View>
+          ) : (
+            <FlatList
+              style={styles.list}
+              data={filteredSources}
+              keyExtractor={keyExtractor}
+              renderItem={renderItem}
+              contentContainerStyle={styles.listContent}
+              initialNumToRender={8}
+              maxToRenderPerBatch={8}
+              windowSize={7}
+              removeClippedSubviews={Platform.OS === 'android'}
+              keyboardShouldPersistTaps="handled"
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={() => fetchIncomeSources(true)}
+                  colors={[theme.colors.primary]}
+                />
+              }
+              ListEmptyComponent={
+                <View style={styles.emptyContainer}>
+                  <Text style={styles.emptyTitle}>Chưa có nơi chi trả nào</Text>
+                  <Text style={styles.emptySubtext}>
+                    {searchQuery
+                      ? 'Không tìm thấy đơn vị chi trả phù hợp với từ khóa.'
+                      : `Chưa có đơn vị chi trả nào cho kỳ tính thuế ${selectedYearFilter > 0 ? selectedYearFilter : ''}. Hãy khai báo thông tin nơi làm việc của bạn.`}
+                  </Text>
+
+                  {!searchQuery && (
+                    <TouchableOpacity
+                      style={styles.emptyAddBtn}
+                      onPress={handleOpenCreateModal}
+                      testID="emptyAddBtn"
+                    >
+                      <Ionicons name="add" size={20} color="#FFFFFF" style={styles.emptyAddIcon} />
+                      <Text style={styles.emptyAddBtnText}>Khai báo nơi chi trả đầu tiên</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              }
+            />
+          )}
+        </View>
       )}
 
-      {/* 5. Modal Khai báo / Chỉnh sửa */}
+      {/* Modal Khai báo / Chỉnh sửa */}
       <Modal
         visible={modalVisible}
         animationType="slide"
-        transparent={true}
+        transparent
         onRequestClose={handleCloseModal}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <View style={[styles.modalCard, { paddingBottom: Math.max(insets.bottom, 8) }]}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
                 {editingItem ? 'Chỉnh sửa nơi chi trả' : 'Khai báo nơi chi trả'}
               </Text>
-              <TouchableOpacity onPress={handleCloseModal} disabled={submitting}>
+              <TouchableOpacity
+                onPress={handleCloseModal}
+                disabled={submitting}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
                 <Ionicons name="close" size={24} color={theme.colors.textSecondary} />
               </TouchableOpacity>
             </View>
 
-            <ScrollView contentContainerStyle={styles.modalBody} showsVerticalScrollIndicator={false}>
-              {/* Tên cơ quan / tổ chức */}
+            <ScrollView
+              contentContainerStyle={styles.modalBody}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
               <View style={styles.modalInputGroup}>
                 <Text style={styles.modalLabel}>
                   Tên cơ quan / Doanh nghiệp <Text style={styles.required}>*</Text>
@@ -625,7 +707,6 @@ export const IncomeSourceListScreen: React.FC = () => {
                 ) : null}
               </View>
 
-              {/* Mã số thuế tổ chức */}
               <View style={styles.modalInputGroup}>
                 <Text style={styles.modalLabel}>
                   Mã số thuế tổ chức (MST) <Text style={styles.required}>*</Text>
@@ -637,7 +718,7 @@ export const IncomeSourceListScreen: React.FC = () => {
                     setCompanyTaxCode(val);
                     if (formErrors.companyTaxCode) setFormErrors((prev) => ({ ...prev, companyTaxCode: '' }));
                   }}
-                  placeholder="Ví dụ: 0100109107"
+                  placeholder="10 hoặc 13 chữ số"
                   placeholderTextColor={theme.colors.textPlaceholder}
                   keyboardType="number-pad"
                   maxLength={14}
@@ -647,23 +728,22 @@ export const IncomeSourceListScreen: React.FC = () => {
                   <Text style={styles.errorText}>{formErrors.companyTaxCode}</Text>
                 ) : null}
                 <Text style={styles.taxHint}>
-                  💡 MST gồm 10 chữ số (hoặc 13 số chi nhánh, VD: 0100109107).
+                  Mã số thuế gồm 10 chữ số (hoặc 13 số kèm dấu gạch ngang cho chi nhánh).
                 </Text>
               </View>
 
-              {/* Năm tính thuế (taxYear) */}
               <View style={styles.modalInputGroup}>
                 <Text style={styles.modalLabel}>
                   Năm tính thuế <Text style={styles.required}>*</Text>
                 </Text>
                 <TextInput
                   style={[styles.modalInput, formErrors.taxYear && styles.inputError]}
-                  value={String(taxYear)}
+                  value={taxYear ? String(taxYear) : ''}
                   onChangeText={(val) => {
-                    setTaxYear(Number(val) || 0);
+                    setTaxYear(Number(val.replace(/\D/g, '')) || 0);
                     if (formErrors.taxYear) setFormErrors((prev) => ({ ...prev, taxYear: '' }));
                   }}
-                  placeholder="2026"
+                  placeholder="4 chữ số"
                   placeholderTextColor={theme.colors.textPlaceholder}
                   keyboardType="number-pad"
                   maxLength={4}
@@ -674,9 +754,8 @@ export const IncomeSourceListScreen: React.FC = () => {
                 ) : null}
               </View>
 
-              {/* Cặp trường Tổng thu nhập và Thuế đã khấu trừ (totalIncome, taxWithheld) */}
               <View style={styles.modalRowInputs}>
-                <View style={[styles.modalInputGroup, { flex: 1, marginRight: 8 }]}>
+                <View style={[styles.modalInputGroup, styles.halfInputCol]}>
                   <Text style={styles.modalLabel}>Tổng thu nhập (VNĐ)</Text>
                   <TextInput
                     style={[styles.modalInput, formErrors.totalIncome && styles.inputError]}
@@ -685,7 +764,7 @@ export const IncomeSourceListScreen: React.FC = () => {
                       setTotalIncome(val);
                       if (formErrors.totalIncome) setFormErrors((prev) => ({ ...prev, totalIncome: '' }));
                     }}
-                    placeholder="VD: 150000000"
+                    placeholder="0"
                     placeholderTextColor={theme.colors.textPlaceholder}
                     keyboardType="numeric"
                     testID="totalIncomeInput"
@@ -695,7 +774,7 @@ export const IncomeSourceListScreen: React.FC = () => {
                   ) : null}
                 </View>
 
-                <View style={[styles.modalInputGroup, { flex: 1, marginLeft: 8 }]}>
+                <View style={[styles.modalInputGroup, styles.halfInputCol]}>
                   <Text style={styles.modalLabel}>Thuế đã khấu trừ</Text>
                   <TextInput
                     style={[styles.modalInput, formErrors.taxWithheld && styles.inputError]}
@@ -704,7 +783,7 @@ export const IncomeSourceListScreen: React.FC = () => {
                       setTaxWithheld(val);
                       if (formErrors.taxWithheld) setFormErrors((prev) => ({ ...prev, taxWithheld: '' }));
                     }}
-                    placeholder="VD: 15000000"
+                    placeholder="0"
                     placeholderTextColor={theme.colors.textPlaceholder}
                     keyboardType="numeric"
                     testID="taxWithheldInput"
@@ -715,13 +794,12 @@ export const IncomeSourceListScreen: React.FC = () => {
                 </View>
               </View>
 
-              {/* Trạng thái hoạt động (khi sửa) */}
               {editingItem && (
                 <View style={styles.switchRow}>
-                  <View style={{ flex: 1 }}>
+                  <View style={styles.switchTextWrap}>
                     <Text style={styles.switchLabel}>Đang nhận thu nhập từ đơn vị này</Text>
                     <Text style={styles.switchSubtext}>
-                      {isActive ? 'Đơn vị đang tích cực chi trả tiền lương' : 'Đã dừng chi trả / chuyển công tác'}
+                      {isActive ? 'Đơn vị đang chi trả tiền lương định kỳ' : 'Đã dừng chi trả hoặc chuyển công tác'}
                     </Text>
                   </View>
                   <Switch
@@ -734,16 +812,8 @@ export const IncomeSourceListScreen: React.FC = () => {
                 </View>
               )}
 
-              {/* Thông tin hệ thống / lịch sử từ API (khi xem/sửa) */}
               {editingItem && (
                 <View style={styles.systemInfoBox}>
-                  <View style={styles.systemInfoRow}>
-                    <Ionicons name="finger-print-outline" size={13} color={theme.colors.textSecondary} />
-                    <Text style={styles.systemInfoLabel}>Mã bản ghi (ID):</Text>
-                    <Text style={styles.systemInfoValue} numberOfLines={1} ellipsizeMode="middle">
-                      {editingItem.id}
-                    </Text>
-                  </View>
                   <View style={styles.systemInfoRow}>
                     <Ionicons name="calendar-outline" size={13} color={theme.colors.textSecondary} />
                     <Text style={styles.systemInfoLabel}>Ngày khai báo:</Text>
@@ -758,14 +828,13 @@ export const IncomeSourceListScreen: React.FC = () => {
               )}
             </ScrollView>
 
-            {/* Cặp nút Modal */}
             <View style={styles.modalFooter}>
               <TouchableOpacity
                 style={styles.modalCancelBtn}
                 onPress={handleCloseModal}
                 disabled={submitting}
               >
-                <Text style={styles.modalCancelText}>Hủy</Text>
+                <Text style={styles.modalCancelText}>Đóng</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -782,8 +851,47 @@ export const IncomeSourceListScreen: React.FC = () => {
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
+
+      <Dialog
+        visible={!modalVisible && !!crossCheckDialog}
+        title={crossCheckDialog?.title ?? 'Kiểm tra số liệu kê khai'}
+        message={crossCheckDialog?.message ?? ''}
+        detailLabel="Chi tiết đối chiếu"
+        detail={crossCheckDialog?.detail}
+        destructive
+        primaryLabel="Vẫn lưu"
+        secondaryLabel="Xem lại"
+        onPrimary={persistIncomeSource}
+        onSecondary={() => {
+          setCrossCheckDialog(null);
+          setModalVisible(true);
+        }}
+        onRequestClose={() => {
+          setCrossCheckDialog(null);
+          setModalVisible(true);
+        }}
+      />
+
+      <Dialog
+        visible={!modalVisible && !!deleteTarget}
+        title="Xóa nơi chi trả này?"
+        message="Đơn vị này sẽ bị gỡ khỏi danh sách nơi chi trả thu nhập trong kỳ tính thuế."
+        detailLabel="Đơn vị chi trả"
+        detail={
+          deleteTarget
+            ? `${deleteTarget.companyName} · MST ${deleteTarget.companyTaxCode || deleteTarget.companyTaxId || '—'} · Năm ${deleteTarget.taxYear || 2026}`
+            : undefined
+        }
+        destructive
+        primaryLabel="Xóa đơn vị"
+        secondaryLabel="Giữ lại"
+        onPrimary={handleConfirmDelete}
+        onSecondary={() => setDeleteTarget(null)}
+        onRequestClose={() => setDeleteTarget(null)}
+      />
+
       <MainTabBar active="IncomeSourceList" />
     </SafeAreaView>
   );
@@ -794,31 +902,16 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: theme.colors.background,
   },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.sm,
-    backgroundColor: theme.colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
+  mainConstraint: {
+    width: '100%',
+    maxWidth: 720,
+    alignSelf: 'center',
   },
-  headerSide: {
-    width: 40,
-    height: 40,
-  },
-  backBtn: {
-    width: 40,
-    height: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerTitle: {
-    ...theme.typography.titleMedium,
-    color: theme.colors.primary,
-    fontWeight: '700',
-    letterSpacing: 0.5,
+  yearlyContainer: {
+    flex: 1,
+    width: '100%',
+    maxWidth: 720,
+    alignSelf: 'center',
   },
   addHeaderBtn: {
     width: 44,
@@ -870,49 +963,15 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.primary,
     borderRadius: 10,
     paddingVertical: 10,
+    paddingHorizontal: 12,
     marginHorizontal: 22,
     marginTop: 10,
   },
   voucherBtnText: {
+    flexShrink: 1,
     fontFamily: fonts.bodySemi,
     fontSize: 14,
     color: theme.colors.primary,
-  },
-  banner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FDF7E7',
-    borderWidth: 1,
-    borderColor: '#E8DED1',
-    marginHorizontal: theme.spacing.md,
-    marginTop: theme.spacing.md,
-    padding: theme.spacing.md,
-    borderRadius: theme.borderRadius.md,
-  },
-  bannerIconBox: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: theme.spacing.md,
-    borderWidth: 1,
-    borderColor: '#E8DED1',
-  },
-  bannerTextBox: {
-    flex: 1,
-  },
-  bannerTitle: {
-    ...theme.typography.bodyMedium,
-    fontWeight: '700',
-    color: theme.colors.primary,
-  },
-  bannerDesc: {
-    ...theme.typography.caption,
-    color: theme.colors.textSecondary,
-    marginTop: 2,
-    lineHeight: 16,
   },
   yearFilterRow: {
     flexDirection: 'row',
@@ -921,8 +980,8 @@ const styles = StyleSheet.create({
     marginTop: 14,
   },
   yearFilterLabel: {
+    fontFamily: fonts.bodySemi,
     fontSize: 13,
-    fontWeight: '600',
     color: theme.colors.textSecondary,
     marginRight: 8,
   },
@@ -942,55 +1001,25 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.primary,
   },
   yearChipText: {
+    fontFamily: fonts.bodySemi,
     fontSize: 12,
-    fontWeight: '600',
     color: theme.colors.textSecondary,
   },
   yearChipTextSelected: {
     color: '#FFFFFF',
-    fontWeight: '700',
+    fontFamily: fonts.bodyBold,
   },
   summaryCard: {
     marginHorizontal: 22,
     marginTop: 18,
     alignItems: 'center',
   },
-  summaryHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: '#F5EFE6',
-    paddingBottom: 8,
-    marginBottom: 8,
-  },
-  summaryHeaderLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
   summaryTitle: {
     fontFamily: fonts.bodyMedium,
     fontSize: 12,
     lineHeight: 16,
     color: '#5A4A22',
-  },
-  summaryCount: {
-    fontSize: 12,
-    color: theme.colors.textSecondary,
-    fontWeight: '500',
-  },
-  summaryMetricsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  summaryMetricItem: {
-    flex: 1,
-  },
-  summaryMetricLabel: {
-    fontSize: 11,
-    color: theme.colors.textSecondary,
-    marginBottom: 2,
+    textAlign: 'center',
   },
   summaryIncomeValue: {
     fontFamily: fonts.serifBold,
@@ -998,6 +1027,8 @@ const styles = StyleSheet.create({
     lineHeight: 38,
     color: theme.colors.primaryDark,
     marginTop: 4,
+    maxWidth: '100%',
+    textAlign: 'center',
   },
   summaryTaxValue: {
     fontFamily: fonts.body,
@@ -1011,12 +1042,6 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
     marginTop: 16,
   },
-  summaryDivider: {
-    width: 1,
-    height: 28,
-    backgroundColor: '#E8DED1',
-    marginHorizontal: 12,
-  },
   searchContainer: {
     paddingHorizontal: 22,
     paddingTop: 16,
@@ -1027,12 +1052,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
-    height: 40,
+    minHeight: 40,
+  },
+  searchIcon: {
+    marginRight: 8,
   },
   searchInput: {
     flex: 1,
+    fontFamily: fonts.body,
     fontSize: 14,
     color: theme.colors.textPrimary,
+    paddingVertical: 6,
   },
   loadingContainer: {
     flex: 1,
@@ -1061,19 +1091,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-start',
   },
-  companyAvatarBox: {
-    width: 44,
-    height: 44,
-    borderRadius: 10,
-    backgroundColor: '#FAF5EE',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-    borderWidth: 1,
-    borderColor: '#E8DED1',
-  },
   cardMainInfo: {
     flex: 1,
+    flexShrink: 1,
   },
   ledgerIndex: {
     width: 28,
@@ -1101,74 +1121,15 @@ const styles = StyleSheet.create({
   statusInactiveText: {
     color: '#888888',
   },
-  taxBadgeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginTop: 6,
-  },
-  taxBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#FAF5EE',
-    borderWidth: 1,
-    borderColor: '#E8DED1',
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  taxCodeText: {
-    ...theme.typography.caption,
-    fontWeight: '600',
-    color: theme.colors.primary,
-    marginLeft: 4,
-  },
-  yearBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#E3F2FD',
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-    borderRadius: 6,
-    gap: 3,
-  },
-  yearBadgeText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#1565C0',
-  },
-  statusChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-  },
-  statusActive: {
-    backgroundColor: '#E8F5E9',
-  },
-  statusInactive: {
-    backgroundColor: '#F5F5F5',
-  },
-  statusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    marginRight: 4,
-  },
-  statusText: {
-    fontSize: 11,
-    fontWeight: '600',
-  },
   financialRow: {
     flexDirection: 'row',
     marginLeft: 28,
     marginTop: 6,
-    gap: 16,
+    gap: 12,
   },
   financialCol: {
     flex: 1,
+    flexShrink: 1,
   },
   financialLabel: {
     fontFamily: fonts.body,
@@ -1188,28 +1149,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 22,
     color: theme.colors.textPrimary,
-  },
-  financialDivider: {
-    width: 1,
-    height: 24,
-    backgroundColor: '#E8DED1',
-    marginHorizontal: 8,
-  },
-  cardMetaBox: {
-    marginTop: 10,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: '#F5EFE6',
-  },
-  metaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  metaLabel: {
-    ...theme.typography.caption,
-    color: theme.colors.textSecondary,
-    marginLeft: 4,
-    marginRight: 6,
   },
   metaValue: {
     marginLeft: 28,
@@ -1246,32 +1185,14 @@ const styles = StyleSheet.create({
     color: '#BBBBBB',
   },
   listHeaderBar: {
-    paddingHorizontal: theme.spacing.md,
+    paddingHorizontal: 22,
     paddingBottom: 8,
-  },
-  listHeaderTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
   },
   listHeaderTitle: {
     fontFamily: fonts.serifBold,
     fontSize: 18,
     lineHeight: 24,
     color: theme.colors.textPrimary,
-  },
-  totalBadge: {
-    backgroundColor: '#FAF5EE',
-    borderWidth: 1,
-    borderColor: '#E8DED1',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 12,
-  },
-  totalBadgeText: {
-    ...theme.typography.caption,
-    fontWeight: '600',
-    color: theme.colors.primary,
   },
   listHeaderSubtext: {
     ...theme.typography.caption,
@@ -1284,22 +1205,12 @@ const styles = StyleSheet.create({
     paddingVertical: 48,
     paddingHorizontal: 24,
   },
-  emptyIconCircle: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
-    backgroundColor: '#FAF5EE',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#E8DED1',
-  },
   emptyTitle: {
     ...theme.typography.titleMedium,
     color: theme.colors.textPrimary,
     fontWeight: '700',
     marginBottom: 8,
+    textAlign: 'center',
   },
   emptySubtext: {
     ...theme.typography.bodySmall,
@@ -1311,10 +1222,14 @@ const styles = StyleSheet.create({
   emptyAddBtn: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: theme.colors.primary,
     paddingHorizontal: 20,
     paddingVertical: 12,
     borderRadius: theme.borderRadius.md,
+  },
+  emptyAddIcon: {
+    marginRight: 6,
   },
   emptyAddBtnText: {
     ...theme.typography.bodyMedium,
@@ -1327,6 +1242,9 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   modalCard: {
+    width: '100%',
+    maxWidth: 560,
+    alignSelf: 'center',
     backgroundColor: theme.colors.surface,
     borderTopLeftRadius: theme.borderRadius.lg,
     borderTopRightRadius: theme.borderRadius.lg,
@@ -1344,6 +1262,7 @@ const styles = StyleSheet.create({
     ...theme.typography.titleMedium,
     fontWeight: '700',
     color: theme.colors.textPrimary,
+    flexShrink: 1,
   },
   modalBody: {
     padding: theme.spacing.md,
@@ -1353,6 +1272,12 @@ const styles = StyleSheet.create({
   },
   modalRowInputs: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  halfInputCol: {
+    flex: 1,
+    minWidth: 132,
   },
   modalLabel: {
     ...theme.typography.bodySmall,
@@ -1370,6 +1295,7 @@ const styles = StyleSheet.create({
     borderRadius: theme.borderRadius.md,
     paddingHorizontal: 12,
     paddingVertical: 10,
+    fontFamily: fonts.body,
     fontSize: 14,
     color: theme.colors.textPrimary,
   },
@@ -1398,6 +1324,11 @@ const styles = StyleSheet.create({
     marginBottom: 14,
     borderWidth: 1,
     borderColor: theme.colors.border,
+    gap: 10,
+  },
+  switchTextWrap: {
+    flex: 1,
+    flexShrink: 1,
   },
   switchLabel: {
     ...theme.typography.bodySmall,
@@ -1416,11 +1347,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#EEEEEE',
     marginTop: 4,
+    gap: 4,
   },
   systemInfoRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 4,
+    flexWrap: 'wrap',
   },
   systemInfoLabel: {
     ...theme.typography.caption,
@@ -1432,7 +1364,7 @@ const styles = StyleSheet.create({
     ...theme.typography.caption,
     fontWeight: '600',
     color: theme.colors.textPrimary,
-    flex: 1,
+    flexShrink: 1,
   },
   modalFooter: {
     flexDirection: 'row',

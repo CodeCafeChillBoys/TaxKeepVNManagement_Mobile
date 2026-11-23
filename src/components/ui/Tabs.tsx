@@ -21,8 +21,9 @@ export const Tabs: React.FC<TabsProps> = ({
   children,
   style,
 }) => {
+  const ctxValue = React.useMemo(() => ({ value, onValueChange }), [value, onValueChange]);
   return (
-    <TabsContext.Provider value={{ value, onValueChange }}>
+    <TabsContext.Provider value={ctxValue}>
       <View style={[styles.tabs, style]}>{children}</View>
     </TabsContext.Provider>
   );
@@ -149,6 +150,8 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '500',
     color: '#64748B', // slate-500
+    flexShrink: 1,
+    textAlign: 'center',
   },
   tabsTriggerTextSelected: {
     color: '#0F172A', // slate-900

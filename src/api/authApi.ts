@@ -36,9 +36,25 @@ export interface ChangePasswordRequest {
   confirmNewPassword: string;
 }
 
+export interface ResetPasswordPayload {
+  token: string;
+  newPassword: string;
+  confirmNewPassword: string;
+}
+
+export interface RegisterResponseData {
+  userId?: string;
+  fullName?: string;
+  email?: string;
+  citizenId?: string;
+  userRole?: string;
+  isVerified?: boolean;
+  requiresEmailVerification?: boolean;
+}
+
 export const authApi = {
-  // Đăng ký tài khoản mới (POST /api/auth/register)
-  async register(data: RegisterFormData): Promise<ApiResponse<any>> {
+  // Đăng ký tài khoản mới (POST /api/v1/auth/register)
+  async register(data: RegisterFormData): Promise<ApiResponse<RegisterResponseData>> {
     const payload = {
       citizenId: data.citizenId,
       fullName: data.fullName,
@@ -49,7 +65,55 @@ export const authApi = {
       address: data.address || null,
     };
 
-    const res = await apiClient.post<ApiResponse<any>>('/api/v1/auth/register', payload);
+    const res = await apiClient.post<ApiResponse<RegisterResponseData>>(
+      '/api/v1/auth/register',
+      payload
+    );
+    return res.data;
+  },
+
+  // 1. Xác minh email (GET /api/v1/auth/verify-email?token=string)
+  async verifyEmail(token: string): Promise<ApiResponse<any>> {
+    const res = await apiClient.get<ApiResponse<any>>('/api/v1/auth/verify-email', {
+      params: { token: token.trim() },
+    });
+    return res.data;
+  },
+
+  // 2. Gửi lại mail xác minh (POST /api/v1/auth/resend-verification)
+  async resendVerification(email: string): Promise<ApiResponse<any>> {
+    const res = await apiClient.post<ApiResponse<any>>('/api/v1/auth/resend-verification', {
+      email: email.trim().toLowerCase(),
+    });
+    return res.data;
+  },
+
+  // 3. Yêu cầu quên mật khẩu (POST /api/v1/auth/forgot-password)
+  async forgotPassword(email: string): Promise<ApiResponse<any>> {
+    const res = await apiClient.post<ApiResponse<any>>('/api/v1/auth/forgot-password', {
+      email: email.trim().toLowerCase(),
+    });
+    return res.data;
+  },
+
+  // 4. Validate token đặt lại mật khẩu (GET /api/v1/auth/validate-reset-token?token=string)
+  async validateResetToken(token: string): Promise<ApiResponse<{ valid?: boolean }>> {
+    const res = await apiClient.get<ApiResponse<{ valid?: boolean }>>(
+      '/api/v1/auth/validate-reset-token',
+      {
+        params: { token: token.trim() },
+      }
+    );
+    return res.data;
+  },
+
+  // 5. Đặt lại mật khẩu mới (POST /api/v1/auth/reset-password)
+  async resetPassword(data: ResetPasswordPayload): Promise<ApiResponse<any>> {
+    const res = await apiClient.post<ApiResponse<any>>('/api/v1/auth/reset-password', {
+      token: data.token.trim(),
+      newPassword: data.newPassword,
+      confirmNewPassword: data.confirmNewPassword,
+    });
     return res.data;
   },
 

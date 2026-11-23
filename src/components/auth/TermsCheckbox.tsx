@@ -1,7 +1,8 @@
-import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Alert } from 'react-native';
+import React, { useState, useCallback } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
+import { Dialog } from '../common/Dialog';
 
 interface TermsCheckboxProps {
   checked: boolean;
@@ -9,18 +10,14 @@ interface TermsCheckboxProps {
   error?: string;
 }
 
-export const TermsCheckbox: React.FC<TermsCheckboxProps> = ({
+export const TermsCheckbox: React.FC<TermsCheckboxProps> = React.memo(({
   checked,
   onToggle,
   error,
 }) => {
-  const showTermsModal = (type: 'terms' | 'privacy') => {
-    Alert.alert(
-      type === 'terms' ? 'Điều khoản sử dụng' : 'Chính sách bảo mật',
-      'Ứng dụng TaxKeep VN cam kết bảo mật toàn bộ dữ liệu người nộp thuế theo đúng Nghị định 13/2023/NĐ-CP về bảo vệ dữ liệu cá nhân. Thông tin chỉ được sử dụng cho mục đích kê khai và quyết toán thuế.',
-      [{ text: 'Đóng', style: 'cancel' }]
-    );
-  };
+  const [modalType, setModalType] = useState<'terms' | 'privacy' | null>(null);
+
+  const handleClose = useCallback(() => setModalType(null), []);
 
   return (
     <View style={styles.container}>
@@ -37,11 +34,11 @@ export const TermsCheckbox: React.FC<TermsCheckboxProps> = ({
         <View style={styles.textContainer}>
           <Text style={styles.text}>
             Tôi đồng ý với{' '}
-            <Text style={styles.link} onPress={() => showTermsModal('terms')}>
+            <Text style={styles.link} onPress={() => setModalType('terms')}>
               Điều khoản sử dụng
             </Text>{' '}
             và{' '}
-            <Text style={styles.link} onPress={() => showTermsModal('privacy')}>
+            <Text style={styles.link} onPress={() => setModalType('privacy')}>
               Chính sách bảo mật
             </Text>
             <Text style={styles.required}> *</Text>
@@ -50,9 +47,18 @@ export const TermsCheckbox: React.FC<TermsCheckboxProps> = ({
       </View>
 
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+      <Dialog
+        visible={modalType !== null}
+        title={modalType === 'terms' ? 'Điều khoản sử dụng dịch vụ' : 'Chính sách bảo mật dữ liệu'}
+        message="TaxKeep VN bảo mật toàn bộ thông tin người nộp thuế theo Nghị định 13/2023/NĐ-CP về bảo vệ dữ liệu cá nhân. Dữ liệu chỉ phục vụ cho việc kê khai, quyết toán và tư vấn thuế của bạn."
+        primaryLabel="Đã hiểu"
+        onPrimary={handleClose}
+        onRequestClose={handleClose}
+      />
     </View>
   );
-};
+});
 
 const styles = StyleSheet.create({
   container: {
@@ -80,6 +86,7 @@ const styles = StyleSheet.create({
   },
   textContainer: {
     flex: 1,
+    flexShrink: 1,
   },
   text: {
     ...theme.typography.bodyMedium,

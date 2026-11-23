@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -16,17 +16,15 @@ import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
 import { incomeApi } from '../../api/incomeApi';
 import { IncomeCompanyGroup, IncomeMonthItem } from '../../types/income';
 import { RootNavigationProp } from '../../navigation/types';
+import { sanitizeUiMessage } from '../../utils/friendlyError';
 import { extractApiErrorMessage } from './incomeFormUtils';
 import { QuarterIncomeTable } from '../../components/income/QuarterIncomeTable';
 
 const YEAR_OPTIONS = [2026, 2025, 2024];
 
 const vnd = (n?: number | null) => `${Number(n ?? 0).toLocaleString('vi-VN')} đ`;
+const groupKey = (g: IncomeCompanyGroup) => `${g.taxIdNumber ?? ''}|${g.organizationName}`;
 
-/**
- * Thu nhập theo tháng (bảng incomes): nhóm theo tổ chức chi trả → các tháng.
- * Hiển thị trong tab "Thu nhập" ở chế độ "Theo tháng".
- */
 export function MonthlyIncomePanel() {
   const navigation = useNavigation<RootNavigationProp>();
   const [year, setYear] = useState<number>(2026);
@@ -36,162 +34,203 @@ export function MonthlyIncomePanel() {
   const [error, setError] = useState('');
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   const load = useCallback(
     async (isRefresh = false) => {
       if (isRefresh) setRefreshing(true);
       else setLoading(true);
       try {
-        setGroups(await incomeApi.getMyIncomes(year));
+        const data = await incomeApi.getMyIncomes(year);
+        if (!isMountedRef.current) return;
+        setGroups(data);
         setError('');
       } catch (err) {
-        setError(extractApiErrorMessage(err, 'Không tải được danh sách thu nhập theo tháng.'));
+        if (!isMountedRef.current) return;
+        const fallback = 'Không tải được danh sách thu nhập theo tháng. Vui lòng thử lại.';
+        setError(sanitizeUiMessage(extractApiErrorMessage(err, fallback), fallback));
       } finally {
-        setLoading(false);
-        setRefreshing(false);
+        if (isMountedRef.current) {
+          setLoading(false);
+          setRefreshing(false);
+        }
       }
     },
     [year]
   );
 
-  // Tải lại mỗi khi quay về từ màn hình thêm/sửa
   useFocusEffect(
     useCallback(() => {
       load();
     }, [load])
   );
 
-  const totals = groups.reduce(
-    (acc, g) => {
-      for (const d of g.details) {
-        acc.income += d.totalTaxableIncome;
-        acc.insurance += d.insuranceDeducted;
-        acc.tax += d.taxAlreadyDeducted;
-        acc.months += 1;
-      }
-      return acc;
-    },
-    { income: 0, insurance: 0, tax: 0, months: 0 }
+  const totals = useMemo(
+    () =>
+      groups.reduce(
+        (acc, g) => {
+          for (const d of g.details) {
+            acc.income += d.totalTaxableIncome;
+            acc.insurance += d.insuranceDeducted;
+            acc.tax += d.taxAlreadyDeducted;
+            acc.months += 1;
+          }
+          return acc;
+        },
+        { income: 0, insurance: 0, tax: 0, months: 0 }
+      ),
+    [groups]
   );
 
-  const openForm = (item?: IncomeMonthItem) => navigation.navigate('IncomeMonthForm', { year, item, groups });
-  const groupKey = (g: IncomeCompanyGroup) => `${g.taxIdNumber ?? ''}|${g.organizationName}`;
+  const openForm = useCallback(
+    (item?: IncomeMonthItem) => navigation.navigate('IncomeMonthForm', { year, item, groups }),
+    [navigation, year, groups]
+  );
 
   return (
     <ScrollView
       style={styles.flex}
-      contentContainerStyle={styles.content}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load(true)} colors={[theme.colors.primary]} />}
+      contentContainerStyle={styles.scrollOuter}
+      refreshControl={
+        <RefreshControl refreshing={refreshing} onRefresh={() => load(true)} colors={[theme.colors.primary]} />
+      }
       testID="monthlyIncomeScroll"
     >
-      {/* Năm */}
-      <View style={styles.yearRow}>
-        <Text style={styles.yearLabel}>Năm thu nhập:</Text>
-        {YEAR_OPTIONS.map((y) => (
-          <TouchableOpacity
-            key={y}
-            style={[styles.yearChip, y === year && styles.yearChipOn]}
-            onPress={() => setYear(y)}
-            testID={`monthlyYear_${y}`}
+      <View style={styles.content}>
+        <View style={styles.yearRow}>
+          <Text style={styles.yearLabel}>Năm thu nhập:</Text>
+          {YEAR_OPTIONS.map((y) => (
+            <TouchableOpacity
+              key={y}
+              style={[styles.yearChip, y === year && styles.yearChipOn]}
+              onPress={() => setYear(y)}
+              testID={`monthlyYear_${y}`}
+            >
+              <Text style={[styles.yearChipText, y === year && styles.yearChipTextOn]}>{y}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        <View style={styles.summary} testID="monthlyIncomeSummary">
+          <Text style={styles.summaryTitle}>Tổng thu nhập chịu thuế năm {year}</Text>
+          <Text
+            style={styles.summaryValue}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.7}
           >
-            <Text style={[styles.yearChipText, y === year && styles.yearChipTextOn]}>{y}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+            {vnd(totals.income)}
+          </Text>
+          <Text style={styles.summarySub}>
+            Bảo hiểm đã trích {vnd(totals.insurance)} · Thuế đã khấu trừ {vnd(totals.tax)}
+          </Text>
+          <Text style={styles.summarySub}>
+            {groups.length} nơi chi trả · {totals.months} tháng đã khai
+          </Text>
+          <GoldDoubleRule style={styles.rule} />
+        </View>
 
-      {/* Tổng */}
-      <View style={styles.summary} testID="monthlyIncomeSummary">
-        <Text style={styles.summaryTitle}>Tổng thu nhập chịu thuế năm {year}</Text>
-        <Text style={styles.summaryValue}>{vnd(totals.income)}</Text>
-        <Text style={styles.summarySub}>
-          Bảo hiểm đã trích {vnd(totals.insurance)} · Thuế đã khấu trừ {vnd(totals.tax)}
-        </Text>
-        <Text style={styles.summarySub}>
-          {groups.length} nơi chi trả · {totals.months} tháng đã khai
-        </Text>
-        <GoldDoubleRule style={styles.rule} />
-      </View>
-
-      {/* Hành động */}
-      <View style={styles.actions}>
-        <TouchableOpacity style={styles.primaryBtn} onPress={() => openForm()} testID="addMonthlyIncomeBtn">
-          <Ionicons name="scan-outline" size={18} color="#FFFFFF" />
-          <Text style={styles.primaryBtnText}>Thêm thu nhập tháng</Text>
-        </TouchableOpacity>
-      </View>
-
-      <Text style={styles.actionHint}>Quét ảnh phiếu lương để tự điền, hoặc nhập tay.</Text>
-
-      <View style={styles.note}>
-        <Ionicons name="information-circle-outline" size={14} color="#7A5A14" style={styles.noteIcon} />
-        <Text style={styles.noteText}>
-          Chỉ khai thu nhập chịu thuế đã được tổ chức chi trả bóc tách trên phiếu lương / chứng từ. Khoản chưa bóc tách
-          được thì coi như chịu thuế.
-        </Text>
-      </View>
-
-      {error ? (
-        <View style={styles.errorBox}>
-          <Text style={styles.errorText}>{error}</Text>
-          <TouchableOpacity onPress={() => load()} testID="monthlyRetryBtn">
-            <Text style={styles.retryText}>Thử lại</Text>
+        <View style={styles.actions}>
+          <TouchableOpacity style={styles.primaryBtn} onPress={() => openForm()} testID="addMonthlyIncomeBtn">
+            <Ionicons name="scan-outline" size={18} color="#FFFFFF" />
+            <Text style={styles.primaryBtnText}>Thêm thu nhập tháng</Text>
           </TouchableOpacity>
         </View>
-      ) : null}
 
-      {loading && !refreshing ? (
-        <View style={styles.center}>
-          <ActivityIndicator color={theme.colors.primary} />
-          <Text style={styles.muted}>Đang tải thu nhập theo tháng...</Text>
-        </View>
-      ) : groups.length === 0 && !error ? (
-        <View style={styles.center}>
-          <Text style={styles.emptyTitle}>Chưa có thu nhập tháng nào của năm {year}</Text>
-          <Text style={styles.muted}>Bấm "Thêm tháng" để quét phiếu lương hoặc nhập tay.</Text>
-        </View>
-      ) : (
-        groups.map((g) => {
-          const key = groupKey(g);
-          const open = !!expanded[key];
-          return (
-            <View key={key} style={styles.card} testID={`monthlyGroup_${g.taxIdNumber || g.organizationName}`}>
-              <TouchableOpacity
-                style={styles.cardHead}
-                onPress={() => setExpanded((s) => ({ ...s, [key]: !open }))}
-                accessibilityRole="button"
-              >
-                <View style={styles.cardTitleWrap}>
-                  <Text style={styles.cardTitle}>{g.organizationName}</Text>
-                  <Text style={styles.cardSub}>
-                    {g.taxIdNumber ? `MST ${g.taxIdNumber} · ` : ''}
-                    {g.details.length} tháng
-                  </Text>
-                  <Text style={styles.cardAmount}>{vnd(g.totalIncomeCompany)}</Text>
-                </View>
-                <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={18} color="#999" />
-              </TouchableOpacity>
+        <Text style={styles.actionHint}>Quét ảnh phiếu lương để tự điền, hoặc nhập tay.</Text>
 
-              {/* Bảng theo quý (gộp 3 tháng/dòng) — bấm quý để xem tháng, bấm tháng để xem/sửa */}
-              {open ? (
-                <QuarterIncomeTable
-                  months={g.details}
-                  year={year}
-                  onPressMonth={openForm}
-                  testIDPrefix={`monthly_${g.taxIdNumber || g.organizationName}_`}
-                />
-              ) : null}
-            </View>
-          );
-        })
-      )}
+        <View style={styles.note}>
+          <Ionicons name="information-circle-outline" size={14} color="#7A5A14" style={styles.noteIcon} />
+          <Text style={styles.noteText}>
+            Chỉ khai thu nhập chịu thuế đã được tổ chức chi trả bóc tách trên phiếu lương hoặc chứng từ. Khoản chưa bóc
+            tách riêng được tính vào thu nhập chịu thuế.
+          </Text>
+        </View>
+
+        {error ? (
+          <View style={styles.errorBox}>
+            <Text style={styles.errorText}>{error}</Text>
+            <TouchableOpacity onPress={() => load()} testID="monthlyRetryBtn">
+              <Text style={styles.retryText}>Thử lại</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
+
+        {loading && !refreshing ? (
+          <View style={styles.center}>
+            <ActivityIndicator color={theme.colors.primary} />
+            <Text style={styles.muted}>Đang tải thu nhập theo tháng...</Text>
+          </View>
+        ) : groups.length === 0 && !error ? (
+          <View style={styles.center}>
+            <Text style={styles.emptyTitle}>Chưa có thu nhập tháng nào của năm {year}</Text>
+            <Text style={styles.muted}>Bấm "Thêm thu nhập tháng" để quét phiếu lương hoặc nhập tay.</Text>
+          </View>
+        ) : (
+          groups.map((g) => {
+            const key = groupKey(g);
+            const open = !!expanded[key];
+            return (
+              <View key={key} style={styles.card} testID={`monthlyGroup_${g.taxIdNumber || g.organizationName}`}>
+                <TouchableOpacity
+                  style={styles.cardHead}
+                  onPress={() => setExpanded((s) => ({ ...s, [key]: !open }))}
+                  accessibilityRole="button"
+                >
+                  <View style={styles.cardTitleWrap}>
+                    <Text style={styles.cardTitle}>{g.organizationName}</Text>
+                    <Text style={styles.cardSub}>
+                      {g.taxIdNumber ? `MST ${g.taxIdNumber} · ` : ''}
+                      {g.details.length} tháng
+                    </Text>
+                    <Text
+                      style={styles.cardAmount}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.75}
+                    >
+                      {vnd(g.totalIncomeCompany)}
+                    </Text>
+                  </View>
+                  <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={18} color="#999" />
+                </TouchableOpacity>
+
+                {open ? (
+                  <QuarterIncomeTable
+                    months={g.details}
+                    year={year}
+                    onPressMonth={openForm}
+                    testIDPrefix={`monthly_${g.taxIdNumber || g.organizationName}_`}
+                  />
+                ) : null}
+              </View>
+            );
+          })
+        )}
+      </View>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  content: { paddingHorizontal: 22, paddingBottom: 120, gap: 12 },
+  scrollOuter: { flexGrow: 1 },
+  content: {
+    width: '100%',
+    maxWidth: 720,
+    alignSelf: 'center',
+    paddingHorizontal: 22,
+    paddingBottom: 120,
+    gap: 12,
+  },
   yearRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginTop: 14 },
-  yearLabel: { fontSize: 13, fontWeight: '600', color: theme.colors.textSecondary },
+  yearLabel: { fontFamily: fonts.bodySemi, fontSize: 13, color: theme.colors.textSecondary },
   yearChip: {
     paddingHorizontal: 12,
     paddingVertical: 6,
@@ -200,12 +239,26 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.border,
   },
   yearChipOn: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
-  yearChipText: { fontSize: 12, fontWeight: '600', color: theme.colors.textSecondary },
-  yearChipTextOn: { color: '#FFFFFF', fontWeight: '700' },
+  yearChipText: { fontFamily: fonts.bodySemi, fontSize: 12, color: theme.colors.textSecondary },
+  yearChipTextOn: { color: '#FFFFFF', fontFamily: fonts.bodyBold },
   summary: { alignItems: 'center', marginTop: 6 },
-  summaryTitle: { fontFamily: fonts.bodyMedium, fontSize: 12, color: '#5A4A22' },
-  summaryValue: { fontFamily: fonts.serifBold, fontSize: 30, lineHeight: 36, color: theme.colors.primaryDark, marginTop: 4 },
-  summarySub: { fontFamily: fonts.body, fontSize: 12, color: theme.colors.textSecondary, marginTop: 2, textAlign: 'center' },
+  summaryTitle: { fontFamily: fonts.bodyMedium, fontSize: 12, color: '#5A4A22', textAlign: 'center' },
+  summaryValue: {
+    fontFamily: fonts.serifBold,
+    fontSize: 30,
+    lineHeight: 36,
+    color: theme.colors.primaryDark,
+    marginTop: 4,
+    maxWidth: '100%',
+    textAlign: 'center',
+  },
+  summarySub: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: theme.colors.textSecondary,
+    marginTop: 2,
+    textAlign: 'center',
+  },
   rule: { marginTop: 12, alignSelf: 'stretch' },
   actions: { gap: 8 },
   primaryBtn: {
@@ -244,7 +297,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   cardHead: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 12 },
-  cardTitleWrap: { flex: 1 },
+  cardTitleWrap: { flex: 1, flexShrink: 1 },
   cardTitle: { fontFamily: fonts.bodySemi, fontSize: 14, color: theme.colors.textPrimary },
   cardSub: { marginTop: 2, fontFamily: fonts.body, fontSize: 11, color: theme.colors.textSecondary },
   cardAmount: { marginTop: 4, fontFamily: fonts.bodyBold, fontSize: 15, color: theme.colors.primaryDark },

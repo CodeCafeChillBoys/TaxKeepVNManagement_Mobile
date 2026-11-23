@@ -1,3 +1,4 @@
+import './src/constants/theme';
 import { registerRootComponent } from 'expo';
 
 import App from './App';

@@ -1,0 +1,36 @@
+# Report 3 — Figure 3-19 (a): Book Consultation. Tài khoản người nộp thuế.
+# Flow dừng ở form đặt lịch. Chọn slot, điền form, thanh toán và chụp 3-19b làm tay qua Maestro MCP (xem README, mục 3-19).
+appId: host.exp.exponent
+name: r3_d_book_pay
+tags:
+  - report3
+---
+- runFlow:
+    file: _login.yaml
+    env:
+      LOGIN_ID: ${TAXPAYER_ID}
+      LOGIN_PW: ${TAXPAYER_PW}
+
+- scrollUntilVisible:
+    element:
+      id: homeExpertListCard
+    direction: DOWN
+    timeout: 10000
+- tapOn:
+    id: homeExpertListCard
+- extendedWaitUntil:
+    visible: "Xem & Đặt lịch"
+    timeout: 30000
+# Thẻ đầu tiên; nếu chuyên gia này không còn slot trống thì chọn tay chuyên gia khác
+- tapOn:
+    text: "Xem & Đặt lịch"
+    index: 0
+- extendedWaitUntil:
+    visible: "Đặt lịch tư vấn"
+    timeout: 30000
+- tapOn: "Đặt lịch tư vấn"
+- extendedWaitUntil:
+    visible: "Xác nhận đặt lịch tư vấn"
+    timeout: 30000
+- waitForAnimationToEnd
+- takeScreenshot: screenshots/report3/3-19a-book-consultation-empty

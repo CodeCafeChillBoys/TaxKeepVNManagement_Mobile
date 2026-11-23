@@ -4,6 +4,14 @@ import {
   ValidationErrorItem,
   ValidationErrorCode,
 } from '../../types/expense';
+import { sanitizeUiMessage, toFriendlyError } from '../../utils/friendlyError';
+import { parseForbiddenError } from '../../utils/permissionError';
+
+/** Tỷ lệ 0..1 → phần trăm làm tròn, chặn trong 0..100 (giá trị lỗi coi như 0) */
+export function toPercent(ratio: number): number {
+  const v = Math.round(Number(ratio) * 100);
+  return Number.isFinite(v) ? Math.min(100, Math.max(0, v)) : 0;
+}
 
 /** Danh sách 4 trường cốt lõi theo mục 6.3 của đặc tả */
 export const CRUCIAL_FIELD_NAMES = [
@@ -31,6 +39,32 @@ export function calculateItemsTotal(items: InvoiceLineItem[]): number {
         : (Number(item.quantity) || 0) * (Number(item.unitPrice) || 0);
     return acc + (isNaN(total) ? 0 : total);
   }, 0);
+}
+
+/**
+ * Khởi tạo tổng tiền thực thanh toán của hóa đơn từ dữ liệu BE/OCR.
+ * Giữ nguyên giá trị 0 (VD: hóa đơn học phí/viện phí được tài trợ hoặc BHYT chi trả 100%)
+ * thay vì ghi đè bằng tổng các dòng chi tiết trước chiết khấu/tài trợ.
+ */
+export function resolveInitialInvoiceTotalAmount(
+  initialTotalAmount?: number | string | null,
+  items?: InvoiceLineItem[]
+): number {
+  if (initialTotalAmount !== undefined && initialTotalAmount !== null && initialTotalAmount !== '') {
+    const parsed = Number(initialTotalAmount);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return parsed;
+    }
+  }
+  return calculateItemsTotal(items || []);
+}
+
+/**
+ * Kiểm tra tổng tiền thực thanh toán của hóa đơn có hợp lệ để xác nhận lưu hay không.
+ * Cho phép bằng 0 (hóa đơn được miễn giảm/tài trợ/bảo hiểm chi trả 100%), chỉ chặn số âm hoặc không hợp lệ.
+ */
+export function isValidInvoiceTotalAmount(amount: number | null | undefined): boolean {
+  return typeof amount === 'number' && Number.isFinite(amount) && amount >= 0;
 }
 
 /**
@@ -205,23 +239,99 @@ export function getValidationMatrixErrorDetails(code: ValidationErrorCode | stri
   }
 }
 
+const VIETNAMESE_CHAR_REGEX =
+  /[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/i;
+
+export function sanitizeExpenseServerMessage(raw?: string | null, fallback = ''): string {
+  if (!raw || typeof raw !== 'string') return fallback;
+  const cleaned = sanitizeUiMessage(raw, '')
+    .replace(/\b[a-z]+_[a-z0-9_]+\b/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  if (!cleaned) return fallback;
+  if (!VIETNAMESE_CHAR_REGEX.test(cleaned)) return fallback;
+  if (/\b(exception|stacktrace|axios|typeerror|syntaxerror|referenceerror|http|sql)\b/i.test(cleaned)) {
+    return fallback;
+  }
+  return cleaned;
+}
+
 /**
- * Chuyển đổi mã lỗi và phản hồi từ máy chủ thành thông điệp tiếng Việt thân thiện,
+ * Chuyển đổi mã lỗi và phản hồi từ hệ thống thành thông điệp tiếng Việt thân thiện,
  * chuẩn mực về thuế, tuyệt đối không chứa thuật ngữ IT hoặc mã lỗi kỹ thuật.
  */
 export function parseBackendError(err: any): { title: string; message: string } {
   const status = err?.response?.status;
   const data = err?.response?.data;
-  const errorCode = data?.errorCode;
-  const rawMessage: string = data?.message || err?.message || '';
+  const errorCode = String(data?.errorCode || data?.errors?.errorCode || '').toUpperCase();
+  const rawMessage: string = typeof data?.message === 'string'
+    ? data.message
+    : typeof err?.message === 'string'
+      ? err.message
+      : '';
+  const lowerRaw = rawMessage.toLowerCase();
 
-  // 1. Kỳ quyết toán đã nộp / kết toán và bị khóa
+  // 0a. Lỗi chuyên biệt luồng Bảng kê chi phí KCB (TaxPeriodService.MedicalStatement.cs)
+  if (
+    errorCode === 'ERR_NOT_MEDICAL_RECEIPT' ||
+    lowerRaw.includes('parent document must be a medical receipt')
+  ) {
+    return {
+      title: 'Không phải hóa đơn viện phí',
+      message: 'Chỉ có thể tải bảng kê chi phí KCB cho hóa đơn thuộc loại Hóa đơn viện phí.',
+    };
+  }
+
+  if (
+    errorCode === 'ERR_MEDICAL_STATEMENT_TYPE_NOT_CONFIGURED' ||
+    lowerRaw.includes('configure the medical statement document type')
+  ) {
+    return {
+      title: 'Chưa cấu hình loại bảng kê',
+      message: 'Hệ thống chưa cấu hình loại chứng từ bảng kê chi phí KCB. Vui lòng liên hệ quản trị viên.',
+    };
+  }
+
+  if (
+    errorCode === 'ERR_INVALID_STATUS' ||
+    lowerRaw.includes('already been extracted or verified')
+  ) {
+    return {
+      title: 'Không thể thay đổi chứng từ',
+      message: 'Chứng từ hoặc bảng kê đã được xác nhận nên không thể chỉnh sửa hay tải đè.',
+    };
+  }
+
+  if (errorCode === 'OCR_QUOTA_EXCEEDED' || errorCode === 'QUOTA_EXCEEDED') {
+    return {
+      title: 'Đã hết lượt quét OCR',
+      message: 'Bạn đã sử dụng hết lượt quét OCR trong gói hiện tại. Vui lòng nâng cấp gói để tiếp tục.',
+    };
+  }
+
+  // 0. Phiên đăng nhập hết hạn
+  if (status === 401 || errorCode === 'UNAUTHORIZED' || errorCode === 'ERR_UNAUTHORIZED') {
+    return {
+      title: 'Phiên đăng nhập đã hết hạn',
+      message: 'Vui lòng đăng nhập lại để tiếp tục kê khai và quản lý chứng từ thuế.',
+    };
+  }
+
+  // 1. Phân biệt rõ lỗi 403 do Kỳ quyết toán đã khóa vs 403 do thiếu quyền truy cập (RBAC)
   if (
     status === 403 ||
     errorCode === 'FORBIDDEN' ||
-    rawMessage.toLowerCase().includes('submitted') ||
-    rawMessage.toLowerCase().includes('locked')
+    errorCode === 'ERR_TAX_PERIOD_LOCKED'
   ) {
+    const forbidden = parseForbiddenError(err);
+    if (forbidden) {
+      return {
+        title: forbidden.title,
+        message: forbidden.message,
+      };
+    }
+  }
+  if (lowerRaw.includes('submitted') || lowerRaw.includes('locked')) {
     return {
       title: 'Kỳ tính thuế đã khóa',
       message: 'Hồ sơ kỳ tính thuế này đã hoàn tất quyết toán và nộp cho cơ quan thuế. Bạn không thể tải thêm hoặc sửa đổi chứng từ.',
@@ -231,8 +341,8 @@ export function parseBackendError(err: any): { title: string; message: string } 
   // 2. Không đúng định dạng tệp
   if (
     errorCode === 'UNSUPPORTED_FORMAT' ||
-    rawMessage.toLowerCase().includes('unsupported') ||
-    rawMessage.toLowerCase().includes('only jpg, png')
+    lowerRaw.includes('unsupported') ||
+    lowerRaw.includes('only jpg, png')
   ) {
     return {
       title: 'Định dạng tệp không hợp lệ',
@@ -242,9 +352,10 @@ export function parseBackendError(err: any): { title: string; message: string } 
 
   // 3. Dung lượng tệp vượt quá 10MB
   if (
+    status === 413 ||
     errorCode === 'FILE_SIZE_EXCEEDED' ||
-    rawMessage.toLowerCase().includes('10mb') ||
-    rawMessage.toLowerCase().includes('exceeded')
+    lowerRaw.includes('10mb') ||
+    lowerRaw.includes('exceeded')
   ) {
     return {
       title: 'Dung lượng tệp quá lớn',
@@ -255,7 +366,8 @@ export function parseBackendError(err: any): { title: string; message: string } 
   // 4. Chưa có tệp
   if (
     errorCode === 'FILES_REQUIRED' ||
-    rawMessage.toLowerCase().includes('required')
+    lowerRaw.includes('files required') ||
+    lowerRaw.includes('file is required')
   ) {
     return {
       title: 'Thiếu tệp chứng từ',
@@ -268,8 +380,8 @@ export function parseBackendError(err: any): { title: string; message: string } 
     status === 409 ||
     errorCode === 'ERR_DUPLICATE_DOCUMENT' ||
     errorCode === 'DUPLICATE_DOCUMENT' ||
-    rawMessage.toLowerCase().includes('duplicate') ||
-    rawMessage.toLowerCase().includes('already exists')
+    lowerRaw.includes('duplicate') ||
+    lowerRaw.includes('already exists')
   ) {
     return {
       title: 'Hóa đơn đã tồn tại',
@@ -284,26 +396,34 @@ export function parseBackendError(err: any): { title: string; message: string } 
   ) {
     return {
       title: 'Thông tin người mua không khớp',
-      message: rawMessage || 'Thông tin người mua trên hóa đơn không trùng khớp với Người nộp thuế hoặc Người phụ thuộc đã đăng ký.',
+      message: sanitizeExpenseServerMessage(
+        rawMessage,
+        'Thông tin người mua trên hóa đơn không trùng khớp với Người nộp thuế hoặc Người phụ thuộc đã đăng ký.'
+      ),
     };
   }
 
   // 7. Loại chứng từ không hợp lệ
   if (
     errorCode === 'INVALID_DOC_TYPE' ||
+    errorCode === 'ERR_INVALID_DOC_TYPE' ||
     rawMessage.includes('loại chứng từ')
   ) {
     return {
       title: 'Danh mục chi phí không hợp lệ',
-      message: rawMessage || 'Mã danh mục chi phí không tồn tại trong hệ thống quy định.',
+      message: sanitizeExpenseServerMessage(
+        rawMessage,
+        'Danh mục chi phí này chưa nằm trong nhóm được phép giảm trừ thuế theo quy định.'
+      ),
     };
   }
 
-  // 8. Không tìm thấy kỳ tính thuế
+  // 8. Không tìm thấy kỳ tính thuế / chứng từ
   if (
     status === 404 ||
     errorCode === 'NOT_FOUND' ||
-    rawMessage.toLowerCase().includes('not found')
+    errorCode === 'ERR_DOCUMENT_NOT_FOUND' ||
+    lowerRaw.includes('not found')
   ) {
     return {
       title: 'Không tìm thấy dữ liệu',
@@ -311,24 +431,51 @@ export function parseBackendError(err: any): { title: string; message: string } 
     };
   }
 
-  // 9. Lỗi máy chủ 500
-  if (status === 500 || errorCode === 'INTERNAL_SERVER_ERROR') {
+  // 9. Quá nhiều thao tác liên tiếp
+  if (status === 429) {
     return {
-      title: 'Hệ thống đang bận',
-      message: 'Máy chủ đang gặp trục trặc khi tiếp nhận và xử lý tệp. Vui lòng kiểm tra lại ảnh chụp rõ nét hoặc thử lại sau.',
+      title: 'Thao tác quá nhanh',
+      message: 'Bạn vừa thực hiện nhiều thao tác liên tiếp. Vui lòng chờ ít giây rồi thử lại.',
     };
   }
 
-  // 10. Mất kết nối mạng
-  if (err?.code === 'ECONNABORTED' || err?.message?.toLowerCase().includes('network') || !err?.response) {
+  // 10. Lỗi hệ thống 500+
+  if ((typeof status === 'number' && status >= 500) || errorCode === 'INTERNAL_SERVER_ERROR') {
     return {
-      title: 'Lỗi kết nối mạng',
-      message: 'Không thể kết nối đến máy chủ. Vui lòng kiểm tra kết nối mạng của bạn.',
+      title: 'Hệ thống đang tạm bận',
+      message: 'Hệ thống đang tạm gián đoạn khi xử lý chứng từ. Vui lòng kiểm tra lại chất lượng ảnh hoặc thử lại sau ít phút.',
     };
   }
 
+  // 11. Mất kết nối mạng
+  if (
+    err?.code === 'ECONNABORTED' ||
+    err?.code === 'ERR_NETWORK' ||
+    err?.code === 'ETIMEDOUT' ||
+    lowerRaw.includes('network') ||
+    lowerRaw.includes('timeout') ||
+    lowerRaw.includes('failed to fetch') ||
+    (err?.request && !err?.response)
+  ) {
+    return {
+      title: 'Kết nối mạng bị gián đoạn',
+      message: 'Không thể kết nối đến hệ thống lúc này. Vui lòng kiểm tra Wi-Fi hoặc dữ liệu di động rồi thử lại.',
+    };
+  }
+
+  // 12. Fallback an toàn: giữ thông báo tiếng Việt hợp lệ hoặc dùng bản dịch thân thiện, không bao giờ lộ err.message tiếng Anh/kỹ thuật
+  const fallbackMessage = 'Chưa thể xử lý hóa đơn chứng từ lúc này. Vui lòng kiểm tra lại thông tin và thử lại.';
+  const safeDirect = sanitizeExpenseServerMessage(rawMessage, '');
+  if (safeDirect) {
+    return {
+      title: 'Chưa thể xử lý chứng từ',
+      message: safeDirect,
+    };
+  }
+
+  const friendly = toFriendlyError(err, 'Chưa thể xử lý chứng từ', fallbackMessage);
   return {
-    title: 'Tải lên không thành công',
-    message: rawMessage || 'Có lỗi xảy ra khi xử lý hóa đơn chứng từ. Vui lòng thử lại.',
+    title: sanitizeExpenseServerMessage(friendly.title, 'Chưa thể xử lý chứng từ'),
+    message: sanitizeExpenseServerMessage(friendly.message, fallbackMessage),
   };
 }

@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, memo } from 'react';
 import {
   View,
   Text,
@@ -7,8 +7,6 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
-  Alert,
-  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -18,42 +16,53 @@ import { fonts } from '../../constants/fonts';
 import { profileApi, UserProfileResponse } from '../../api/profileApi';
 import { RootNavigationProp } from '../../navigation/types';
 import { useAuthStore } from '../../stores/useAuthStore';
+import { useThemeStore, DARK_COLORS, LIGHT_COLORS } from '../../stores/useThemeStore';
 import { MainTabBar } from '../../components/navigation/MainTabBar';
 import { DrumHeader } from '../../components/brand/DrumHeader';
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
 import { formatPersonName } from '../../utils/formatPersonName';
-import { Dialog } from '../../components/common/Dialog';
+import { toFriendlyErrorMessage } from '../../utils/friendlyError';
+import { sanitizeProfileAddress } from '../../constants/vietnamProvinces';
+
+const Field = memo(function Field({
+  label,
+  value,
+  isDark,
+  last,
+}: {
+  label: string;
+  value?: string | null;
+  isDark?: boolean;
+  last?: boolean;
+}) {
+  const palette = isDark ? DARK_COLORS : LIGHT_COLORS;
+  return (
+    <View
+      style={[
+        styles.fieldRow,
+        { borderBottomColor: palette.border },
+        last && styles.fieldRowLast,
+      ]}
+    >
+      <Text style={[styles.fieldLabel, { color: palette.textSecondary }]}>{label}</Text>
+      <Text style={[styles.fieldValue, { color: palette.textPrimary }]}>
+        {value || 'Chưa cập nhật'}
+      </Text>
+    </View>
+  );
+});
 
 export const ProfileScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
-  const logout = useAuthStore((s) => s.logout);
-  const authUser = useAuthStore((s) => s.user);
+  const isDark = useThemeStore((s) => s.isDark);
+  const palette = isDark ? DARK_COLORS : LIGHT_COLORS;
+
   const [profile, setProfile] = useState<UserProfileResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
-  const currentRole = (profile?.userRole || authUser?.role || '').toLowerCase();
-  const isExpert = currentRole === 'expert' || currentRole.includes('expert');
-
-  const [showLogoutDialog, setShowLogoutDialog] = useState<boolean>(false);
-
-  const handleLogout = () => {
-    setShowLogoutDialog(true);
-  };
-
-  const handleConfirmLogout = async () => {
-    setShowLogoutDialog(false);
-    try {
-      await logout();
-    } catch (e) {
-      console.warn('Logout error:', e);
-    } finally {
-      navigation.replace('Login');
-    }
-  };
-
-  const fetchProfile = async (isPullRefresh = false) => {
+  const fetchProfile = useCallback(async (isPullRefresh = false, isAlive?: () => boolean) => {
     try {
       if (isPullRefresh) {
         setRefreshing(true);
@@ -62,63 +71,79 @@ export const ProfileScreen: React.FC = () => {
       }
       setError(null);
       const data = await profileApi.getProfile();
+      if (isAlive && !isAlive()) return;
       setProfile(data);
-      if (data?.userRole && authUser && authUser.role !== data.userRole) {
+      const currentAuthUser = useAuthStore.getState().user;
+      if (data?.userRole && currentAuthUser && currentAuthUser.role !== data.userRole) {
         useAuthStore.setState({
           user: {
-            ...authUser,
+            ...currentAuthUser,
             role: data.userRole,
           },
         });
       }
     } catch (err: any) {
-      const authUser = useAuthStore.getState().user;
-      if (authUser) {
+      if (isAlive && !isAlive()) return;
+      const fallbackUser = useAuthStore.getState().user;
+      if (fallbackUser) {
         setProfile({
-          userId: authUser.id,
-          citizenId: authUser.citizenId,
-          fullName: authUser.fullName,
-          email: authUser.email,
-          userRole: authUser.role || 'TAXPAYER',
+          userId: fallbackUser.id,
+          citizenId: fallbackUser.citizenId,
+          fullName: fallbackUser.fullName,
+          email: fallbackUser.email,
+          userRole: fallbackUser.role || 'TAXPAYER',
           isVerified: true,
           status: 'ACTIVE',
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         });
       } else {
-        const msg = err.response?.data?.message || 'Không thể tải thông tin hồ sơ cá nhân.';
-        setError(msg);
+        setError(toFriendlyErrorMessage(err, 'Không thể tải thông tin hồ sơ cá nhân.'));
       }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (!isAlive || isAlive()) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
-  };
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
-      fetchProfile();
-    }, [])
+      let alive = true;
+      void fetchProfile(false, () => alive);
+      return () => {
+        alive = false;
+      };
+    }, [fetchProfile])
   );
 
-  const handleEdit = (autoFocusTaxId = false) => {
-    navigation.navigate('EditProfile', { autoFocusTaxId });
-  };
+  const handleEdit = useCallback(
+    (autoFocusTaxId = false) => {
+      navigation.navigate('EditProfile', { autoFocusTaxId });
+    },
+    [navigation]
+  );
 
-  const goBack = () => {
+  const goBack = useCallback(() => {
     if (navigation.canGoBack()) navigation.goBack();
     else navigation.navigate('Home');
-  };
+  }, [navigation]);
 
   const displayName = formatPersonName(profile?.fullName) || 'Người nộp thuế';
 
   if (loading && !refreshing) {
     return (
-      <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
-        <DrumHeader title="Tài khoản" onBack={goBack} />
+      <SafeAreaView
+        style={[styles.safeArea, { backgroundColor: palette.background }]}
+        edges={['top', 'left', 'right']}
+      >
+        <DrumHeader title="Cá nhân" onBack={goBack} />
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={theme.colors.primary} />
-          <Text style={styles.loadingText}>Đang tải hồ sơ...</Text>
+          <ActivityIndicator size="large" color={palette.primary} />
+          <Text style={[styles.loadingText, { color: palette.textSecondary }]}>
+            Đang tải hồ sơ...
+          </Text>
         </View>
         <MainTabBar active="Profile" />
       </SafeAreaView>
@@ -126,9 +151,12 @@ export const ProfileScreen: React.FC = () => {
   }
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+    <SafeAreaView
+      style={[styles.safeArea, { backgroundColor: palette.background }]}
+      edges={['top', 'left', 'right']}
+    >
       <DrumHeader
-        title="Tài khoản"
+        title="Cá nhân"
         onBack={goBack}
         right={
           <TouchableOpacity
@@ -137,7 +165,7 @@ export const ProfileScreen: React.FC = () => {
             accessibilityRole="button"
             accessibilityLabel="Chỉnh sửa hồ sơ"
           >
-            <Text style={styles.editHeaderText}>Sửa</Text>
+            <Text style={[styles.editHeaderText, { color: palette.primary }]}>Sửa</Text>
           </TouchableOpacity>
         }
       />
@@ -147,203 +175,90 @@ export const ProfileScreen: React.FC = () => {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={() => fetchProfile(true)} colors={[theme.colors.primary]} />
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => void fetchProfile(true)}
+            colors={[palette.primary]}
+          />
         }
       >
-        <Text style={styles.heroName}>{displayName}</Text>
-        <Text style={styles.heroStatus}>
-          {profile?.isVerified ? 'Đã xác thực' : 'Chưa xác thực'}
-        </Text>
-        {error ? <Text style={styles.warningSubtitle}>{error}</Text> : null}
-        {!profile?.isVerified ? (
-          <Text style={styles.warningSubtitle}>
-            Một số việc sẽ bị hạn chế đến khi tài khoản được xác thực.
+        <View style={styles.contentWrap}>
+          <Text style={[styles.heroName, { color: palette.primaryDark }]}>{displayName}</Text>
+          <Text style={[styles.heroStatus, { color: isDark ? palette.gold : '#5A4A22' }]}>
+            {profile?.isVerified ? 'Đã xác thực' : 'Chưa xác thực'}
           </Text>
-        ) : null}
-        <GoldDoubleRule style={styles.rule} />
+          {error ? (
+            <Text style={[styles.warningSubtitle, { color: palette.primary }]}>{error}</Text>
+          ) : null}
+          {!profile?.isVerified ? (
+            <Text style={[styles.warningSubtitle, { color: palette.primary }]}>
+              Một số tính năng sẽ bị hạn chế đến khi tài khoản được xác thực.
+            </Text>
+          ) : null}
+          <GoldDoubleRule style={styles.rule} />
 
-        <Text style={styles.sectionTitle}>Cá nhân</Text>
-        <Field label="Họ và tên" value={displayName} />
-        <Field label="Số căn cước" value={profile?.citizenId} />
-        <Field label="Ngày sinh" value={profile?.dateOfBirth} />
-        <Field label="Địa chỉ" value={profile?.address} />
+          {/* Thẻ thông tin cá nhân */}
+          <View
+            style={[
+              styles.cardBlock,
+              {
+                backgroundColor: palette.surface,
+                borderColor: palette.border,
+              },
+            ]}
+          >
+            <Field label="Họ và tên:" value={displayName} isDark={isDark} />
+            <Field label="Số căn cước:" value={profile?.citizenId} isDark={isDark} />
+            <Field label="Ngày sinh:" value={profile?.dateOfBirth} isDark={isDark} />
+            <Field
+              label="Địa chỉ:"
+              value={sanitizeProfileAddress(profile?.address, profile?.citizenId)}
+              isDark={isDark}
+            />
+            <Field label="Email:" value={profile?.email} isDark={isDark} />
+            <Field label="Số điện thoại:" value={profile?.phoneNumber} isDark={isDark} />
+            <View style={[styles.fieldRow, styles.fieldRowLast]}>
+              <Text style={[styles.fieldLabel, { color: palette.textSecondary }]}>
+                Mã số thuế:
+              </Text>
+              {profile?.taxIdNumber ? (
+                <Text style={[styles.fieldValue, { color: palette.textPrimary }]}>
+                  {profile.taxIdNumber}
+                </Text>
+              ) : (
+                <TouchableOpacity
+                  onPress={() => handleEdit(true)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Bổ sung mã số thuế"
+                >
+                  <Text style={[styles.link, { color: palette.primary }]}>Bổ sung</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          </View>
 
-        <Text style={styles.sectionTitle}>Tài khoản</Text>
-        <Field label="Email" value={profile?.email} />
-        <Field label="Số điện thoại" value={profile?.phoneNumber} />
-        <View style={styles.fieldRow}>
-          <Text style={styles.fieldLabel}>Mã số thuế</Text>
-          {profile?.taxIdNumber ? (
-            <Text style={styles.fieldValue}>{profile.taxIdNumber}</Text>
-          ) : (
-            <TouchableOpacity
-              onPress={() => handleEdit(true)}
-              accessibilityRole="button"
-              accessibilityLabel="Bổ sung mã số thuế"
-            >
-              <Text style={styles.link}>Bổ sung</Text>
-            </TouchableOpacity>
-          )}
+          <TouchableOpacity
+            style={[styles.primaryEditBtn, { backgroundColor: palette.primary }]}
+            activeOpacity={0.85}
+            onPress={() => handleEdit(false)}
+            accessibilityRole="button"
+            accessibilityLabel="Chỉnh sửa hồ sơ cá nhân"
+            testID="profileEditBtn"
+          >
+            <Ionicons name="create-outline" size={18} color="#FFFFFF" />
+            <Text style={styles.primaryEditBtnText}>Chỉnh sửa hồ sơ cá nhân</Text>
+          </TouchableOpacity>
         </View>
-
-        <Text style={styles.sectionTitle}>Tư vấn & Chuyên gia</Text>
-        <LinkRow
-          label="Lịch hẹn tư vấn của tôi"
-          onPress={() => navigation.navigate('MyBookings', {})}
-          testID="quickLinkMyBookings"
-        />
-        {isExpert ? (
-          <>
-            <LinkRow
-              label="Quản lý ca tư vấn (Chuyên gia)"
-              onPress={() => navigation.navigate('ExpertBookings', {})}
-              testID="quickLinkExpertBookings"
-            />
-            <LinkRow
-              label="TAXKEEP VN WALLET"
-              onPress={() => navigation.navigate('Wallet', { walletType: 'EXPERT' })}
-              testID="quickLinkExpertWallet"
-            />
-            <LinkRow
-              label="Lịch làm việc của chuyên gia"
-              onPress={() => navigation.navigate('ExpertSlots')}
-              testID="quickLinkExpertSlots"
-            />
-          </>
-        ) : (
-          <LinkRow
-            label="TAXKEEP VN WALLET"
-            onPress={() => navigation.navigate('Wallet', { walletType: 'USER' })}
-            testID="quickLinkUserWallet"
-          />
-        )}
-        <LinkRow
-          label={isExpert ? 'Hồ sơ chuyên gia thuế' : 'Đăng ký làm chuyên gia thuế'}
-          onPress={() => navigation.navigate('ExpertApplication')}
-          testID="quickLinkExpertApplication"
-        />
-
-        <Text style={styles.sectionTitle}>Liên kết</Text>
-        <LinkRow
-          label="Đổi mật khẩu"
-          onPress={() => navigation.navigate('ChangePassword')}
-          testID="quickLinkChangePassword"
-        />
-        <LinkRow
-          label="Người phụ thuộc"
-          onPress={() => navigation.navigate('DependentList')}
-          testID="quickLinkDependentList"
-        />
-        <LinkRow
-          label="Nơi chi trả"
-          onPress={() => navigation.navigate('IncomeSourceList')}
-          testID="quickLinkIncomeSource"
-          last
-        />
-
-        <TouchableOpacity
-          style={styles.primaryEditBtn}
-          activeOpacity={0.85}
-          onPress={() => handleEdit(false)}
-          accessibilityRole="button"
-          accessibilityLabel="Chỉnh sửa hồ sơ"
-        >
-          <Text style={styles.primaryEditBtnText}>Chỉnh sửa hồ sơ</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.logoutBtn}
-          activeOpacity={0.85}
-          onPress={handleLogout}
-          accessibilityRole="button"
-          accessibilityLabel="Đăng xuất"
-          testID="profileLogoutBtn"
-        >
-          <Text style={styles.logoutBtnText}>Đăng xuất</Text>
-        </TouchableOpacity>
       </ScrollView>
       <MainTabBar active="Profile" />
-
-      <Dialog
-        visible={showLogoutDialog}
-        title="Đăng xuất"
-        message="Bạn có chắc chắn muốn đăng xuất khỏi ứng dụng?"
-        primaryLabel="Đăng xuất"
-        secondaryLabel="Hủy"
-        destructive
-        onPrimary={handleConfirmLogout}
-        onSecondary={() => setShowLogoutDialog(false)}
-        onRequestClose={() => setShowLogoutDialog(false)}
-        testID="profileLogoutConfirmDialog"
-      />
     </SafeAreaView>
   );
 };
-
-function Field({ label, value }: { label: string; value?: string | null }) {
-  return (
-    <View style={styles.fieldRow}>
-      <Text style={styles.fieldLabel}>{label}</Text>
-      <Text style={styles.fieldValue}>{value || 'Chưa cập nhật'}</Text>
-    </View>
-  );
-}
-
-function LinkRow({
-  label,
-  onPress,
-  testID,
-  last,
-}: {
-  label: string;
-  onPress: () => void;
-  testID: string;
-  last?: boolean;
-}) {
-  return (
-    <TouchableOpacity
-      style={[styles.linkRow, last && styles.linkRowLast]}
-      onPress={onPress}
-      testID={testID}
-      accessibilityRole="button"
-    >
-      <Text style={styles.linkLabel}>{label}</Text>
-      <Ionicons name="chevron-forward" size={16} color="#999999" />
-    </TouchableOpacity>
-  );
-}
 
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: theme.colors.background,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: theme.spacing.md,
-    paddingVertical: theme.spacing.sm,
-    backgroundColor: theme.colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-  },
-  headerSide: {
-    width: 40,
-    height: 40,
-  },
-  backButton: {
-    width: 40,
-    height: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 20,
-  },
-  headerTitle: {
-    ...theme.typography.titleMedium,
-    fontWeight: '700',
-    color: theme.colors.primaryDark,
-    letterSpacing: 0.5,
   },
   editHeaderBtn: {
     minWidth: 44,
@@ -351,6 +266,12 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     justifyContent: 'center',
     paddingRight: 4,
+  },
+  editHeaderText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 14,
+    lineHeight: 20,
+    color: theme.colors.primary,
   },
   loadingContainer: {
     flex: 1,
@@ -370,11 +291,10 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     paddingBottom: 40,
   },
-  editHeaderText: {
-    fontFamily: fonts.bodySemi,
-    fontSize: 14,
-    lineHeight: 20,
-    color: theme.colors.primary,
+  contentWrap: {
+    width: '100%',
+    maxWidth: 640,
+    alignSelf: 'center',
   },
   heroName: {
     fontFamily: fonts.serifBold,
@@ -391,107 +311,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 4,
   },
-  rule: {
-    marginTop: 16,
-    marginBottom: 8,
-  },
-  sectionTitle: {
-    fontFamily: fonts.serifBold,
-    fontSize: 18,
-    lineHeight: 24,
-    color: theme.colors.textPrimary,
-    marginTop: 18,
-    marginBottom: 4,
-  },
-  link: {
-    fontFamily: fonts.bodySemi,
-    fontSize: 14,
-    lineHeight: 20,
-    color: theme.colors.primary,
-  },
-  linkRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-  },
-  linkRowLast: {
-    borderBottomWidth: 0,
-  },
-  linkLabel: {
-    fontFamily: fonts.body,
-    fontSize: 15,
-    lineHeight: 22,
-    color: theme.colors.textPrimary,
-  },
-  userCard: {
-    alignItems: 'center',
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.borderRadius.lg,
-    paddingVertical: theme.spacing.lg,
-    paddingHorizontal: theme.spacing.md,
-    marginBottom: theme.spacing.md,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    ...theme.shadows.card,
-  },
-  avatar: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: theme.colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 10,
-    ...theme.shadows.button,
-  },
-  avatarText: {
-    fontSize: 32,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  userName: {
-    ...theme.typography.titleLarge,
-    fontWeight: '700',
-    color: theme.colors.textPrimary,
-    marginBottom: 6,
-  },
-  badge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 14,
-    gap: 5,
-  },
-  badgeVerified: {
-    backgroundColor: 'rgba(46, 125, 50, 0.1)',
-  },
-  badgeUnverified: {
-    backgroundColor: 'rgba(237, 108, 2, 0.1)',
-  },
-  badgeText: {
-    ...theme.typography.caption,
-    fontWeight: '600',
-  },
-  warningBanner: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    backgroundColor: '#FFF8E1',
-    borderWidth: 1,
-    borderColor: '#FFE082',
-    borderRadius: theme.borderRadius.md,
-    padding: theme.spacing.md,
-    marginBottom: theme.spacing.md,
-  },
-  warningTitle: {
-    ...theme.typography.bodyMedium,
-    fontWeight: '700',
-    color: '#E65100',
-    marginBottom: 2,
-  },
   warningSubtitle: {
     fontFamily: fonts.body,
     fontSize: 13,
@@ -500,43 +319,31 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 8,
   },
-  card: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.borderRadius.lg,
-    padding: theme.spacing.md,
-    marginBottom: theme.spacing.md,
+  rule: {
+    marginTop: 16,
+    marginBottom: 18,
+  },
+  cardBlock: {
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: theme.colors.border,
+    paddingHorizontal: 14,
     ...theme.shadows.card,
-  },
-  cardHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 12,
-  },
-  cardTitle: {
-    ...theme.typography.titleMedium,
-    fontSize: 14,
-    fontWeight: '700',
-    color: theme.colors.primaryDark,
-    letterSpacing: 0.5,
   },
   fieldRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: 16,
-    paddingVertical: 11,
+    paddingVertical: 13,
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
   },
-  labelWithIcon: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  fieldRowLast: {
+    borderBottomWidth: 0,
   },
   fieldLabel: {
-    width: 108,
+    width: 118,
+    flexShrink: 0,
     fontFamily: fonts.body,
     fontSize: 14,
     lineHeight: 20,
@@ -544,109 +351,35 @@ const styles = StyleSheet.create({
   },
   fieldValue: {
     flex: 1,
+    flexShrink: 1,
     fontFamily: fonts.bodySemi,
     fontSize: 14,
     lineHeight: 20,
     color: theme.colors.textPrimary,
     textAlign: 'right',
   },
-  monospace: {
-    letterSpacing: 0.5,
-    fontFamily: 'monospace',
-  },
-  divider: {
-    height: 1,
-    backgroundColor: '#ECE7DE',
-    marginVertical: 4,
-  },
-  taxIdBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: theme.colors.surfaceSecondary,
-    borderWidth: 1,
-    borderColor: theme.colors.borderFocus,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: theme.borderRadius.sm,
-    gap: 6,
-  },
-  taxIdText: {
-    ...theme.typography.bodyMedium,
-    fontWeight: '700',
-    color: theme.colors.primary,
-    fontFamily: 'monospace',
-    letterSpacing: 1,
-  },
-  taxIdEmptyRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  emptyText: {
-    ...theme.typography.bodyMedium,
-    color: theme.colors.textPlaceholder,
-    fontStyle: 'italic',
-  },
-  addTaxBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: theme.colors.primary,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: theme.borderRadius.sm,
-    gap: 4,
-  },
-  addTaxBtnText: {
-    ...theme.typography.caption,
-    color: '#FFFFFF',
-    fontWeight: '700',
-  },
-  quickLinksHeader: {
-    ...theme.typography.titleMedium,
+  link: {
+    fontFamily: fonts.bodySemi,
     fontSize: 14,
-    fontWeight: '700',
-    color: theme.colors.textPrimary,
-    marginBottom: 8,
-  },
-  quickLinkRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 12,
-  },
-  quickLinkLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  quickLinkText: {
-    ...theme.typography.bodyMedium,
-    fontWeight: '500',
-    color: theme.colors.textPrimary,
+    lineHeight: 20,
+    color: theme.colors.primary,
   },
   primaryEditBtn: {
-    height: 52,
+    minHeight: 50,
     borderRadius: 10,
     backgroundColor: theme.colors.primary,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 28,
+    gap: 8,
+    marginTop: 22,
+    paddingHorizontal: 16,
+    ...theme.shadows.button,
   },
   primaryEditBtnText: {
     fontFamily: fonts.bodyBold,
-    fontSize: 16,
-    lineHeight: 20,
-    color: '#FFFFFF',
-  },
-  logoutBtn: {
-    alignItems: 'center',
-    paddingVertical: 16,
-    cursor: Platform.OS === 'web' ? ('pointer' as any) : undefined,
-  },
-  logoutBtnText: {
-    fontFamily: fonts.bodySemi,
     fontSize: 15,
     lineHeight: 20,
-    color: theme.colors.error,
+    color: '#FFFFFF',
   },
 });

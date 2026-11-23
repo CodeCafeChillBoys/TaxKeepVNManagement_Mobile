@@ -58,4 +58,33 @@ describe('manualChangeGroup', () => {
       requiredDocuments: ['DISABILITY_CERTIFICATE'],
     });
   });
+
+  it('forwards optional note to updateDependentGroup when provided', async () => {
+    const updateDependentGroup = jest.fn().mockResolvedValue({
+      success: true,
+      message: 'ok',
+      data: {
+        dependentId: 'dep-1',
+        previousGroup: 'CHILD_UNDER_18',
+        currentGroup: 'CHILD_OVER_18_STUDYING',
+        status: 'PENDING_DOCUMENTS',
+        isProfileComplete: false,
+        requiredDocuments: ['STUDENT_CARD'],
+        documents: [],
+      },
+    });
+
+    const result = await runManualChangeGroup({
+      dependentId: 'dep-1',
+      newGroup: 'CHILD_OVER_18_STUDYING',
+      note: '  Con vào đại học  ',
+      updateDependentGroup,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(updateDependentGroup).toHaveBeenCalledWith('dep-1', {
+      newGroup: 'CHILD_OVER_18_STUDYING',
+      note: 'Con vào đại học',
+    });
+  });
 });

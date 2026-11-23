@@ -13,9 +13,10 @@ interface OcrFieldProps {
   placeholder?: string;
   unusedHint?: boolean;
   keyboardType?: 'default' | 'numeric';
+  multiline?: boolean;
 }
 
-export const OcrField: React.FC<OcrFieldProps> = ({
+export const OcrField: React.FC<OcrFieldProps> = React.memo(({
   label,
   value,
   onChangeText,
@@ -24,6 +25,7 @@ export const OcrField: React.FC<OcrFieldProps> = ({
   placeholder,
   unusedHint,
   keyboardType = 'default',
+  multiline = false,
 }) => {
   const isCheck = status === 'check';
   const isUnreadable = status === 'unreadable';
@@ -43,6 +45,7 @@ export const OcrField: React.FC<OcrFieldProps> = ({
       <TextInput
         style={[
           styles.input,
+          multiline && styles.inputMultiline,
           isCheck && styles.inputCheck,
           isUnreadable && styles.inputUnreadable,
         ]}
@@ -52,17 +55,20 @@ export const OcrField: React.FC<OcrFieldProps> = ({
         placeholder={placeholder}
         placeholderTextColor={theme.colors.textPlaceholder}
         keyboardType={keyboardType}
+        multiline={multiline}
+        scrollEnabled={multiline ? false : undefined}
+        textAlignVertical={multiline ? 'top' : 'center'}
       />
 
       {isUnreadable ? (
-        <Text style={styles.unreadableHint}>Không đọc được, vui lòng nhập tay</Text>
+        <Text style={styles.unreadableHint}>Chưa đọc rõ từ ảnh chụp, vui lòng nhập bổ sung</Text>
       ) : null}
       {unusedHint ? (
-        <Text style={styles.unusedHint}>Không dùng trong luồng đăng ký</Text>
+        <Text style={styles.unusedHint}>Thông tin tham khảo trên giấy tờ</Text>
       ) : null}
     </View>
   );
-};
+});
 
 const styles = StyleSheet.create({
   wrap: {
@@ -101,8 +107,16 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.border,
     backgroundColor: theme.colors.surface,
     paddingHorizontal: 14,
+    paddingVertical: 12,
     ...theme.typography.bodyLarge,
     color: theme.colors.textPrimary,
+  },
+  inputMultiline: {
+    minHeight: 76,
+    paddingTop: 12,
+    paddingBottom: 12,
+    lineHeight: 22,
+    textAlignVertical: 'top',
   },
   inputCheck: {
     backgroundColor: theme.colors.warningBackground,

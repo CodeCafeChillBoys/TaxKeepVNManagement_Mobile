@@ -1,9 +1,38 @@
 import {
   buildProofDocumentsParams,
-  relationDocTypeFor,
   resolveProofDocumentsChecklist,
   selectNewUploads,
+  selectRulesForTab,
 } from './proofDocumentsParams';
+
+describe('selectRulesForTab', () => {
+  const rules = [
+    { targetGroup: 'PARENT_RETIRED', docType: 'CITIZEN_ID' },
+    { targetGroup: 'PARENT_RETIRED', docType: 'RELATIONSHIP_CERTIFICATE' },
+    { targetGroup: 'PARENT_DISABLED', docType: 'DISABILITY_CERTIFICATE' },
+    { targetGroup: 'SPOUSE_RETIRED', docType: 'CITIZEN_ID' },
+    { targetGroup: 'CHILD_UNDER_18', docType: 'BIRTH_CERTIFICATE' },
+  ];
+
+  it('NPT cha/mẹ: chỉ lấy rule đúng nhóm thật trong DB, gửi đúng RELATIONSHIP_CERTIFICATE', () => {
+    expect(selectRulesForTab(rules, 3, 'PARENT_RETIRED').map((r) => r.docType)).toEqual([
+      'CITIZEN_ID',
+      'RELATIONSHIP_CERTIFICATE',
+    ]);
+  });
+
+  it('chưa có NPT: gộp rule các nhóm thuộc tab, bỏ trùng mã', () => {
+    expect(selectRulesForTab(rules, 3).map((r) => r.docType)).toEqual([
+      'CITIZEN_ID',
+      'RELATIONSHIP_CERTIFICATE',
+      'DISABILITY_CERTIFICATE',
+    ]);
+  });
+
+  it('nhóm DB chưa có rule thì trả rỗng, không tự đoán mã', () => {
+    expect(selectRulesForTab(rules, 1, 'CHILD_OVER_18_STUDYING')).toEqual([]);
+  });
+});
 
 describe('resolveProofDocumentsChecklist', () => {
   const fallback = ['BIRTH_CERTIFICATE', 'CITIZEN_ID'];
@@ -41,15 +70,6 @@ describe('selectNewUploads', () => {
       old_key: { name: 'other.jpg' },
     };
     expect(selectNewUploads(files, ['g4_cccd', 'g4_relation']).map(([k]) => k)).toEqual(['g4_relation']);
-  });
-});
-
-describe('relationDocTypeFor', () => {
-  it('uses marriage certificate for spouse and parents-in-law, birth certificate for parents', () => {
-    expect(relationDocTypeFor('SPOUSE')).toBe('MARRIAGE_CERTIFICATE');
-    expect(relationDocTypeFor('PARENT_IN_LAW')).toBe('MARRIAGE_CERTIFICATE');
-    expect(relationDocTypeFor('PARENT')).toBe('BIRTH_CERTIFICATE');
-    expect(relationDocTypeFor(undefined)).toBe('BIRTH_CERTIFICATE');
   });
 });
 

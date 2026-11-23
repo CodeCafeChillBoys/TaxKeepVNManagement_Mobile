@@ -9,6 +9,8 @@ import {
   mapUiGroupToBackendEnum,
   reconcileEligibilitySelection,
   sanitizeOcrEligibility,
+  selectDbGroupsForUi,
+  subGroupConditionLabel,
 } from './dependentEligibility';
 
 describe('dependentEligibility', () => {
@@ -105,16 +107,23 @@ describe('dependentEligibility', () => {
   });
 
   describe('mapUiGroupToBackendEnum', () => {
-    it('maps without silent override of SPOUSE vs PARENT on group 4', () => {
-      expect(mapUiGroupToBackendEnum(3, 'SPOUSE')).toEqual({
-        relationship: 'SPOUSE',
-        currentGroup: 'SPOUSE_RETIRED',
-      });
-      expect(mapUiGroupToBackendEnum(3, 'PARENT')).toEqual({
-        relationship: 'PARENT',
-        currentGroup: 'PARENT_RETIRED',
-      });
+    it('group 4 không gán cứng *_RETIRED: currentGroup rỗng để lấy từ DB', () => {
+      expect(mapUiGroupToBackendEnum(3, 'SPOUSE')).toEqual({ relationship: 'SPOUSE', currentGroup: '' });
+      expect(mapUiGroupToBackendEnum(3, 'PARENT')).toEqual({ relationship: 'PARENT', currentGroup: '' });
       expect(mapUiGroupToBackendEnum(3, 'CHILD')).toBeNull();
+    });
+  });
+
+  describe('selectDbGroupsForUi', () => {
+    it('chỉ lấy nhóm DB thuộc tab đang chọn', () => {
+      expect(selectDbGroupsForUi(3, ['PARENT_DISABLED'])).toEqual(['PARENT_DISABLED']);
+      expect(selectDbGroupsForUi(3, ['CHILD_UNDER_18', 'SPOUSE_DISABLED'])).toEqual(['SPOUSE_DISABLED']);
+      expect(selectDbGroupsForUi(3, [])).toEqual([]);
+    });
+
+    it('nhãn chọn điều kiện khi DB có nhiều nhóm con', () => {
+      expect(subGroupConditionLabel('PARENT_DISABLED')).toMatch(/khuyết tật/);
+      expect(subGroupConditionLabel('PARENT_RETIRED')).toMatch(/hết tuổi lao động/);
     });
   });
 

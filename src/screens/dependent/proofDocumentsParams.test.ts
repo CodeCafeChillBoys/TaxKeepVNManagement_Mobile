@@ -1,9 +1,31 @@
 import {
   buildProofDocumentsParams,
+  listDocsNeedingReupload,
   resolveProofDocumentsChecklist,
   selectNewUploads,
   selectRulesForTab,
 } from './proofDocumentsParams';
+
+describe('listDocsNeedingReupload', () => {
+  const docs = [
+    { key: 'a', title: 'a. Giấy khai sinh' },
+    { key: 'b', title: 'b. CCCD' },
+    { key: 'c', title: 'c. Thẻ SV' },
+  ];
+
+  it('chỉ trả ô còn giấy cũ cần nộp lại, bỏ ô đã chọn ảnh mới', () => {
+    const files = {
+      a: { docId: 'd1', needsReupload: true }, // giấy cũ, chưa đổi
+      b: { needsReupload: false }, // vừa chọn ảnh mới (không còn docId)
+      c: { docId: 'd3', needsReupload: false }, // giấy còn hợp lệ
+    };
+    expect(listDocsNeedingReupload(docs, files).map((d) => d.title)).toEqual(['a. Giấy khai sinh']);
+  });
+
+  it('không có giấy cũ thì rỗng', () => {
+    expect(listDocsNeedingReupload(docs, {})).toEqual([]);
+  });
+});
 
 describe('selectRulesForTab', () => {
   const rules = [

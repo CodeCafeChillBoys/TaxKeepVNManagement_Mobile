@@ -49,6 +49,9 @@ export function stripCitizenId(raw: string): string {
 export function toIsoDate(raw: string): string {
   const value = raw.trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  // API thường trả "yyyy-MM-ddTHH:mm:ssZ" / "yyyy-MM-dd HH:mm:ss" — chỉ lấy phần ngày
+  const isoDt = value.match(/^(\d{4}-\d{2}-\d{2})(?:[T\s].*)?$/);
+  if (isoDt) return isoDt[1];
   const match = value.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/);
   if (!match) return value;
   const day = match[1].padStart(2, '0');

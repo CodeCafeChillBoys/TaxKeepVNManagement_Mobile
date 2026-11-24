@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+﻿import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -73,6 +73,7 @@ interface SelectedDocFile {
   docType?: string;
   uploadedAt?: string;
   isReadable?: boolean;
+  needsReupload?: boolean;
 }
 
 const LAW_GROUP_SPECS: LawGroupRequirement[] = [
@@ -422,8 +423,11 @@ export const ProofDocumentsScreen: React.FC = () => {
           (docSpec.docType === 'STUDENT_DOCUMENT' && doc.docType === 'STUDENT_CARD')
       );
       if (matchingDoc) {
-        newUploadedKeys[docSpec.key] = true;
+        // Giấy nộp trước khi đổi thông tin nhân thân (isCurrent=false) không còn được tính → chưa coi là đã lưu
+        const stale = matchingDoc.isCurrent === false;
+        newUploadedKeys[docSpec.key] = !stale;
         newSelectedFiles[docSpec.key] = {
+          needsReupload: stale,
           name: (matchingDoc.fileUrl || '').split('/').pop()?.split('?')[0] || docSpec.title,
           sizeText: 'Đã lưu trên máy chủ',
           type: matchingDoc.fileMimeType || 'image/jpeg',
@@ -676,6 +680,7 @@ export const ProofDocumentsScreen: React.FC = () => {
 
       const updatedDocFile: SelectedDocFile = {
         ...currentFile,
+        needsReupload: false,
         sizeText: 'Đã xác thực & lưu trên hệ thống',
         uri: res.fileUrl || currentFile.uri,
         docId: res.docId,
@@ -1801,6 +1806,11 @@ const styles = StyleSheet.create({
     color: '#666666',
     marginBottom: 10,
     textAlign: 'center',
+  },
+  reuploadText: {
+    color: theme.colors.warning,
+    textAlign: 'center',
+    fontWeight: '600',
   },
   docActionButtonsRow: {
     flexDirection: 'row',

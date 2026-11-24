@@ -50,6 +50,20 @@ export function selectNewUploads<T extends { docId?: string | null }>(
 }
 
 /**
+ * Ô còn giữ giấy cũ nộp trước khi đổi thông tin nhân thân (needsReupload) mà chưa chọn ảnh mới.
+ * Các giấy này BE không còn tính, nên phải nộp lại trước khi lưu.
+ */
+export function listDocsNeedingReupload<D extends { key: string }>(
+  activeDocs: D[],
+  selectedFiles: Record<string, { docId?: string | null; needsReupload?: boolean } | undefined>
+): D[] {
+  return activeDocs.filter((d) => {
+    const f = selectedFiles[d.key];
+    return !!f?.needsReupload && !!f.docId;
+  });
+}
+
+/**
  * Rule giấy tờ (từ DB) hiển thị ở tab đang chọn.
  * - Có NPT thuộc tab này: chỉ lấy rule đúng currentGroup của NPT (vd PARENT_RETIRED).
  * - Không có NPT: lấy mọi rule có targetGroup thuộc tab, bỏ trùng docType.

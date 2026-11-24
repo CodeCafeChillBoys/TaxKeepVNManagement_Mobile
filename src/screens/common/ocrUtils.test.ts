@@ -5,9 +5,21 @@ import {
   mapUserCccdToFields,
   normalizeGender,
   normalizeOcrForForm,
+  toIsoDate,
 } from './ocrUtils';
 
 describe('ocrUtils mappers', () => {
+  describe('toIsoDate', () => {
+    it('giữ yyyy-MM-dd', () => {
+      expect(toIsoDate('2000-05-15')).toBe('2000-05-15');
+    });
+
+    it('cắt phần giờ từ ISO datetime API', () => {
+      expect(toIsoDate('2000-05-15T00:00:00Z')).toBe('2000-05-15');
+      expect(toIsoDate('2000-05-15T17:00:00+07:00')).toBe('2000-05-15');
+    });
+  });
+
   describe('normalizeGender', () => {
     it('maps MALE/FEMALE and Vietnamese labels to Nam/Nữ', () => {
       expect(normalizeGender('MALE')).toBe('Nam');

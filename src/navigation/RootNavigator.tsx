@@ -18,6 +18,7 @@ import { WithholdingVoucherScreen } from '../screens/incomeSource/WithholdingVou
 import { ChangePasswordScreen } from '../screens/auth/ChangePasswordScreen';
 import { LawConditionsScreen } from '../screens/home/LawConditionsScreen';
 import { TaxRegistrationScreen } from '../screens/dependent/TaxRegistrationScreen';
+import { EditDependentScreen } from '../screens/dependent/EditDependentScreen';
 import { ProofDocumentsScreen } from '../screens/dependent/ProofDocumentsScreen';
 import { DependentSavedScreen } from '../screens/dependent/DependentSavedScreen';
 import { DependentDetailScreen } from '../screens/dependent/DependentDetailScreen';
@@ -88,6 +89,7 @@ const ThemedWithholdingVoucherScreen = withTheme(WithholdingVoucherScreen);
 const ThemedChangePasswordScreen = withTheme(ChangePasswordScreen);
 const ThemedLawConditionsScreen = withTheme(LawConditionsScreen);
 const ThemedTaxRegistrationScreen = withTheme(TaxRegistrationScreen);
+const ThemedEditDependentScreen = withTheme(EditDependentScreen);
 const ThemedProofDocumentsScreen = withTheme(ProofDocumentsScreen);
 const ThemedDependentSavedScreen = withTheme(DependentSavedScreen);
 const ThemedDependentDetailScreen = withTheme(DependentDetailScreen);
@@ -199,6 +201,7 @@ export const RootNavigator: React.FC = () => {
         <Stack.Screen name="ChangePassword" component={ThemedChangePasswordScreen} />
         <Stack.Screen name="LawConditions" component={ThemedLawConditionsScreen} />
         <Stack.Screen name="TaxRegistration" component={ThemedTaxRegistrationScreen} />
+        <Stack.Screen name="EditDependent" component={ThemedEditDependentScreen} />
         <Stack.Screen name="ProofDocuments" component={ThemedProofDocumentsScreen} />
         <Stack.Screen name="DependentSaved" component={ThemedDependentSavedScreen} />
         <Stack.Screen name="DependentDetail" component={ThemedDependentDetailScreen} />

@@ -1,3 +1,5 @@
+import { Platform } from 'react-native';
+import * as FileSystem from 'expo-file-system/legacy';
 import { apiClient, storageHelper } from './apiClient';
 import { config } from '../constants/config';
 import { groupCodeToTitle } from '../screens/dependent/dependentGroupUtils';
@@ -134,6 +136,49 @@ export const dependentDocumentApi = {
     }
   },
 
+  // Cập nhật hồ sơ NPT sau khi tạo: PUT /api/v1/dependents/{id}
+  updateDependent: async (
+    dependentId: string,
+    data: {
+      fullName: string;
+      relationship?: string;
+      currentGroup?: string;
+      birthDate: string;
+      citizenId?: string;
+      birthCertNumber?: string;
+      taxIdNumber?: string;
+      effectiveFromMonth: string;
+      effectiveToMonth: string;
+      note?: string;
+      confirmIdentityChange?: boolean;
+    }
+  ): Promise<{ dependentId: string; fullName: string; statusChanged?: boolean; documentsNeedReupload?: boolean; [key: string]: any }> => {
+    try {
+      const res = await apiClient.put<any>(`/api/v1/dependents/${dependentId}`, data);
+      const result = res.data?.data || res.data;
+      return {
+        ...result,
+        dependentId: result?.dependentId || dependentId,
+        fullName: result?.fullName || data.fullName,
+        statusChanged: Boolean(result?.statusChanged ?? result?.status_changed),
+        documentsNeedReupload: Boolean(
+          result?.documentsNeedReupload ?? result?.documents_need_reupload
+        ),
+      };
+    } catch (err: any) {
+      const code =
+        err?.response?.data?.errors?.errorCode || err?.response?.data?.errorCode || '';
+      const serverMessage =
+        err?.response?.data?.message ||
+        err?.response?.data?.errors?.message ||
+        err?.message ||
+        'Không thể cập nhật hồ sơ người phụ thuộc.';
+      const wrapped = new Error(serverMessage) as Error & { errorCode?: string };
+      wrapped.errorCode = code;
+      throw wrapped;
+    }
+  },
+
   // Lấy danh sách NPT: gọi trực tiếp Backend API GET /api/v1/dependents
   getDependents: async (query?: { page?: number; size?: number; search?: string; status?: string; relationship?: string }): Promise<DependentItem[]> => {
     try {
@@ -200,6 +245,45 @@ export const dependentDocumentApi = {
       }
     } catch {}
     return [];
+  },
+
+  // Quét lại giấy đã lưu sau khi đổi thông tin nhân thân: tải ảnh trên server về bộ nhớ tạm
+  // rồi gửi lại qua API upload có sẵn, BE chạy lại OCR đối chiếu theo thông tin mới.
+  reuploadStoredDocument: async (
+    dependentId: string,
+    docType: string,
+    stored: { uri?: string; name: string; type: string }
+  ): Promise<UploadDocumentResponse> => {
+    if (!stored.uri) {
+      throw new Error('Không tìm thấy ảnh đã lưu để quét lại. Vui lòng chọn ảnh khác.');
+    }
+    if (Platform.OS === 'web') {
+      const response = await fetch(stored.uri);
+      if (!response.ok) {
+        throw new Error('Không tải được ảnh đã lưu để quét lại. Vui lòng chọn ảnh khác.');
+      }
+      const blob = await response.blob();
+      return dependentDocumentApi.uploadDocument(dependentId, docType, {
+        name: stored.name,
+        type: stored.type || blob.type || 'image/jpeg',
+        blob,
+      });
+    }
+    const safeName = (stored.name || 'minh_chung').replace(/[^\w.\-]/g, '_');
+    const target = `${FileSystem.cacheDirectory}reverify_${Date.now()}_${safeName}`;
+    const dl = await FileSystem.downloadAsync(stored.uri, target);
+    if (dl.status < 200 || dl.status >= 300) {
+      throw new Error('Không tải được ảnh đã lưu để quét lại. Vui lòng chọn ảnh khác.');
+    }
+    try {
+      return await dependentDocumentApi.uploadDocument(dependentId, docType, {
+        uri: dl.uri,
+        name: stored.name,
+        type: stored.type,
+      });
+    } finally {
+      FileSystem.deleteAsync(dl.uri, { idempotent: true }).catch(() => {});
+    }
   },
 
   // Tải lên giấy tờ minh chứng mới: POST /api/v1/dependents/{dependentId}/documents

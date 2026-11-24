@@ -36,14 +36,20 @@ describe('buildEffectivePeriodUpdatePayload', () => {
     effectiveToMonth: '2026-12',
   };
 
-  it('đổi kỳ hiệu lực, không gửi quan hệ/nhóm, cho phép tháng quá khứ sau tháng sinh', () => {
+  it('đổi kỳ hiệu lực gửi partial update chỉ gồm 2 trường kỳ hiệu lực (khớp BE), cho phép tháng quá khứ sau tháng sinh', () => {
     const res = buildEffectivePeriodUpdatePayload(childDetail, '2015-11', '2016-06');
     expect(res.ok).toBe(true);
     if (res.ok) {
-      expect(res.payload.effectiveFromMonth).toBe('2015-11');
-      expect(res.payload.birthCertNumber).toBe('068204005531');
+      expect(res.payload).toEqual({
+        effectiveFromMonth: '2015-11',
+        effectiveToMonth: '2016-06',
+      });
       expect(res.payload).not.toHaveProperty('relationship');
       expect(res.payload).not.toHaveProperty('currentGroup');
+      expect(res.payload).not.toHaveProperty('fullName');
+      expect(res.payload).not.toHaveProperty('birthDate');
+      expect(res.payload).not.toHaveProperty('citizenId');
+      expect(res.payload).not.toHaveProperty('birthCertNumber');
     }
   });
 
@@ -58,17 +64,33 @@ describe('buildEffectivePeriodUpdatePayload', () => {
     if (!res.ok) expect(res.message).toMatch(/trước tháng sinh \(10\/2015\)/);
   });
 
-  it('người >= 14 cần CCCD 12 số', () => {
+  it('cho phép gia hạn kỳ hiệu lực cho hồ sơ ≥ 14 tuổi chỉ có GKS (khớp BE partial update)', () => {
     const res = buildEffectivePeriodUpdatePayload(
       {
-        fullName: 'Adult',
-        birthDate: '2000-01-01T00:00:00Z',
-        citizenId: '123',
+        fullName: 'Con 14 tuổi',
+        birthDate: '2012-01-01T00:00:00Z',
+        birthCertNumber: 'GKS-2012-01',
+        status: 'ACTIVE',
       },
-      '2026-03',
+      '2026-01',
+      '2026-12'
+    );
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.payload).toEqual({
+        effectiveFromMonth: '2026-01',
+        effectiveToMonth: '2026-12',
+      });
+    }
+  });
+
+  it('hồ sơ INACTIVE → từ chối cập nhật (khớp BE 404)', () => {
+    const res = buildEffectivePeriodUpdatePayload(
+      { ...childDetail, status: 'INACTIVE' },
+      '2026-01',
       '2026-12'
     );
     expect(res.ok).toBe(false);
-    if (!res.ok) expect(res.message).toMatch(/CCCD/);
+    if (!res.ok) expect(res.message).toMatch(/ngừng hiệu lực/);
   });
 });

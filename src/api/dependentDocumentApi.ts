@@ -97,6 +97,33 @@ export const getFullFileUrl = (fileUrl?: string): string => {
 
 const STORAGE_DOCS_PREFIX = 'taxkeep_docs_';
 
+function extractValidationOrServerMessage(err: any, fallback: string): string {
+  const data = err?.response?.data;
+  const errors = data?.errors;
+  if (errors && typeof errors === 'object' && !Array.isArray(errors)) {
+    const fieldMessages: string[] = [];
+    for (const [key, val] of Object.entries(errors)) {
+      if (key === 'errorCode' || key === 'message') continue;
+      if (Array.isArray(val)) {
+        for (const item of val) {
+          if (typeof item === 'string' && item.trim()) fieldMessages.push(item.trim());
+        }
+      } else if (typeof val === 'string' && val.trim()) {
+        fieldMessages.push(val.trim());
+      }
+    }
+    if (fieldMessages.length > 0) {
+      return fieldMessages.join(' ');
+    }
+  }
+  return (
+    data?.message ||
+    errors?.message ||
+    err?.message ||
+    fallback
+  );
+}
+
 export const dependentDocumentApi = {
   // Tạo hồ sơ người phụ thuộc mới: POST /api/v1/dependents
   createDependent: async (data: {
@@ -127,39 +154,55 @@ export const dependentDocumentApi = {
         birthCertNumber: data.birthCertNumber,
       };
     } catch (err: any) {
-      const serverMessage =
-        err?.response?.data?.message ||
-        err?.response?.data?.errors?.message ||
-        err?.message ||
-        'Không thể đăng ký người phụ thuộc.';
+      const serverMessage = extractValidationOrServerMessage(
+        err,
+        'Không thể đăng ký người phụ thuộc.'
+      );
       throw new Error(serverMessage);
     }
   },
 
   // Cập nhật hồ sơ NPT sau khi tạo: PUT /api/v1/dependents/{id}
+  // Khớp UpdateDependentRequest (BE): tất cả trường đều tùy chọn (hỗ trợ partial update).
   updateDependent: async (
     dependentId: string,
     data: {
-      fullName: string;
+      fullName?: string;
       relationship?: string;
       currentGroup?: string;
-      birthDate: string;
+      birthDate?: string;
       citizenId?: string;
       birthCertNumber?: string;
       taxIdNumber?: string;
-      effectiveFromMonth: string;
-      effectiveToMonth: string;
+      effectiveFromMonth?: string;
+      effectiveToMonth?: string;
       note?: string;
       confirmIdentityChange?: boolean;
     }
-  ): Promise<{ dependentId: string; fullName: string; statusChanged?: boolean; documentsNeedReupload?: boolean; [key: string]: any }> => {
+  ): Promise<{
+    dependentId: string;
+    fullName: string;
+    status?: string;
+    requiredDocuments?: string[];
+    missingDocuments?: string[];
+    statusChanged?: boolean;
+    documentsNeedReupload?: boolean;
+    [key: string]: any;
+  }> => {
     try {
       const res = await apiClient.put<any>(`/api/v1/dependents/${dependentId}`, data);
       const result = res.data?.data || res.data;
       return {
         ...result,
         dependentId: result?.dependentId || dependentId,
-        fullName: result?.fullName || data.fullName,
+        fullName: result?.fullName || data.fullName || '',
+        status: result?.status,
+        requiredDocuments: Array.isArray(result?.requiredDocuments)
+          ? result.requiredDocuments
+          : undefined,
+        missingDocuments: Array.isArray(result?.missingDocuments)
+          ? result.missingDocuments
+          : undefined,
         statusChanged: Boolean(result?.statusChanged ?? result?.status_changed),
         documentsNeedReupload: Boolean(
           result?.documentsNeedReupload ?? result?.documents_need_reupload
@@ -168,11 +211,10 @@ export const dependentDocumentApi = {
     } catch (err: any) {
       const code =
         err?.response?.data?.errors?.errorCode || err?.response?.data?.errorCode || '';
-      const serverMessage =
-        err?.response?.data?.message ||
-        err?.response?.data?.errors?.message ||
-        err?.message ||
-        'Không thể cập nhật hồ sơ người phụ thuộc.';
+      const serverMessage = extractValidationOrServerMessage(
+        err,
+        'Không thể cập nhật hồ sơ người phụ thuộc.'
+      );
       const wrapped = new Error(serverMessage) as Error & { errorCode?: string };
       wrapped.errorCode = code;
       throw wrapped;

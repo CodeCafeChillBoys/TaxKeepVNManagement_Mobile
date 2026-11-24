@@ -1,21 +1,13 @@
 import { toIsoDate } from '../common/ocrUtils';
-import {
-  ageAtEffectiveFrom,
-  isAge14OrOlderAtEffective,
-} from './dependentEligibility';
-import { parseBirthDateParts } from './applyTaxRegistrationOcrFill';
 
+/**
+ * Partial update body cho PUT /api/v1/dependents/{id} khi chỉ đổi thời gian hiệu lực.
+ * Khớp UpdateDependentRequest (BE): tất cả trường khác để null để BE tự giữ nguyên dữ liệu DB
+ * và không kích hoạt logic đổi thông tin nhân thân (isIdentityChanged = false).
+ */
 export type EffectivePeriodUpdatePayload = {
-  fullName: string;
-  relationship?: string;
-  currentGroup?: string;
-  birthDate: string;
-  citizenId?: string;
-  birthCertNumber?: string;
-  taxIdNumber?: string;
   effectiveFromMonth: string;
   effectiveToMonth: string;
-  note?: string;
 };
 
 export type BuildPeriodUpdateResult =
@@ -61,12 +53,22 @@ export function isBeforeBirthMonth(ym: string, birthDate?: string | null): boole
   return ym.trim() < birth;
 }
 
-/** Dựng body PUT chỉ đổi kỳ hiệu lực. Không gửi quan hệ / nhóm. */
+/**
+ * Dựng body PUT chỉ đổi kỳ hiệu lực (partial update khớp BE).
+ * Không gửi thông tin nhân thân / quan hệ / nhóm.
+ */
 export function buildEffectivePeriodUpdatePayload(
   detail: any,
   effectiveFromMonth: string,
   effectiveToMonth: string
 ): BuildPeriodUpdateResult {
+  if (String(detail?.status || '').trim().toUpperCase() === 'INACTIVE') {
+    return {
+      ok: false,
+      message: 'Hồ sơ người phụ thuộc đã ngừng hiệu lực, không thể chỉnh sửa thời gian hiệu lực.',
+    };
+  }
+
   const from = String(effectiveFromMonth || '').trim();
   const to = String(effectiveToMonth || '').trim();
 
@@ -88,57 +90,11 @@ export function buildEffectivePeriodUpdatePayload(
     };
   }
 
-  const fullName = String(detail?.fullName || '').trim();
-  if (!fullName) {
-    return { ok: false, message: 'Thiếu họ tên người phụ thuộc.' };
-  }
-
-  const birthIso = toIsoDate(String(detail?.birthDate || ''));
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(birthIso)) {
-    return { ok: false, message: 'Ngày sinh hồ sơ không hợp lệ, không thể cập nhật kỳ hiệu lực.' };
-  }
-
-  const parts = parseBirthDateParts(birthIso);
-  const age = parts
-    ? ageAtEffectiveFrom(parts.birthDay, parts.birthMonth, parts.birthYear, from)
-    : 0;
-  const needCitizenId = isAge14OrOlderAtEffective(age);
-  const citizenId = String(detail?.citizenId || '').trim();
-  const birthCertNumber = String(detail?.birthCertNumber || '').trim();
-
-  if (needCitizenId) {
-    if (!/^\d{12}$/.test(citizenId)) {
-      return {
-        ok: false,
-        message: 'Hồ sơ ≥ 14 tuổi nhưng thiếu CCCD 12 số. Vui lòng bổ sung CCCD trước khi đổi kỳ hiệu lực.',
-      };
-    }
-  } else if (!birthCertNumber && !citizenId) {
-    return {
-      ok: false,
-      message: 'Hồ sơ thiếu số giấy khai sinh / định danh. Không thể cập nhật kỳ hiệu lực.',
-    };
-  }
-
-  const taxIdNumber = String(detail?.taxIdNumber || '').trim();
-  const note = String(detail?.note || '').trim();
-
-  const payload: EffectivePeriodUpdatePayload = {
-    fullName,
-    birthDate: `${birthIso}T00:00:00Z`,
-    taxIdNumber: taxIdNumber || undefined,
-    effectiveFromMonth: from,
-    effectiveToMonth: to,
-    note: note || undefined,
+  return {
+    ok: true,
+    payload: {
+      effectiveFromMonth: from,
+      effectiveToMonth: to,
+    },
   };
-
-  if (needCitizenId) {
-    payload.citizenId = citizenId;
-  } else if (birthCertNumber) {
-    payload.birthCertNumber = birthCertNumber;
-  } else if (citizenId) {
-    payload.citizenId = citizenId;
-  }
-
-  return { ok: true, payload };
 }

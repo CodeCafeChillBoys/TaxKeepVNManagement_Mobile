@@ -22,6 +22,7 @@ import { fonts } from '../../constants/fonts';
 import { DrumHeader } from '../../components/brand/DrumHeader';
 import { InfoNote } from '../../components/common/InfoNote';
 import { ChangeGroupSheet } from '../../components/common/ChangeGroupSheet';
+import { EditEffectivePeriodSheet } from '../../components/dependent/EditEffectivePeriodSheet';
 import {
   DocumentViewerModal,
   DocumentViewerItem,
@@ -30,9 +31,11 @@ import { isImageDocumentUri } from '../../components/common/imageZoomUtils';
 import { useToast } from '../../components/ui/Toast';
 import { formatPersonName } from '../../utils/formatPersonName';
 import { sanitizeUiMessage, toFriendlyErrorMessage } from '../../utils/friendlyError';
+import { pickApiErrorMessage } from '../../utils/apiErrorCatalog';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import {
   dependentDocumentApi,
+  type DependentDocumentRuleItem,
   getDocTypeLabel,
   getFullFileUrl,
   getGroupTitle,
@@ -40,6 +43,7 @@ import {
 import { dependentLifecycleApi } from '../../api/dependentLifecycleApi';
 import { ageAtEffectiveFrom, RELATIONSHIP_OPTIONS } from './dependentEligibility';
 import { buildProofDocumentsParams } from './proofDocumentsParams';
+import { buildEffectivePeriodUpdatePayload } from './editEffectivePeriod';
 import {
   buildManualChangeGroupPlan,
   runManualChangeGroup,
@@ -48,6 +52,7 @@ import {
 import { runSoftDeleteDependent } from './softDeleteDependent';
 import {
   calculateDependentAge,
+  computeMissingMandatoryDocTypes,
   formatDependentDate,
   formatDependentMonthRange,
   getDependentStatusMeta,
@@ -78,6 +83,7 @@ export const DependentDetailScreen: React.FC = () => {
   }, []);
 
   const [detail, setDetail] = useState<any | null>(null);
+  const [docRules, setDocRules] = useState<DependentDocumentRuleItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -91,17 +97,26 @@ export const DependentDetailScreen: React.FC = () => {
   const [deleteReason, setDeleteReason] = useState<string>('');
   const [deleteLoading, setDeleteLoading] = useState<boolean>(false);
 
+  const [periodEditVisible, setPeriodEditVisible] = useState<boolean>(false);
+  const [periodFrom, setPeriodFrom] = useState<string>('2026-01');
+  const [periodTo, setPeriodTo] = useState<string>('2026-12');
+  const [periodSaving, setPeriodSaving] = useState<boolean>(false);
+  const [periodError, setPeriodError] = useState<string | null>(null);
+
   const fetchDetail = useCallback(async (isRefresh = false) => {
     if (!isRefresh) setLoading(true);
     setLoadError(null);
     try {
-      // getRules nạp tên giấy tờ (docName) từ DB để nhãn tài liệu đã nộp không hiện mã thô
-      const [data] = await Promise.all([
+      // getRules nạp tên giấy tờ (docName) và danh mục giấy tờ bắt buộc từ DB
+      const [data, rules] = await Promise.all([
         dependentDocumentApi.getDependentById(dependentId),
         dependentDocumentApi.getRules(),
       ]);
       if (!isMountedRef.current) return;
       setDetail(data);
+      if (Array.isArray(rules)) {
+        setDocRules(rules);
+      }
     } catch (err: unknown) {
       if (!isMountedRef.current) return;
       const msg = toFriendlyErrorMessage(err, 'Không thể tải thông tin chi tiết người phụ thuộc.');
@@ -125,6 +140,67 @@ export const DependentDetailScreen: React.FC = () => {
     setRefreshing(true);
     void fetchDetail(true);
   }, [fetchDetail]);
+
+  const isInactive = String(detail?.status || '').trim().toUpperCase() === 'INACTIVE';
+
+  const handleOpenEditDependent = useCallback(() => {
+    if (isInactive) return;
+    const targetId = detail?.dependentId || dependentId;
+    if (!targetId) return;
+    navigation.navigate('EditDependent', { dependentId: targetId });
+  }, [detail?.dependentId, dependentId, isInactive, navigation]);
+
+  const handleOpenEditEffectivePeriod = useCallback(() => {
+    if (!detail || isInactive) return;
+    const defaultYear = String(new Date().getFullYear());
+    setPeriodFrom(detail.effectiveFromMonth || `${defaultYear}-01`);
+    setPeriodTo(detail.effectiveToMonth || `${defaultYear}-12`);
+    setPeriodError(null);
+    setPeriodEditVisible(true);
+  }, [detail, isInactive]);
+
+  const handleSaveEffectivePeriod = useCallback(async () => {
+    if (!detail || periodSaving) return;
+    const targetId = detail.dependentId || dependentId;
+    const built = buildEffectivePeriodUpdatePayload(detail, periodFrom, periodTo);
+    if (!built.ok) {
+      setPeriodError(built.message);
+      toast.warning(built.message, 'Thời gian hiệu lực');
+      return;
+    }
+    setPeriodSaving(true);
+    setPeriodError(null);
+    try {
+      await dependentDocumentApi.updateDependent(targetId, built.payload);
+      const refreshed = await dependentDocumentApi.getDependentById(targetId);
+      if (!isMountedRef.current) return;
+      setDetail(refreshed);
+      setPeriodEditVisible(false);
+      toast.success('Đã cập nhật thời gian hiệu lực giảm trừ.', 'Thành công');
+    } catch (err: unknown) {
+      if (!isMountedRef.current) return;
+      const anyErr = err as {
+        errorCode?: string;
+        message?: string;
+        response?: { data?: { message?: string; errorCode?: string; errors?: { errorCode?: string } } };
+      };
+      const code =
+        anyErr.errorCode ||
+        anyErr.response?.data?.errors?.errorCode ||
+        anyErr.response?.data?.errorCode;
+      const message = pickApiErrorMessage(
+        code,
+        anyErr.response?.data?.message || anyErr.message,
+        'Không thể cập nhật thời gian hiệu lực.'
+      );
+      setPeriodError(message);
+      toast.error(message, 'Không thể cập nhật');
+    } finally {
+      if (isMountedRef.current) {
+        setPeriodSaving(false);
+      }
+    }
+  }, [detail, dependentId, periodFrom, periodTo, periodSaving, toast]);
 
   const handleOpenProofDocuments = useCallback(() => {
     if (!detail) return;
@@ -250,9 +326,12 @@ export const DependentDetailScreen: React.FC = () => {
     }
   }, [detail, dependentId, deleteLoading, deleteReason, navigation, toast]);
 
-  const statusMeta = detail ? getDependentStatusMeta(detail.status, detail.isProfileComplete) : null;
   const age = detail ? calculateDependentAge(detail.birthDate) : 0;
-  const missingDocs: string[] = Array.isArray(detail?.missingDocuments) ? detail.missingDocuments : [];
+  const missingDocs: string[] = computeMissingMandatoryDocTypes(detail, docRules);
+  const isEffectivelyComplete = Boolean(detail?.isProfileComplete) && missingDocs.length === 0;
+  const statusMeta = detail
+    ? getDependentStatusMeta(detail.status, isEffectivelyComplete, missingDocs.length)
+    : null;
   const documents: any[] = Array.isArray(detail?.documents) ? detail.documents : [];
 
   return (
@@ -348,7 +427,22 @@ export const DependentDetailScreen: React.FC = () => {
 
           {/* Thông tin cá nhân & giảm trừ */}
           <View style={styles.sectionCard}>
-            <Text style={styles.sectionHeading}>THÔNG TIN CÁ NHÂN & GIẢM TRỪ</Text>
+            <View style={styles.sectionHeaderRow}>
+              <Text style={[styles.sectionHeading, styles.sectionHeadingInline]}>
+                THÔNG TIN CÁ NHÂN & GIẢM TRỪ
+              </Text>
+              {!isInactive ? (
+                <TouchableOpacity
+                  style={styles.inlineEditBtn}
+                  onPress={handleOpenEditDependent}
+                  activeOpacity={0.75}
+                  testID="detailInlineEditProfileBtn"
+                >
+                  <Ionicons name="create-outline" size={15} color={theme.colors.primary} />
+                  <Text style={styles.inlineEditBtnText}>Chỉnh sửa</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
 
             <DetailRow label="Họ và tên" value={formatPersonName(detail.fullName)} />
             <DetailRow label="Mối quan hệ" value={getRelationshipLabel(detail.relationship)} />
@@ -366,10 +460,29 @@ export const DependentDetailScreen: React.FC = () => {
             {detail.taxIdNumber ? (
               <DetailRow label="Mã số thuế NPT" value={detail.taxIdNumber} monospace />
             ) : null}
-            <DetailRow
-              label="Thời gian hiệu lực"
-              value={formatDependentMonthRange(detail.effectiveFromMonth, detail.effectiveToMonth)}
-            />
+            {isInactive ? (
+              <DetailRow
+                label="Thời gian hiệu lực"
+                value={formatDependentMonthRange(detail.effectiveFromMonth, detail.effectiveToMonth)}
+              />
+            ) : (
+              <TouchableOpacity
+                style={[styles.detailRow, styles.detailRowBorder]}
+                onPress={handleOpenEditEffectivePeriod}
+                activeOpacity={0.75}
+                accessibilityRole="button"
+                accessibilityLabel="Chỉnh sửa thời gian hiệu lực"
+                testID="detailEditEffectivePeriodRow"
+              >
+                <Text style={styles.detailLabel}>Thời gian hiệu lực</Text>
+                <View style={styles.editableValueWrap}>
+                  <Text style={styles.detailValue}>
+                    {formatDependentMonthRange(detail.effectiveFromMonth, detail.effectiveToMonth)}
+                  </Text>
+                  <Ionicons name="create-outline" size={14} color={theme.colors.primary} />
+                </View>
+              </TouchableOpacity>
+            )}
             {detail.note ? <DetailRow label="Ghi chú" value={detail.note} /> : null}
             {detail.createdAt ? (
               <DetailRow label="Ngày khai báo" value={formatDependentDate(detail.createdAt)} />
@@ -448,8 +561,18 @@ export const DependentDetailScreen: React.FC = () => {
                       <Text style={styles.docFileName} numberOfLines={1}>{fileName}</Text>
                       <Text style={styles.docItemDate}>
                         Ngày nộp: {formatDependentDate(doc.uploadedAt)} •{' '}
-                        <Text style={doc.isReadable ? styles.validStatusText : styles.pendingStatusText}>
-                          {doc.isReadable ? '✓ Hợp lệ' : 'Đang kiểm tra'}
+                        <Text
+                          style={
+                            doc.isCurrent === false || !doc.isReadable
+                              ? styles.pendingStatusText
+                              : styles.validStatusText
+                          }
+                        >
+                          {doc.isCurrent === false
+                            ? 'Cần nộp lại'
+                            : doc.isReadable
+                            ? '✓ Hợp lệ'
+                            : 'Đang kiểm tra'}
                         </Text>
                       </Text>
                     </View>
@@ -473,42 +596,70 @@ export const DependentDetailScreen: React.FC = () => {
           <View style={styles.sectionCard}>
             <Text style={styles.sectionHeading}>CHỈNH SỬA & QUẢN LÝ HỒ SƠ</Text>
 
-            <TouchableOpacity
-              style={styles.primaryActionBtn}
-              onPress={handleOpenProofDocuments}
-              activeOpacity={0.85}
-              testID="detailGoProofBtn"
-            >
-              <Ionicons name="cloud-upload-outline" size={18} color="#FFFFFF" />
-              <Text style={styles.primaryActionText}>
-                {detail.isProfileComplete ? 'Xem / Cập nhật giấy tờ minh chứng' : 'Bổ sung giấy tờ minh chứng ngay'}
-              </Text>
-            </TouchableOpacity>
+            {isInactive ? (
+              <InfoNote
+                text="Hồ sơ người phụ thuộc này đã ngừng hiệu lực (vô hiệu hóa) nên chỉ hỗ trợ tra cứu lịch sử và không thể chỉnh sửa."
+              />
+            ) : (
+              <>
+                <TouchableOpacity
+                  style={styles.primaryActionBtn}
+                  onPress={handleOpenProofDocuments}
+                  activeOpacity={0.85}
+                  testID="detailGoProofBtn"
+                >
+                  <Ionicons name="cloud-upload-outline" size={18} color="#FFFFFF" />
+                  <Text style={styles.primaryActionText}>
+                    {isEffectivelyComplete ? 'Xem / Cập nhật giấy tờ minh chứng' : 'Bổ sung giấy tờ minh chứng ngay'}
+                  </Text>
+                </TouchableOpacity>
 
-            <TouchableOpacity
-              style={styles.secondaryActionBtn}
-              onPress={handleOpenChangeGroup}
-              activeOpacity={0.85}
-              testID="detailChangeGroupBtn"
-            >
-              <Ionicons name="swap-horizontal-outline" size={18} color={theme.colors.primary} />
-              <Text style={styles.secondaryActionText}>Đổi nhóm điều kiện & ghi chú</Text>
-            </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.secondaryActionBtn}
+                  onPress={handleOpenEditDependent}
+                  activeOpacity={0.85}
+                  testID="detailEditProfileBtn"
+                >
+                  <Ionicons name="create-outline" size={18} color={theme.colors.primary} />
+                  <Text style={styles.secondaryActionText}>Chỉnh sửa hồ sơ người phụ thuộc</Text>
+                </TouchableOpacity>
 
-            <TouchableOpacity
-              style={styles.dangerActionBtn}
-              onPress={() => setDeleteModalVisible(true)}
-              activeOpacity={0.85}
-              testID="detailSoftDeleteBtn"
-            >
-              <Ionicons name="trash-outline" size={18} color={theme.colors.error} />
-              <Text style={styles.dangerActionText}>Vô hiệu hóa hồ sơ người phụ thuộc</Text>
-            </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.secondaryActionBtn}
+                  onPress={handleOpenEditEffectivePeriod}
+                  activeOpacity={0.85}
+                  testID="detailEditEffectivePeriodBtn"
+                >
+                  <Ionicons name="calendar-outline" size={18} color={theme.colors.primary} />
+                  <Text style={styles.secondaryActionText}>Chỉnh sửa thời gian hiệu lực</Text>
+                </TouchableOpacity>
 
-            <View style={styles.noteSpacer} />
-            <InfoNote
-              text="Thông tin định danh cố định (Họ tên, Ngày sinh, CCCD/GKS, Mối quan hệ) được giữ nguyên sau khi tạo hồ sơ. Bạn có thể đổi nhóm điều kiện, cập nhật ghi chú/minh chứng, hoặc vô hiệu hóa hồ sơ cũ để khai báo lại nếu nhập nhầm."
-            />
+                <TouchableOpacity
+                  style={styles.secondaryActionBtn}
+                  onPress={handleOpenChangeGroup}
+                  activeOpacity={0.85}
+                  testID="detailChangeGroupBtn"
+                >
+                  <Ionicons name="swap-horizontal-outline" size={18} color={theme.colors.primary} />
+                  <Text style={styles.secondaryActionText}>Đổi nhóm điều kiện & ghi chú</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.dangerActionBtn}
+                  onPress={() => setDeleteModalVisible(true)}
+                  activeOpacity={0.85}
+                  testID="detailSoftDeleteBtn"
+                >
+                  <Ionicons name="trash-outline" size={18} color={theme.colors.error} />
+                  <Text style={styles.dangerActionText}>Vô hiệu hóa hồ sơ người phụ thuộc</Text>
+                </TouchableOpacity>
+
+                <View style={styles.noteSpacer} />
+                <InfoNote
+                  text="Bạn có thể chỉnh sửa thông tin hồ sơ người phụ thuộc, đổi nhóm điều kiện, cập nhật ghi chú/minh chứng, hoặc vô hiệu hóa hồ sơ cũ. Nếu thay đổi thông tin định danh (Họ tên, Ngày sinh, CCCD/GKS), hệ thống sẽ yêu cầu nộp lại giấy tờ minh chứng tương ứng."
+                />
+              </>
+            )}
           </View>
         </ScrollView>
       ) : null}
@@ -533,6 +684,31 @@ export const DependentDetailScreen: React.FC = () => {
           if (changeGroupLoading) return;
           setChangeGroupVisible(false);
           setChangeGroupPlan(null);
+        }}
+      />
+
+      <EditEffectivePeriodSheet
+        visible={periodEditVisible}
+        personName={detail ? formatPersonName(detail.fullName) : ''}
+        periodFrom={periodFrom}
+        periodTo={periodTo}
+        birthDate={detail?.birthDate}
+        saving={periodSaving}
+        error={periodError}
+        onChangeFrom={(ym) => {
+          setPeriodFrom(ym);
+          setPeriodError(null);
+        }}
+        onChangeTo={(ym) => {
+          setPeriodTo(ym);
+          setPeriodError(null);
+        }}
+        onCancel={() => {
+          if (periodSaving) return;
+          setPeriodEditVisible(false);
+        }}
+        onSave={() => {
+          void handleSaveEffectivePeriod();
         }}
       />
 
@@ -721,6 +897,40 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.colors.border,
     marginBottom: 14,
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginBottom: 10,
+  },
+  sectionHeadingInline: {
+    marginBottom: 0,
+    flex: 1,
+  },
+  inlineEditBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: '#FDF2F2',
+    borderWidth: 1,
+    borderColor: '#F3D0D0',
+  },
+  inlineEditBtnText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 12,
+    color: theme.colors.primary,
+  },
+  editableValueWrap: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 6,
   },
   missingCard: {
     backgroundColor: '#FFFBF2',

@@ -373,14 +373,17 @@ export function canNavigateToProofStep(
 
 /**
  * Kiểm tra toàn bộ các chứng từ bắt buộc trên màn đã được upload thành công hay chưa.
+ * Luôn kiểm tra thực tế các bước bắt buộc đang hiển thị; chỉ dùng cờ server khi danh sách bước trống.
  */
 export function areAllMandatoryStepsUploaded(
   docs: StepDocumentLike[],
   uploadedKeys: Record<string, boolean>,
   isServerProfileComplete = false
 ): boolean {
-  if (isServerProfileComplete) return true;
   const mandatory = docs.filter((d) => d.isMandatory);
-  if (mandatory.length === 0) return true;
-  return mandatory.every((d) => Boolean(uploadedKeys[d.key]));
+  if (mandatory.length > 0) {
+    return mandatory.every((d) => Boolean(uploadedKeys[d.key]));
+  }
+  if (docs.length === 0) return Boolean(isServerProfileComplete);
+  return true;
 }

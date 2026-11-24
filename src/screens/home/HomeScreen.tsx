@@ -129,8 +129,8 @@ const ALL_HOME_UTILITIES: HomeUtilityItem[] = [
   },
   {
     id: 'law_conditions',
-    label: 'Điều kiện luật',
-    keywords: 'dieu kien luat thue quy dinh van ban',
+    label: 'Luật thuế TNCN',
+    keywords: 'luat thue tncn dieu kien luat quy tac thue bieu thue giam tru gia canh mien thue van ban',
     icon: 'book-outline',
     inServiceGroup: true,
     testID: 'homeLawConditionsCard',
@@ -421,12 +421,8 @@ export const HomeScreen: React.FC = () => {
   }, [draftFavoriteIds]);
 
   const bannerInnerWidth = Math.max(0, bannerCardWidth - 2);
-  const slide1Height =
-    bannerInnerWidth > 0 ? Math.round(bannerInnerWidth * (341 / 1024)) : 0;
-  const slide2Height =
-    bannerInnerWidth > 0 ? Math.round(bannerInnerWidth * (576 / 1024)) : 0;
-  const activeBannerHeight =
-    bannerSlideIndex === 0 ? slide1Height : slide2Height;
+  const bannerHeight =
+    bannerInnerWidth > 0 ? Math.round(bannerInnerWidth * (440 / 1024)) : 0;
 
   const goToBannerSlide = useCallback(
     (index: number) => {
@@ -1116,10 +1112,10 @@ export const HomeScreen: React.FC = () => {
                       styles.consultBannerImage,
                       bannerInnerWidth > 0 && {
                         width: bannerInnerWidth,
-                        height: slide1Height,
+                        height: bannerHeight,
                       },
                     ]}
-                    resizeMode="contain"
+                    resizeMode="stretch"
                   />
                 </TouchableOpacity>
               ) : (
@@ -1127,7 +1123,7 @@ export const HomeScreen: React.FC = () => {
                   <View
                     style={[
                       styles.consultBannerCard,
-                      activeBannerHeight > 0 && { height: activeBannerHeight + 2 },
+                      bannerHeight > 0 && { height: bannerHeight + 2 },
                     ]}
                     testID="homeConsultBanner"
                   >
@@ -1138,7 +1134,7 @@ export const HomeScreen: React.FC = () => {
                         pagingEnabled
                         showsHorizontalScrollIndicator={false}
                         scrollEventThrottle={16}
-                        style={{ width: bannerInnerWidth, height: activeBannerHeight }}
+                        style={{ width: bannerInnerWidth, height: bannerHeight }}
                         contentContainerStyle={styles.bannerScrollContent}
                         onMomentumScrollEnd={(e) => {
                           const idx = Math.round(
@@ -1151,7 +1147,7 @@ export const HomeScreen: React.FC = () => {
                         <TouchableOpacity
                           style={[
                             styles.bannerSlideItem,
-                            { width: bannerInnerWidth, height: slide1Height },
+                            { width: bannerInnerWidth, height: bannerHeight },
                           ]}
                           onPress={() => navigation.navigate('ExpertList')}
                           activeOpacity={0.9}
@@ -1161,8 +1157,8 @@ export const HomeScreen: React.FC = () => {
                         >
                           <Image
                             source={CONSULT_BANNER_IMAGE}
-                            style={{ width: bannerInnerWidth, height: slide1Height }}
-                            resizeMode="contain"
+                            style={{ width: bannerInnerWidth, height: bannerHeight }}
+                            resizeMode="stretch"
                           />
                         </TouchableOpacity>
 
@@ -1170,7 +1166,7 @@ export const HomeScreen: React.FC = () => {
                         <TouchableOpacity
                           style={[
                             styles.bannerSlideItem,
-                            { width: bannerInnerWidth, height: slide2Height },
+                            { width: bannerInnerWidth, height: bannerHeight },
                           ]}
                           onPress={() => navigation.navigate('ExpertApplication')}
                           activeOpacity={0.9}
@@ -1180,8 +1176,8 @@ export const HomeScreen: React.FC = () => {
                         >
                           <Image
                             source={EXPERT_PARTNER_BANNER_IMAGE}
-                            style={{ width: bannerInnerWidth, height: slide2Height }}
-                            resizeMode="contain"
+                            style={{ width: bannerInnerWidth, height: bannerHeight }}
+                            resizeMode="stretch"
                           />
                         </TouchableOpacity>
                       </ScrollView>
@@ -1194,7 +1190,7 @@ export const HomeScreen: React.FC = () => {
                         <Image
                           source={CONSULT_BANNER_IMAGE}
                           style={styles.consultBannerImage}
-                          resizeMode="contain"
+                          resizeMode="stretch"
                         />
                       </TouchableOpacity>
                     )}
@@ -2123,11 +2119,11 @@ const styles = StyleSheet.create({
   },
   consultBannerImage: {
     width: '100%',
-    aspectRatio: 1024 / 341,
+    aspectRatio: 1024 / 440,
   },
   partnerBannerImage: {
     width: '100%',
-    aspectRatio: 1024 / 576,
+    aspectRatio: 1024 / 440,
   },
   bannerDotsRow: {
     flexDirection: 'row',

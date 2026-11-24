@@ -15,6 +15,7 @@ import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
+import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
 import { sanitizeUiMessage, toFriendlyErrorMessage } from '../../utils/friendlyError';
 import { RootNavigationProp } from '../../navigation/types';
@@ -163,6 +164,7 @@ export const SettlementListScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
+      <DrumPatternBackdrop variant="soft" />
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.side}
@@ -241,8 +243,9 @@ const styles = StyleSheet.create({
     flex: 1,
     textAlign: 'center',
     fontFamily: fonts.serifBold,
+    fontWeight: '700',
     fontSize: 20,
-    color: theme.colors.textPrimary,
+    color: theme.colors.primaryDark,
   },
   list: {
     paddingHorizontal: 22,

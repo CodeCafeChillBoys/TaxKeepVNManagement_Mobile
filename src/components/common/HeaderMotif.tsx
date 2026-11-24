@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ViewStyle } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
+import { useThemeStore } from '../../stores/useThemeStore';
 import { HomeHeaderButton } from '../navigation/HomeHeaderButton';
 
 interface HeaderMotifProps {
@@ -17,6 +18,7 @@ export const HeaderMotif: React.FC<HeaderMotifProps> = ({
   showFlag = true,
   style,
 }) => {
+  useThemeStore((s) => s.mode);
   return (
     <View style={[styles.container, style]}>
       <View style={styles.topRow}>

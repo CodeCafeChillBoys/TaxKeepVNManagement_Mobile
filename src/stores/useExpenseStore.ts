@@ -309,10 +309,7 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
       }
       set({ isSystemConfigsLoading: false });
       return get().systemConfigs;
-    } catch (err) {
-      if (__DEV__) {
-        console.warn('Lỗi khi tải cấu hình hệ thống từ admin:', err);
-      }
+    } catch {
       set({ isSystemConfigsLoading: false });
       return get().systemConfigs;
     }

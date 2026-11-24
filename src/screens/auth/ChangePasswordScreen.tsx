@@ -14,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
+import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { HomeHeaderButton } from '../../components/navigation/HomeHeaderButton';
 import { authApi } from '../../api/authApi';
 import { PasswordStrengthBar } from '../../components/common/PasswordStrengthBar';
@@ -134,6 +135,7 @@ export const ChangePasswordScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      <DrumPatternBackdrop variant="soft" />
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity

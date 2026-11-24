@@ -13,6 +13,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { HeaderMotif } from '../../components/common/HeaderMotif';
+import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { CustomInput } from '../../components/common/CustomInput';
 import { CustomButton } from '../../components/common/CustomButton';
 import { PasswordStrengthBar } from '../../components/common/PasswordStrengthBar';
@@ -128,6 +129,7 @@ export const ResetPasswordScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      <DrumPatternBackdrop variant="soft" />
       <HeaderMotif
         title="ĐẶT LẠI MẬT KHẨU"
         onBack={() => navigation.navigate('Login')}

@@ -5,6 +5,7 @@ import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
+import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { consultationApi } from '../../api/consultationApi';
@@ -50,6 +51,7 @@ export const SubscriptionPaymentResultScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right', 'bottom']}>
+      <DrumPatternBackdrop variant="soft" />
       <View style={styles.header}>
         <Text style={styles.title}>Kết quả thanh toán</Text>
       </View>
@@ -89,7 +91,7 @@ export const SubscriptionPaymentResultScreen: React.FC = () => {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: theme.colors.background },
   header: { height: 52, alignItems: 'center', justifyContent: 'center' },
-  title: { fontFamily: fonts.serifBold, fontSize: 20, color: theme.colors.textPrimary },
+  title: { fontFamily: fonts.serifBold, fontWeight: '700', fontSize: 20, color: theme.colors.primaryDark },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 28, gap: 12 },
   resultTitle: { fontFamily: fonts.serifBold, fontSize: 22, color: theme.colors.textPrimary, textAlign: 'center' },
   sub: {

@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { fonts } from '../../constants/fonts';
+import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { formatPersonName } from '../../utils/formatPersonName';
 import { CONDITION_GROUP_OPTIONS, RELATIONSHIP_OPTIONS } from './dependentEligibility';
@@ -61,7 +62,7 @@ export const DependentSavedScreen: React.FC = () => {
   return (
     <View style={styles.safe}>
       <StatusBar style="dark" />
-      <SavedPattern />
+      <DrumPatternBackdrop variant="soft" />
       <ScrollView
         contentContainerStyle={[
           styles.scroll,

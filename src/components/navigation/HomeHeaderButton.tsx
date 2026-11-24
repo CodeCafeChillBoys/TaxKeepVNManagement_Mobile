@@ -4,6 +4,7 @@ import { useNavigation, useNavigationState, useRoute } from '@react-navigation/n
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { useAuthStore } from '../../stores/useAuthStore';
+import { useThemeStore } from '../../stores/useThemeStore';
 import { RootNavigationProp } from '../../navigation/types';
 import { shouldShowHomeButton } from './homeButtonUtils';
 
@@ -22,10 +23,12 @@ export function useShowHomeButton(): boolean {
 type Props = { color?: string; style?: StyleProp<ViewStyle> };
 
 /** Về thẳng Trang chủ từ bất kỳ màn nào (không phải bấm lùi từng màn). */
-export function HomeHeaderButton({ color = theme.colors.textPrimary, style }: Props) {
+export function HomeHeaderButton({ color, style }: Props) {
   const navigation = useNavigation<RootNavigationProp>();
+  useThemeStore((s) => s.mode);
   const visible = useShowHomeButton();
   if (!visible) return null;
+  const resolvedColor = color ?? theme.colors.textPrimary;
 
   return (
     <TouchableOpacity
@@ -36,7 +39,7 @@ export function HomeHeaderButton({ color = theme.colors.textPrimary, style }: Pr
       testID="headerHomeBtn"
       hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
     >
-      <Ionicons name="home-outline" size={22} color={color} />
+      <Ionicons name="home-outline" size={22} color={resolvedColor} />
     </TouchableOpacity>
   );
 }

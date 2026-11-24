@@ -14,6 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
+import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { HomeHeaderButton } from '../../components/navigation/HomeHeaderButton';
 import { Dialog } from '../../components/common/Dialog';
 import { ProvinceSelect } from '../../components/common/ProvinceSelect';
@@ -222,6 +223,7 @@ export const EditProfileScreen: React.FC = () => {
   if (loading) {
     return (
       <SafeAreaView style={styles.safeArea}>
+        <DrumPatternBackdrop variant="soft" />
         <View style={styles.header}>
           <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
             <Ionicons name="close" size={24} color={theme.colors.textPrimary} />
@@ -243,6 +245,7 @@ export const EditProfileScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      <DrumPatternBackdrop variant="soft" />
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity

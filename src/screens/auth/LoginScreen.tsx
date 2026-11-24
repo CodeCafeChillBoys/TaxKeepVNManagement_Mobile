@@ -180,7 +180,7 @@ export const LoginScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
-      <DrumPatternBackdrop variant="full" />
+      <DrumPatternBackdrop variant="soft" />
 
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -309,7 +309,7 @@ export const LoginScreen: React.FC = () => {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.colors.background,
   },
   keyboardView: {
     flex: 1,

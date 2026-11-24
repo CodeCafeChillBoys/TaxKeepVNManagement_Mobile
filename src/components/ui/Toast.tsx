@@ -186,6 +186,8 @@ const VARIANT_CONFIGS = {
   },
 } as const;
 
+const USE_NATIVE_DRIVER = Platform.OS !== 'web';
+
 const ToastCard = React.memo<{ item: ToastInternalItem; onDismiss: (id: string) => void }>(
   ({ item, onDismiss }) => {
     const opacity = useRef(new Animated.Value(0)).current;
@@ -197,12 +199,12 @@ const ToastCard = React.memo<{ item: ToastInternalItem; onDismiss: (id: string) 
         Animated.timing(opacity, {
           toValue: 0,
           duration: 180,
-          useNativeDriver: true,
+          useNativeDriver: USE_NATIVE_DRIVER,
         }),
         Animated.timing(translateY, {
           toValue: -14,
           duration: 180,
-          useNativeDriver: true,
+          useNativeDriver: USE_NATIVE_DRIVER,
         }),
       ]).start(() => {
         if (isMountedRef.current) {
@@ -217,13 +219,13 @@ const ToastCard = React.memo<{ item: ToastInternalItem; onDismiss: (id: string) 
         Animated.timing(opacity, {
           toValue: 1,
           duration: 220,
-          useNativeDriver: true,
+          useNativeDriver: USE_NATIVE_DRIVER,
         }),
         Animated.spring(translateY, {
           toValue: 0,
           friction: 8,
           tension: 80,
-          useNativeDriver: true,
+          useNativeDriver: USE_NATIVE_DRIVER,
         }),
       ]);
       enterAnim.start();

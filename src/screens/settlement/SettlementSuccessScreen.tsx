@@ -26,11 +26,6 @@ export const SettlementSuccessScreen: React.FC = () => {
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
       <StatusBar style="dark" />
-      <LinearGradient
-        colors={['#ECE9C2', '#ECE9C2', '#F8F5EE']}
-        locations={[0, 0.4, 1]}
-        style={styles.wash}
-      />
 
       <SettlementExportHeader
         title="Đã chốt"

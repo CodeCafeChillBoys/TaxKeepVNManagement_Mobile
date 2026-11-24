@@ -11,7 +11,25 @@ import { theme } from './src/constants/theme';
 import { useThemeStore } from './src/stores/useThemeStore';
 
 if (__DEV__) {
-  LogBox.ignoreLogs(['Cannot connect to Expo CLI']);
+  LogBox.ignoreLogs([
+    'Cannot connect to Expo CLI',
+    'Cannot record touch end without a touch start',
+    'Animated: `useNativeDriver` is not supported',
+  ]);
+
+  if (Platform.OS === 'web') {
+    const origWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      const first = typeof args[0] === 'string' ? args[0] : '';
+      if (
+        first.includes('Cannot record touch end without a touch start') ||
+        first.includes('Animated: `useNativeDriver` is not supported')
+      ) {
+        return;
+      }
+      origWarn(...args);
+    };
+  }
 }
 
 export default function App() {

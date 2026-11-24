@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Animated, Easing, LayoutChangeEvent } from 'react-native';
+import { View, Text, StyleSheet, Animated, Easing, LayoutChangeEvent, Platform } from 'react-native';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
 
@@ -23,7 +23,7 @@ function IndeterminateBar() {
         toValue: 1,
         duration: 1400,
         easing: Easing.inOut(Easing.ease),
-        useNativeDriver: true,
+        useNativeDriver: Platform.OS !== 'web',
       })
     );
     loop.start();

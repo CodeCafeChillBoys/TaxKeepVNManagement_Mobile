@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -45,7 +46,11 @@ const Field = memo(function Field({
       ]}
     >
       <Text style={[styles.fieldLabel, { color: palette.textSecondary }]}>{label}</Text>
-      <Text style={[styles.fieldValue, { color: palette.textPrimary }]}>
+      <Text
+        style={[styles.fieldValue, { color: palette.textPrimary }]}
+        numberOfLines={2}
+        ellipsizeMode="tail"
+      >
         {value || 'Chưa cập nhật'}
       </Text>
     </View>
@@ -327,13 +332,14 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     paddingHorizontal: 14,
+    overflow: 'hidden',
     ...theme.shadows.card,
   },
   fieldRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
-    gap: 16,
+    gap: 12,
     paddingVertical: 13,
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
@@ -342,7 +348,6 @@ const styles = StyleSheet.create({
     borderBottomWidth: 0,
   },
   fieldLabel: {
-    width: 118,
     flexShrink: 0,
     fontFamily: fonts.body,
     fontSize: 14,
@@ -352,11 +357,15 @@ const styles = StyleSheet.create({
   fieldValue: {
     flex: 1,
     flexShrink: 1,
+    minWidth: 0,
     fontFamily: fonts.bodySemi,
     fontSize: 14,
     lineHeight: 20,
     color: theme.colors.textPrimary,
     textAlign: 'right',
+    ...(Platform.OS === 'web'
+      ? ({ wordBreak: 'break-word', overflowWrap: 'anywhere' } as any)
+      : {}),
   },
   link: {
     fontFamily: fonts.bodySemi,

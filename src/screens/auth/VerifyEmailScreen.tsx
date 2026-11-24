@@ -13,6 +13,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { HeaderMotif } from '../../components/common/HeaderMotif';
+import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { CustomInput } from '../../components/common/CustomInput';
 import { CustomButton } from '../../components/common/CustomButton';
 import { useToast } from '../../components/ui/Toast';
@@ -109,6 +110,7 @@ export const VerifyEmailScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      <DrumPatternBackdrop variant="soft" />
       <HeaderMotif
         title="XÁC MINH EMAIL"
         onBack={() => navigation.replace('Login')}

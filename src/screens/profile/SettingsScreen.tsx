@@ -100,7 +100,7 @@ const SettingsRow = memo(function SettingsRow({
         <View
           style={[
             styles.linkIconBox,
-            { backgroundColor: isDark ? '#2A2622' : '#F5EFE6' },
+            { backgroundColor: isDark ? palette.surfaceSecondary : '#F5EFE6' },
           ]}
         >
           <Ionicons name={icon} size={18} color={palette.primary} />
@@ -196,7 +196,7 @@ export const SettingsScreen: React.FC = () => {
                 <View
                   style={[
                     styles.linkIconBox,
-                    { backgroundColor: isDark ? '#2A2622' : '#F5EFE6' },
+                    { backgroundColor: isDark ? palette.surfaceSecondary : '#F5EFE6' },
                   ]}
                 >
                   <Ionicons

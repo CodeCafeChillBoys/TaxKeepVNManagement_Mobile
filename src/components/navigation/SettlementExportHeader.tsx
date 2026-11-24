@@ -4,8 +4,10 @@ import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
+import { DrumPatternBackdrop } from '../brand/DrumPatternBackdrop';
 import { GoldDoubleRule } from '../brand/GoldDoubleRule';
 import { RootNavigationProp } from '../../navigation/types';
+import { useThemeStore } from '../../stores/useThemeStore';
 
 type Props = {
   title: string;
@@ -25,6 +27,7 @@ export const SettlementExportHeader: React.FC<Props> = ({
   showRule = true,
 }) => {
   const navigation = useNavigation<RootNavigationProp>();
+  useThemeStore((s) => s.mode);
 
   const goHome = () => {
     navigation.reset({ index: 0, routes: [{ name: 'Home' }] });
@@ -32,6 +35,7 @@ export const SettlementExportHeader: React.FC<Props> = ({
 
   return (
     <>
+      <DrumPatternBackdrop variant="soft" />
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.side}
@@ -64,6 +68,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 8,
     height: 52,
+    backgroundColor: 'transparent',
   },
   side: {
     width: 44,
@@ -75,8 +80,9 @@ const styles = StyleSheet.create({
     flex: 1,
     textAlign: 'center',
     fontFamily: fonts.serifBold,
+    fontWeight: '700',
     fontSize: 20,
-    color: theme.colors.textPrimary,
+    color: theme.colors.primaryDark,
   },
 });
 

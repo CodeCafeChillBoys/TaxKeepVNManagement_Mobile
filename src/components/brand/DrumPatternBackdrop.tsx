@@ -17,9 +17,9 @@ export function DrumPatternBackdrop({ variant = 'full', style }: Props) {
   const height = variant === 'full' ? 420 : 380;
   const topOffset = variant === 'full' ? -110 : -160;
   const size = variant === 'full' ? 580 : 540;
-  const opacity = isDark ? 0.22 : variant === 'full' ? 0.8 : 0.75;
+  const opacity = isDark ? 0.28 : variant === 'full' ? 0.8 : 0.75;
   const fadeColors = isDark
-    ? (['#2A2318', '#1F1B15', DARK_COLORS.background] as const)
+    ? (['#33291A', '#221C14', DARK_COLORS.background] as const)
     : variant === 'full'
     ? (['#ECE9C2', '#ECE9C2', '#FFFFFF'] as const)
     : (['#ECE9C2', '#ECE9C2', '#F8F5EE'] as const);

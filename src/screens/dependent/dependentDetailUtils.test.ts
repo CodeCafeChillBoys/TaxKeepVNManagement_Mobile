@@ -1,4 +1,5 @@
 import {
+  computeMissingMandatoryDocTypes,
   getDependentStatusMeta,
   formatDependentDate,
   formatDependentMonth,
@@ -9,9 +10,30 @@ import {
 
 describe('dependentDetailUtils', () => {
   it('maps status and profile completeness to clear Vietnamese metadata', () => {
-    expect(getDependentStatusMeta('ACTIVE', true).tone).toBe('success');
+    expect(getDependentStatusMeta('ACTIVE', true, 0).tone).toBe('success');
+    expect(getDependentStatusMeta('ACTIVE', true, 1).tone).toBe('warning');
+    expect(getDependentStatusMeta('ACTIVE', true, 1).label).toBe('Chờ bổ sung minh chứng');
     expect(getDependentStatusMeta('PENDING_DOCUMENTS', false).tone).toBe('warning');
     expect(getDependentStatusMeta('INACTIVE', false).tone).toBe('neutral');
+  });
+
+  it('detects missing mandatory documents from DB rules even when BE returns empty missingDocuments', () => {
+    const missing = computeMissingMandatoryDocTypes(
+      {
+        currentGroup: 'PARENT_RETIRED',
+        missingDocuments: [],
+        documents: [
+          { docType: 'CITIZEN_ID', isCurrent: true },
+          { docType: 'BIRTH_CERTIFICATE', isCurrent: true },
+        ],
+      },
+      [
+        { targetGroup: 'PARENT_RETIRED', docType: 'CITIZEN_ID', isMandatory: true, isActive: true },
+        { targetGroup: 'PARENT_RETIRED', docType: 'BIRTH_CERTIFICATE', isMandatory: true, isActive: true },
+        { targetGroup: 'PARENT_RETIRED', docType: 'RELATIONSHIP_CERTIFICATE', isMandatory: true, isActive: true },
+      ]
+    );
+    expect(missing).toEqual(['RELATIONSHIP_CERTIFICATE']);
   });
 
   it('formats dates and effective month ranges cleanly', () => {

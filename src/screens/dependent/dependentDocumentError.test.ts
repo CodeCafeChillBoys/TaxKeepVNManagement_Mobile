@@ -145,8 +145,10 @@ describe('dependentDocumentError', () => {
 
     it('checks whether all mandatory steps are complete', () => {
       expect(areAllMandatoryStepsUploaded(docs, { a: true })).toBe(false);
+      // Không được báo "Đủ hồ sơ" khi bước bắt buộc còn thiếu dù server trả isProfileComplete=true
+      expect(areAllMandatoryStepsUploaded(docs, { a: true }, true)).toBe(false);
       expect(areAllMandatoryStepsUploaded(docs, { a: true, c: true })).toBe(true);
-      expect(areAllMandatoryStepsUploaded(docs, {}, true)).toBe(true);
+      expect(areAllMandatoryStepsUploaded([], {}, true)).toBe(true);
     });
   });
 });

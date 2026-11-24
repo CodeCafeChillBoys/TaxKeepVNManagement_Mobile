@@ -1,7 +1,12 @@
 import { parseBirthDateParts } from './applyTaxRegistrationOcrFill';
 import { groupsForRelationship } from './dependentGroupUtils';
-import { ageAtEffectiveFrom, isAge14OrOlderAtEffective } from './dependentEligibility';
 import { isBeforeBirthMonth } from './editEffectivePeriod';
+
+export const DEPENDENT_MAX_LENGTHS = {
+  fullName: 150,
+  birthCertNumber: 50,
+  note: 500,
+} as const;
 
 export type EditDependentFormState = {
   fullName: string;
@@ -143,10 +148,16 @@ export type BuildUpdateResult =
   | { ok: true; payload: UpdateDependentPayload }
   | { ok: false; message: string };
 
-/** Validate + dựng body PUT /dependents/{id}. */
+/** Validate + dựng body PUT /dependents/{id} khớp UpdateDependentRequest & DependentService (BE). */
 export function buildUpdateDependentPayload(state: EditDependentFormState): BuildUpdateResult {
   const fullName = state.fullName.trim();
   if (!fullName) return { ok: false, message: 'Vui lòng nhập họ và tên người phụ thuộc.' };
+  if (fullName.length > DEPENDENT_MAX_LENGTHS.fullName) {
+    return {
+      ok: false,
+      message: `Họ và tên người phụ thuộc tối đa ${DEPENDENT_MAX_LENGTHS.fullName} ký tự.`,
+    };
+  }
 
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(state.effectiveFromMonth)) {
     return { ok: false, message: 'Tháng bắt đầu không đúng định dạng YYYY-MM.' };
@@ -168,22 +179,24 @@ export function buildUpdateDependentPayload(state: EditDependentFormState): Buil
     };
   }
 
-  const age = ageAtEffectiveFrom(
-    state.birthDay,
-    state.birthMonth,
-    state.birthYear,
-    state.effectiveFromMonth
-  );
-  const needCitizenId = isAge14OrOlderAtEffective(age);
   const citizenId = state.citizenId.trim();
   const birthCertNumber = state.birthCertNumber.trim();
 
-  if (needCitizenId) {
-    if (!/^\d{12}$/.test(citizenId)) {
-      return { ok: false, message: 'Số CCCD phải đúng 12 chữ số.' };
-    }
-  } else if (!birthCertNumber) {
-    return { ok: false, message: 'Vui lòng nhập số giấy khai sinh.' };
+  // Khớp BE DependentService (IDENTIFIER_REQUIRED): bắt buộc ít nhất Số CCCD hoặc Số Giấy khai sinh.
+  if (!citizenId && !birthCertNumber) {
+    return {
+      ok: false,
+      message: 'Phải cung cấp ít nhất Số CCCD hoặc Số Giấy khai sinh của người phụ thuộc.',
+    };
+  }
+  if (citizenId && !/^\d{12}$/.test(citizenId)) {
+    return { ok: false, message: 'Số CCCD phải đúng 12 chữ số.' };
+  }
+  if (birthCertNumber.length > DEPENDENT_MAX_LENGTHS.birthCertNumber) {
+    return {
+      ok: false,
+      message: `Số giấy khai sinh tối đa ${DEPENDENT_MAX_LENGTHS.birthCertNumber} ký tự.`,
+    };
   }
 
   const taxIdNumber = state.taxIdNumber.trim();
@@ -191,19 +204,29 @@ export function buildUpdateDependentPayload(state: EditDependentFormState): Buil
     return { ok: false, message: 'Mã số thuế chỉ được 10 hoặc 12 chữ số.' };
   }
 
+  const note = state.note.trim();
+  if (note.length > DEPENDENT_MAX_LENGTHS.note) {
+    return {
+      ok: false,
+      message: `Ghi chú tối đa ${DEPENDENT_MAX_LENGTHS.note} ký tự.`,
+    };
+  }
+
   const birthDate = `${state.birthYear}-${state.birthMonth}-${state.birthDay}T00:00:00Z`;
 
+  // Gửi tường minh chuỗi rỗng "" khi người dùng xóa trắng các trường tùy chọn
+  // để BE cập nhật null/rỗng thay vì giữ nguyên giá trị cũ trong DB.
   return {
     ok: true,
     payload: {
       fullName,
       birthDate,
-      citizenId: needCitizenId ? citizenId : undefined,
-      birthCertNumber: needCitizenId ? undefined : birthCertNumber,
-      taxIdNumber: taxIdNumber || undefined,
+      citizenId,
+      birthCertNumber,
+      taxIdNumber,
       effectiveFromMonth: state.effectiveFromMonth,
       effectiveToMonth: state.effectiveToMonth,
-      note: state.note.trim() || undefined,
+      note,
     },
   };
 }

@@ -596,28 +596,38 @@ export const DependentListScreen: React.FC = () => {
                     </View>
                   ) : null}
 
-                  <TouchableOpacity
-                    style={styles.modalDetailRow}
-                    onPress={() => {
-                      setPeriodFrom(selectedDetail.effectiveFromMonth || '2026-01');
-                      setPeriodTo(selectedDetail.effectiveToMonth || '2026-12');
-                      setPeriodError(null);
-                      setIsDetailModalVisible(false);
-                      setPeriodEditVisible(true);
-                    }}
-                    accessibilityRole="button"
-                    accessibilityLabel="Sửa thời gian hiệu lực"
-                    testID="btnEditEffectivePeriodRow"
-                  >
-                    <Text style={styles.modalDetailLabel}>Thời gian hiệu lực:</Text>
-                    <View style={styles.periodValueRow}>
+                  {String(selectedDetail.status || '').toUpperCase() === 'INACTIVE' ? (
+                    <View style={styles.modalDetailRow}>
+                      <Text style={styles.modalDetailLabel}>Thời gian hiệu lực:</Text>
                       <Text style={styles.modalDetailVal}>
                         {formatPeriodShort(selectedDetail.effectiveFromMonth)} →{' '}
                         {formatPeriodShort(selectedDetail.effectiveToMonth)}
                       </Text>
-                      <Ionicons name="create-outline" size={16} color={theme.colors.primary} />
                     </View>
-                  </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity
+                      style={styles.modalDetailRow}
+                      onPress={() => {
+                        setPeriodFrom(selectedDetail.effectiveFromMonth || '2026-01');
+                        setPeriodTo(selectedDetail.effectiveToMonth || '2026-12');
+                        setPeriodError(null);
+                        setIsDetailModalVisible(false);
+                        setPeriodEditVisible(true);
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel="Sửa thời gian hiệu lực"
+                      testID="btnEditEffectivePeriodRow"
+                    >
+                      <Text style={styles.modalDetailLabel}>Thời gian hiệu lực:</Text>
+                      <View style={styles.periodValueRow}>
+                        <Text style={styles.modalDetailVal}>
+                          {formatPeriodShort(selectedDetail.effectiveFromMonth)} →{' '}
+                          {formatPeriodShort(selectedDetail.effectiveToMonth)}
+                        </Text>
+                        <Ionicons name="create-outline" size={16} color={theme.colors.primary} />
+                      </View>
+                    </TouchableOpacity>
+                  )}
                 </View>
 
                 <View style={styles.detailCardSection}>
@@ -714,111 +724,113 @@ export const DependentListScreen: React.FC = () => {
                   )}
                 </View>
 
-                <View style={styles.modalActionRow}>
-                  <TouchableOpacity
-                    style={styles.modalSecondaryBtn}
-                    onPress={() => {
-                      const id = selectedDetail.dependentId;
-                      setIsDetailModalVisible(false);
-                      navigation.navigate('EditDependent', { dependentId: id });
-                    }}
-                    testID="btnEditDependentProfile"
-                  >
-                    <Ionicons
-                      name="create-outline"
-                      size={18}
-                      color={theme.colors.primary}
-                      style={styles.btnIcon}
-                    />
-                    <Text style={styles.modalSecondaryBtnText}>Sửa hồ sơ</Text>
-                  </TouchableOpacity>
+                {String(selectedDetail.status || '').toUpperCase() !== 'INACTIVE' ? (
+                  <View style={styles.modalActionRow}>
+                    <TouchableOpacity
+                      style={styles.modalSecondaryBtn}
+                      onPress={() => {
+                        const id = selectedDetail.dependentId;
+                        setIsDetailModalVisible(false);
+                        navigation.navigate('EditDependent', { dependentId: id });
+                      }}
+                      testID="btnEditDependentProfile"
+                    >
+                      <Ionicons
+                        name="create-outline"
+                        size={18}
+                        color={theme.colors.primary}
+                        style={styles.btnIcon}
+                      />
+                      <Text style={styles.modalSecondaryBtnText}>Sửa hồ sơ</Text>
+                    </TouchableOpacity>
 
-                  <TouchableOpacity
-                    style={styles.modalSecondaryBtn}
-                    onPress={() => {
-                      setPeriodFrom(selectedDetail.effectiveFromMonth || '2026-01');
-                      setPeriodTo(selectedDetail.effectiveToMonth || '2026-12');
-                      setPeriodError(null);
-                      setIsDetailModalVisible(false);
-                      setPeriodEditVisible(true);
-                    }}
-                    testID="btnEditEffectivePeriod"
-                  >
-                    <Ionicons
-                      name="calendar-outline"
-                      size={18}
-                      color={theme.colors.primary}
-                      style={styles.btnIcon}
-                    />
-                    <Text style={styles.modalSecondaryBtnText}>Sửa thời gian hiệu lực</Text>
-                  </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.modalSecondaryBtn}
+                      onPress={() => {
+                        setPeriodFrom(selectedDetail.effectiveFromMonth || '2026-01');
+                        setPeriodTo(selectedDetail.effectiveToMonth || '2026-12');
+                        setPeriodError(null);
+                        setIsDetailModalVisible(false);
+                        setPeriodEditVisible(true);
+                      }}
+                      testID="btnEditEffectivePeriod"
+                    >
+                      <Ionicons
+                        name="calendar-outline"
+                        size={18}
+                        color={theme.colors.primary}
+                        style={styles.btnIcon}
+                      />
+                      <Text style={styles.modalSecondaryBtnText}>Sửa thời gian hiệu lực</Text>
+                    </TouchableOpacity>
 
-                  <TouchableOpacity
-                    style={styles.modalSecondaryBtn}
-                    onPress={() =>
-                      handleChangeGroup({
-                        dependentId: selectedDetail.dependentId,
-                        fullName: selectedDetail.fullName,
-                        relationship: selectedDetail.relationship,
-                        currentGroup: selectedDetail.currentGroup,
-                        birthDate: selectedDetail.birthDate,
-                        effectiveFromMonth: selectedDetail.effectiveFromMonth,
-                      })
-                    }
-                    testID="btnChangeDependentGroup"
-                  >
-                    <Ionicons
-                      name="swap-horizontal-outline"
-                      size={18}
-                      color={theme.colors.primary}
-                      style={styles.btnIcon}
-                    />
-                    <Text style={styles.modalSecondaryBtnText}>Đổi nhóm điều kiện</Text>
-                  </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.modalSecondaryBtn}
+                      onPress={() =>
+                        handleChangeGroup({
+                          dependentId: selectedDetail.dependentId,
+                          fullName: selectedDetail.fullName,
+                          relationship: selectedDetail.relationship,
+                          currentGroup: selectedDetail.currentGroup,
+                          birthDate: selectedDetail.birthDate,
+                          effectiveFromMonth: selectedDetail.effectiveFromMonth,
+                        })
+                      }
+                      testID="btnChangeDependentGroup"
+                    >
+                      <Ionicons
+                        name="swap-horizontal-outline"
+                        size={18}
+                        color={theme.colors.primary}
+                        style={styles.btnIcon}
+                      />
+                      <Text style={styles.modalSecondaryBtnText}>Đổi nhóm điều kiện</Text>
+                    </TouchableOpacity>
 
-                  <TouchableOpacity
-                    style={styles.modalDangerBtn}
-                    onPress={() =>
-                      requestSoftDelete(selectedDetail.dependentId, selectedDetail.fullName, true)
-                    }
-                    testID="btnSoftDeleteDependent"
-                  >
-                    <Ionicons
-                      name="trash-outline"
-                      size={18}
-                      color={theme.colors.error}
-                      style={styles.btnIcon}
-                    />
-                    <Text style={styles.modalDangerBtnText}>Vô hiệu hóa</Text>
-                  </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.modalDangerBtn}
+                      onPress={() =>
+                        requestSoftDelete(selectedDetail.dependentId, selectedDetail.fullName, true)
+                      }
+                      testID="btnSoftDeleteDependent"
+                    >
+                      <Ionicons
+                        name="trash-outline"
+                        size={18}
+                        color={theme.colors.error}
+                        style={styles.btnIcon}
+                      />
+                      <Text style={styles.modalDangerBtnText}>Vô hiệu hóa</Text>
+                    </TouchableOpacity>
 
-                  <TouchableOpacity
-                    style={styles.modalGoProofBtn}
-                    onPress={() => {
-                      setIsDetailModalVisible(false);
-                      handleGoToProofDocuments({
-                        id: selectedDetail.dependentId,
-                        fullName: selectedDetail.fullName,
-                        birthDate: selectedDetail.birthDate,
-                        currentGroup: selectedDetail.currentGroup,
-                        groupTitle: getGroupTitle(selectedDetail.currentGroup),
-                        isProfileComplete: selectedDetail.isProfileComplete,
-                        requiredDocs: selectedDetail.requiredDocuments || [],
-                        citizenId: selectedDetail.citizenId,
-                        birthCertNumber: selectedDetail.birthCertNumber,
-                        relationship: selectedDetail.relationship,
-                        effectiveFromMonth: selectedDetail.effectiveFromMonth,
-                        effectiveToMonth: selectedDetail.effectiveToMonth,
-                        status: selectedDetail.status,
-                      });
-                    }}
-                  >
-                    <Ionicons name="cloud-upload-outline" size={18} color="#FFFFFF" style={styles.btnIcon} />
-                    <Text style={styles.modalGoProofBtnText}>
-                      {selectedDetail.isProfileComplete ? 'Xem / Cập nhật minh chứng' : 'Bổ sung ảnh minh chứng ngay'}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
+                    <TouchableOpacity
+                      style={styles.modalGoProofBtn}
+                      onPress={() => {
+                        setIsDetailModalVisible(false);
+                        handleGoToProofDocuments({
+                          id: selectedDetail.dependentId,
+                          fullName: selectedDetail.fullName,
+                          birthDate: selectedDetail.birthDate,
+                          currentGroup: selectedDetail.currentGroup,
+                          groupTitle: getGroupTitle(selectedDetail.currentGroup),
+                          isProfileComplete: selectedDetail.isProfileComplete,
+                          requiredDocs: selectedDetail.requiredDocuments || [],
+                          citizenId: selectedDetail.citizenId,
+                          birthCertNumber: selectedDetail.birthCertNumber,
+                          relationship: selectedDetail.relationship,
+                          effectiveFromMonth: selectedDetail.effectiveFromMonth,
+                          effectiveToMonth: selectedDetail.effectiveToMonth,
+                          status: selectedDetail.status,
+                        });
+                      }}
+                    >
+                      <Ionicons name="cloud-upload-outline" size={18} color="#FFFFFF" style={styles.btnIcon} />
+                      <Text style={styles.modalGoProofBtnText}>
+                        {selectedDetail.isProfileComplete ? 'Xem / Cập nhật minh chứng' : 'Bổ sung ảnh minh chứng ngay'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : null}
 
                 <View style={styles.modalBottomSpacer} />
               </ScrollView>

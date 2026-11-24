@@ -38,6 +38,7 @@ import {
 } from './dependentEligibility';
 import { groupCodeToTitle } from './dependentGroupUtils';
 import {
+  DEPENDENT_MAX_LENGTHS,
   EditDependentFormState,
   buildUpdateDependentPayload,
   clampBirthDay,
@@ -148,6 +149,7 @@ export const EditDependentScreen: React.FC = () => {
   const needCitizenId = isAge14OrOlderAtEffective(ageAtEffective);
 
   const openPicker = (title: string, field: PickerField, options: { value: string; label: string }[]) => {
+    if (profileStatus.toUpperCase() === 'INACTIVE') return;
     setPickerTitle(title);
     setPickerField(field);
     setPickerOptions(options);
@@ -183,8 +185,10 @@ export const EditDependentScreen: React.FC = () => {
     setPickerField(null);
   };
 
+  const isInactive = profileStatus.toUpperCase() === 'INACTIVE';
+
   const handleSave = async (confirmIdentity = false) => {
-    if (!form || saving) return;
+    if (!form || saving || isInactive) return;
     const built = buildUpdateDependentPayload(form);
     if (!built.ok) {
       toast.warning(built.message, 'Chưa thể lưu');
@@ -207,18 +211,18 @@ export const EditDependentScreen: React.FC = () => {
       if (result.statusChanged || result.documentsNeedReupload) {
         const dep: DependentItem = {
           id: dependentId,
-          fullName: form.fullName,
+          fullName: result.fullName || form.fullName,
           birthDate: `${form.birthYear}-${form.birthMonth}-${form.birthDay}`,
-          currentGroup: form.currentGroup,
-          groupTitle: groupCodeToTitle(form.currentGroup),
+          currentGroup: result.currentGroup || form.currentGroup,
+          groupTitle: groupCodeToTitle(result.currentGroup || form.currentGroup),
           isProfileComplete: false,
-          requiredDocs: [],
-          citizenId: form.citizenId,
-          birthCertNumber: form.birthCertNumber,
-          relationship: form.relationship,
-          effectiveFromMonth: form.effectiveFromMonth,
-          effectiveToMonth: form.effectiveToMonth,
-          status: 'PENDING_DOCUMENTS',
+          requiredDocs: Array.isArray(result.requiredDocuments) ? result.requiredDocuments : [],
+          citizenId: result.citizenId ?? (form.citizenId.trim() || undefined),
+          birthCertNumber: result.birthCertNumber ?? (form.birthCertNumber.trim() || undefined),
+          relationship: result.relationship || form.relationship,
+          effectiveFromMonth: result.effectiveFromMonth || form.effectiveFromMonth,
+          effectiveToMonth: result.effectiveToMonth || form.effectiveToMonth,
+          status: result.status || 'PENDING_DOCUMENTS',
         };
         navigation.navigate('ProofDocuments', buildProofDocumentsParams(dep));
         return;
@@ -288,6 +292,11 @@ export const EditDependentScreen: React.FC = () => {
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
+            {isInactive ? (
+              <Text style={styles.identityNote}>
+                Hồ sơ người phụ thuộc đã ngừng hiệu lực nên không thể chỉnh sửa thông tin.
+              </Text>
+            ) : null}
             {profileStatus.toUpperCase() === 'ACTIVE' ? (
               <Text style={styles.identityNote}>
                 Hồ sơ đã đủ minh chứng. Đổi thông tin nhân thân sẽ đưa hồ sơ về Chờ minh chứng.
@@ -307,6 +316,8 @@ export const EditDependentScreen: React.FC = () => {
                 style={styles.input}
                 value={form.fullName}
                 onChangeText={(t) => patchForm({ fullName: t })}
+                maxLength={DEPENDENT_MAX_LENGTHS.fullName}
+                editable={!isInactive}
                 testID="editDependentFullName"
               />
             </View>
@@ -371,7 +382,7 @@ export const EditDependentScreen: React.FC = () => {
 
             <View style={styles.formGroup}>
               <Text style={styles.fieldLabel}>
-                Số CCCD {needCitizenId ? <Text style={styles.required}>*</Text> : null}
+                Số CCCD {!form.birthCertNumber.trim() ? <Text style={styles.required}>*</Text> : null}
               </Text>
               <TextInput
                 style={styles.input}
@@ -379,27 +390,32 @@ export const EditDependentScreen: React.FC = () => {
                 onChangeText={(t) => patchForm({ citizenId: t.replace(/\D/g, '').slice(0, 12) })}
                 keyboardType="numeric"
                 maxLength={12}
+                editable={!isInactive}
                 placeholder="12 chữ số"
                 placeholderTextColor="#8E8E93"
                 testID="editDependentCitizenId"
               />
               {needCitizenId ? (
-                <Text style={styles.hint}>Từ đủ 14 tuổi tại tháng hiệu lực bắt buộc nhập CCCD.</Text>
+                <Text style={styles.hint}>
+                  Gợi ý: Từ đủ 14 tuổi nên nhập CCCD 12 chữ số (hồ sơ cần ít nhất Số CCCD hoặc Số giấy khai sinh).
+                </Text>
               ) : null}
             </View>
 
             <View style={styles.formGroup}>
               <Text style={styles.fieldLabel}>
-                Số giấy khai sinh {!needCitizenId ? <Text style={styles.required}>*</Text> : null}
+                Số giấy khai sinh {!form.citizenId.trim() ? <Text style={styles.required}>*</Text> : null}
               </Text>
               <TextInput
                 style={styles.input}
                 value={form.birthCertNumber}
                 onChangeText={(t) => patchForm({ birthCertNumber: t })}
+                maxLength={DEPENDENT_MAX_LENGTHS.birthCertNumber}
+                editable={!isInactive}
                 testID="editDependentBirthCert"
               />
               {!needCitizenId ? (
-                <Text style={styles.hint}>Dưới 14 tuổi dùng số giấy khai sinh hoặc mã định danh.</Text>
+                <Text style={styles.hint}>Dưới 14 tuổi có thể dùng số giấy khai sinh hoặc số định danh/CCCD.</Text>
               ) : null}
             </View>
 
@@ -411,6 +427,7 @@ export const EditDependentScreen: React.FC = () => {
                 onChangeText={(t) => patchForm({ taxIdNumber: t.replace(/\D/g, '').slice(0, 12) })}
                 keyboardType="numeric"
                 maxLength={12}
+                editable={!isInactive}
                 testID="editDependentTaxId"
               />
             </View>
@@ -423,13 +440,15 @@ export const EditDependentScreen: React.FC = () => {
                   {form.currentGroup ? ` · ${groupCodeToTitle(form.currentGroup)}` : ''}
                 </Text>
               </View>
-              <TouchableOpacity
-                style={styles.changeGroupBtn}
-                onPress={openChangeGroup}
-                testID="editDependentChangeGroup"
-              >
-                <Text style={styles.changeGroupText}>Đổi nhóm điều kiện</Text>
-              </TouchableOpacity>
+              {!isInactive ? (
+                <TouchableOpacity
+                  style={styles.changeGroupBtn}
+                  onPress={openChangeGroup}
+                  testID="editDependentChangeGroup"
+                >
+                  <Text style={styles.changeGroupText}>Đổi nhóm điều kiện</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
 
             <View style={styles.formGroup}>
@@ -507,23 +526,27 @@ export const EditDependentScreen: React.FC = () => {
                 value={form.note}
                 onChangeText={(t) => patchForm({ note: t })}
                 multiline
+                maxLength={DEPENDENT_MAX_LENGTHS.note}
+                editable={!isInactive}
                 textAlignVertical="top"
                 testID="editDependentNote"
               />
             </View>
 
-            <TouchableOpacity
-              style={[styles.saveBtn, saving && styles.saveBtnDisabled]}
-              onPress={() => void handleSave()}
-              disabled={saving}
-              testID="editDependentSave"
-            >
-              {saving ? (
-                <ActivityIndicator color="#262626" />
-              ) : (
-                <Text style={styles.saveBtnText}>Lưu thay đổi</Text>
-              )}
-            </TouchableOpacity>
+            {!isInactive ? (
+              <TouchableOpacity
+                style={[styles.saveBtn, saving && styles.saveBtnDisabled]}
+                onPress={() => void handleSave()}
+                disabled={saving}
+                testID="editDependentSave"
+              >
+                {saving ? (
+                  <ActivityIndicator color="#262626" />
+                ) : (
+                  <Text style={styles.saveBtnText}>Lưu thay đổi</Text>
+                )}
+              </TouchableOpacity>
+            ) : null}
             <View style={{ height: 28 }} />
           </ScrollView>
         </KeyboardAvoidingView>

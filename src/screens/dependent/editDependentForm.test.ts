@@ -58,7 +58,7 @@ describe('isEditDependentFormDirty', () => {
 });
 
 describe('buildUpdateDependentPayload', () => {
-  it('yêu cầu CCCD 12 số khi ≥ 14 tuổi tại hiệu lực', () => {
+  it('từ chối CCCD sai định dạng 12 số khi có nhập CCCD', () => {
     const state = dependentDetailToFormState({
       fullName: 'Nguyễn Văn B',
       relationship: 'CHILD',
@@ -73,7 +73,21 @@ describe('buildUpdateDependentPayload', () => {
     if (!res.ok) expect(res.message).toMatch(/CCCD/);
   });
 
-  it('build payload thành công cho trẻ dưới 14 tuổi', () => {
+  it('từ chối khi thiếu cả CCCD và Giấy khai sinh (khớp BE IDENTIFIER_REQUIRED)', () => {
+    const state = dependentDetailToFormState({
+      fullName: 'Nguyễn Văn Không Giấy',
+      relationship: 'CHILD',
+      currentGroup: 'CHILD_UNDER_18',
+      birthDate: '2018-06-01',
+      effectiveFromMonth: '2026-01',
+      effectiveToMonth: '2026-12',
+    });
+    const res = buildUpdateDependentPayload(state);
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.message).toMatch(/CCCD|Giấy khai sinh/);
+  });
+
+  it('build payload thành công cho trẻ dưới 14 tuổi và giữ chuỗi rỗng để BE xóa trường tùy chọn', () => {
     const state = dependentDetailToFormState({
       fullName: 'Nguyễn Văn C',
       relationship: 'CHILD',
@@ -87,8 +101,29 @@ describe('buildUpdateDependentPayload', () => {
     expect(res.ok).toBe(true);
     if (res.ok) {
       expect(res.payload.birthCertNumber).toBe('KS001');
-      expect(res.payload.citizenId).toBeUndefined();
+      expect(res.payload.citizenId).toBe('');
+      expect(res.payload.taxIdNumber).toBe('');
+      expect(res.payload.note).toBe('');
       expect(res.payload.birthDate).toBe('2018-06-01T00:00:00Z');
+    }
+  });
+
+  it('giữ đồng thời cả CCCD và GKS khi người dùng nhập cả hai (không bỏ rơi ô còn lại)', () => {
+    const state = dependentDetailToFormState({
+      fullName: 'Nguyễn Văn D',
+      relationship: 'CHILD',
+      currentGroup: 'CHILD_UNDER_18',
+      birthDate: '2018-06-01',
+      citizenId: '079218001234',
+      birthCertNumber: 'KS002',
+      effectiveFromMonth: '2026-01',
+      effectiveToMonth: '2026-12',
+    });
+    const res = buildUpdateDependentPayload(state);
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.payload.citizenId).toBe('079218001234');
+      expect(res.payload.birthCertNumber).toBe('KS002');
     }
   });
 
@@ -109,8 +144,23 @@ describe('buildUpdateDependentPayload', () => {
     expect(res.ok).toBe(true);
     if (res.ok) {
       expect(res.payload.citizenId).toBe('079200001234');
-      expect(res.payload.birthCertNumber).toBeUndefined();
+      expect(res.payload.birthCertNumber).toBe('');
     }
+  });
+
+  it('từ chối khi vượt quá MaxLength của BE (fullName > 150, birthCert > 50, note > 500)', () => {
+    const baseState = dependentDetailToFormState({
+      fullName: 'Nguyễn Văn E',
+      relationship: 'CHILD',
+      currentGroup: 'CHILD_UNDER_18',
+      birthDate: '2018-06-01',
+      birthCertNumber: 'KS003',
+      effectiveFromMonth: '2026-01',
+      effectiveToMonth: '2026-12',
+    });
+    expect(buildUpdateDependentPayload({ ...baseState, fullName: 'A'.repeat(151) }).ok).toBe(false);
+    expect(buildUpdateDependentPayload({ ...baseState, birthCertNumber: 'B'.repeat(51) }).ok).toBe(false);
+    expect(buildUpdateDependentPayload({ ...baseState, note: 'C'.repeat(501) }).ok).toBe(false);
   });
 });
 

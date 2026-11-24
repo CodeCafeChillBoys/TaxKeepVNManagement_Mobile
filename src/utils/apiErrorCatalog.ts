@@ -55,6 +55,7 @@ export const API_ERROR_MESSAGES: Record<string, string> = {
   FILES_REQUIRED: 'Cần ít nhất một tệp chứng từ.',
   FORBIDDEN: 'Bạn không có quyền thực hiện thao tác này.',
   FULLNAME_MISMATCH: 'Họ tên trong hồ sơ chưa trùng với họ tên tài khoản.',
+  GROUP_AGE_MISMATCH: 'Độ tuổi người phụ thuộc không phù hợp với nhóm điều kiện hiện tại.',
   GROUP_DOWNGRADE_NOT_ALLOWED: 'Không được chuyển người phụ thuộc xuống nhóm điều kiện thấp hơn.',
   GROUP_RELATIONSHIP_MISMATCH: 'Nhóm điều kiện không phù hợp với mối quan hệ đã chọn.',
   HOLD_SLOT_EXPIRED: 'Đã hết thời gian giữ chỗ. Vui lòng chọn lại khung giờ.',

@@ -1,5 +1,5 @@
 import { Platform, StyleSheet } from 'react-native';
-import { fonts } from './fonts';
+import { fonts, isIconFontFamily, resolveFontFamilyByWeight } from './fonts';
 
 export const LIGHT_THEME_COLORS = {
   // Primary palette
@@ -130,13 +130,55 @@ const DARK_TEXT_SECONDARY = new Set([
   '#9a9488',
 ]);
 
-function mapRuleForMode(rule: Record<string, any>, mode: 'light' | 'dark'): Record<string, any> {
+const TEXT_STYLE_KEYS = [
+  'fontSize',
+  'fontWeight',
+  'fontFamily',
+  'lineHeight',
+  'letterSpacing',
+  'textAlign',
+  'textTransform',
+  'textDecorationLine',
+  'color',
+] as const;
+
+function applyUnifiedFont(rule: Record<string, any>): Record<string, any> {
   if (!rule || typeof rule !== 'object') return rule;
-  if (mode === 'light') {
-    return { ...rule };
+  const hasTextProp = TEXT_STYLE_KEYS.some((k) => rule[k] !== undefined);
+  if (!hasTextProp) return rule;
+
+  const existingFont = typeof rule.fontFamily === 'string' ? rule.fontFamily : undefined;
+  if (existingFont && isIconFontFamily(existingFont)) {
+    return rule;
   }
 
-  const next: Record<string, any> = { ...rule };
+  const next = { ...rule };
+  if (!existingFont || !existingFont.startsWith('BeVietnamPro_')) {
+    next.fontFamily = resolveFontFamilyByWeight(next.fontWeight);
+  } else if (next.fontWeight !== undefined) {
+    // Nếu style có kèm fontWeight rõ ràng trên BeVietnamPro, map đúng file trọng lượng
+    const weighted = resolveFontFamilyByWeight(next.fontWeight);
+    if (weighted !== fonts.body || existingFont === fonts.body) {
+      next.fontFamily = weighted;
+    }
+  }
+
+  // Bỏ fontWeight khi đã dùng static font face BeVietnamPro_* để tránh double faux-bold trên Android/Web
+  if (next.fontWeight !== undefined) {
+    delete next.fontWeight;
+  }
+
+  return next;
+}
+
+function mapRuleForMode(rule: Record<string, any>, mode: 'light' | 'dark'): Record<string, any> {
+  if (!rule || typeof rule !== 'object') return rule;
+  const unified = applyUnifiedFont(rule);
+  if (mode === 'light') {
+    return unified;
+  }
+
+  const next: Record<string, any> = { ...unified };
 
   if (typeof next.backgroundColor === 'string') {
     const bg = next.backgroundColor.trim().toLowerCase();
@@ -199,22 +241,19 @@ if (!isPatched) {
     T extends Record<string, any>,
   >(styles: T): T {
     const originalSnapshot: Record<string, any> = {};
+    const normalizedStyles: Record<string, any> = {};
     for (const key of Object.keys(styles)) {
       const val = (styles as Record<string, any>)[key];
       originalSnapshot[key] = val && typeof val === 'object' ? { ...val } : val;
+      normalizedStyles[key] =
+        val && typeof val === 'object' ? mapRuleForMode(val, currentThemeMode) : val;
     }
 
-    const created = originalCreate(styles) as Record<string, any>;
+    const created = originalCreate(normalizedStyles) as Record<string, any>;
     registeredStyleSheets.push({
       target: created,
       original: originalSnapshot,
     });
-
-    if (currentThemeMode === 'dark') {
-      for (const key of Object.keys(originalSnapshot)) {
-        created[key] = mapRuleForMode(originalSnapshot[key], 'dark');
-      }
-    }
 
     return created as T;
   };
@@ -237,33 +276,33 @@ export const theme = {
 
   typography: {
     titleLarge: {
+      fontFamily: fonts.bodyBold,
       fontSize: 22,
-      fontWeight: '700' as const,
       lineHeight: 28,
     },
     titleMedium: {
+      fontFamily: fonts.bodySemi,
       fontSize: 18,
-      fontWeight: '600' as const,
       lineHeight: 24,
     },
     bodyLarge: {
+      fontFamily: fonts.body,
       fontSize: 15,
-      fontWeight: '400' as const,
       lineHeight: 22,
     },
     bodyMedium: {
+      fontFamily: fonts.body,
       fontSize: 14,
-      fontWeight: '400' as const,
       lineHeight: 20,
     },
     bodySmall: {
+      fontFamily: fonts.body,
       fontSize: 12,
-      fontWeight: '400' as const,
       lineHeight: 16,
     },
     caption: {
+      fontFamily: fonts.bodyMedium,
       fontSize: 11,
-      fontWeight: '500' as const,
       lineHeight: 14,
     },
     /** DanhGiaUI §8 — 1px = 1dp, không scale theo chiều rộng máy. */

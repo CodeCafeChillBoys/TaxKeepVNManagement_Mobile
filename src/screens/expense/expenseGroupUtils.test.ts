@@ -2,10 +2,12 @@ import {
   getGroupKeyFromDocTypeCode,
   groupExpensesByAiClassification,
   calculateExpenseMetrics,
+  calculateExpenseDeductionSummary,
   getExpenseMonth,
   filterExpensesByMonth,
   filterExpensesByCategory,
   getStatusLabel,
+  requiresReimbursementConfirmation,
 } from './expenseGroupUtils';
 import { ExpenseOcrResult } from '../../types/expense';
 
@@ -184,6 +186,178 @@ describe('expenseGroupUtils', () => {
       expect(getStatusLabel('UPLOADED')).toContain('Đang xử lý');
       expect(getStatusLabel('RAW_UNKNOWN_BACKEND_STATUS')).toBe('Chờ kiểm tra');
       expect(getStatusLabel(undefined)).toBe('Chờ kiểm tra');
+    });
+  });
+
+  describe('requiresReimbursementConfirmation', () => {
+    it('returns true only for Medical and Education invoices', () => {
+      expect(requiresReimbursementConfirmation('MEDICAL_RECEIPT')).toBe(true);
+      expect(requiresReimbursementConfirmation('MEDICAL_EXPENSE_INVOICE')).toBe(true);
+      expect(requiresReimbursementConfirmation('VIEN_PHI_BENH_VIEN')).toBe(true);
+      expect(requiresReimbursementConfirmation('TUITION_RECEIPT')).toBe(true);
+      expect(requiresReimbursementConfirmation('TUITION_FEE_INVOICE')).toBe(true);
+      expect(requiresReimbursementConfirmation('EDUCATION_EXPENSE_INVOICE')).toBe(true);
+      expect(requiresReimbursementConfirmation('CUSTOM_DOC', 'Hóa đơn học phí đại học')).toBe(true);
+      expect(requiresReimbursementConfirmation('CUSTOM_DOC', 'Chi phí khám chữa bệnh y tế')).toBe(true);
+    });
+
+    it('returns false for Charity, Insurance, Withholding, and other invoice types', () => {
+      expect(requiresReimbursementConfirmation('DONATION_VOUCHER')).toBe(false);
+      expect(requiresReimbursementConfirmation('CHARITY_DONATION_RECEIPT', 'Ủng hộ từ thiện')).toBe(false);
+      expect(requiresReimbursementConfirmation('INSURANCE_PREMIUM_RECEIPT')).toBe(false);
+      expect(requiresReimbursementConfirmation('WITHHOLDING_VOUCHER', 'Chứng từ khấu trừ thuế TNCN')).toBe(false);
+      expect(requiresReimbursementConfirmation('SALES_INVOICE', 'Hóa đơn bán hàng')).toBe(false);
+      expect(requiresReimbursementConfirmation('VAT_INVOICE')).toBe(false);
+      expect(requiresReimbursementConfirmation(null, null)).toBe(false);
+    });
+  });
+
+  describe('calculateExpenseDeductionSummary', () => {
+    it('tính đúng tổng khấu trừ năm 2026 theo quy tắc BE (Y tế lấy từ bảng kê KCB CONFIRMED, Học phí & Từ thiện từ hóa đơn CONFIRMED)', () => {
+      const docs: ExpenseOcrResult[] = [
+        // Hóa đơn y tế 870k nhưng bảng kê KCB chỉ được giảm trừ 120k
+        {
+          documentId: 'med-1',
+          docTypeCode: 'MEDICAL_RECEIPT',
+          totalAmount: 870000,
+          isNotReimbursed: true,
+          status: 'CONFIRMED',
+          medicalStatement: {
+            id: 'ms-1',
+            documentId: 'med-1',
+            fileUrl: 'https://cdn.test/ms1.jpg',
+            status: 'CONFIRMED',
+            totalEligibleAmount: 120000,
+            validationErrors: [],
+            lines: [],
+          },
+        },
+        // Hóa đơn y tế đã duyệt nhưng thiếu bảng kê -> không tính, đếm vào medicalExcludedCount
+        {
+          documentId: 'med-2',
+          docTypeCode: 'MEDICAL_RECEIPT',
+          totalAmount: 500000,
+          isNotReimbursed: true,
+          status: 'CONFIRMED',
+          medicalStatement: null,
+        },
+        // Hóa đơn học phí chờ soát xét -> không tính
+        {
+          documentId: 'edu-pending',
+          docTypeCode: 'EDUCATION_RECEIPT',
+          totalAmount: 10954025,
+          status: 'EXTRACTED',
+        },
+        // Hóa đơn học phí đã duyệt -> tính
+        {
+          documentId: 'edu-ok',
+          docTypeCode: 'EDUCATION_RECEIPT',
+          totalAmount: 5000000,
+          status: 'CONFIRMED',
+        },
+        // Từ thiện đã duyệt -> tính
+        {
+          documentId: 'charity-1',
+          docTypeCode: 'DONATION_VOUCHER',
+          totalAmount: 1000000,
+          status: 'CONFIRMED',
+        },
+        // Chứng từ khấu trừ thuế TNCN -> không tính vào khấu trừ chi phí
+        {
+          documentId: 'voucher-1',
+          docTypeCode: 'WITHHOLDING_VOUCHER',
+          taxWithheld: 4000000,
+          totalAmount: 4000000,
+          status: 'CONFIRMED',
+        },
+      ];
+
+      const summary = calculateExpenseDeductionSummary(docs, 2026);
+      expect(summary.appliesMedicalAndEducation).toBe(true);
+      expect(summary.medicalDeduction).toBe(120000);
+      expect(summary.educationDeduction).toBe(5000000);
+      expect(summary.charityDeduction).toBe(1000000);
+      expect(summary.totalDeduction).toBe(6120000);
+      expect(summary.medicalExcludedCount).toBe(1);
+    });
+
+    it('áp đúng mức trần năm 23tr Y tế và 24tr Học phí (hỗ trợ override từ systemConfigs)', () => {
+      const docs: ExpenseOcrResult[] = [
+        {
+          documentId: 'med-cap',
+          docTypeCode: 'MEDICAL_RECEIPT',
+          totalAmount: 30000000,
+          isNotReimbursed: true,
+          status: 'CONFIRMED',
+          medicalStatement: {
+            id: 'ms-cap',
+            documentId: 'med-cap',
+            fileUrl: 'https://cdn.test/ms.jpg',
+            status: 'CONFIRMED',
+            totalEligibleAmount: 28000000,
+            validationErrors: [],
+            lines: [],
+          },
+        },
+        {
+          documentId: 'edu-cap',
+          docTypeCode: 'EDUCATION_RECEIPT',
+          totalAmount: 30000000,
+          status: 'CONFIRMED',
+        },
+      ];
+
+      const summary = calculateExpenseDeductionSummary(docs, 2026);
+      expect(summary.medicalDeduction).toBe(23000000);
+      expect(summary.isMedicalCapped).toBe(true);
+      expect(summary.educationDeduction).toBe(24000000);
+      expect(summary.isEducationCapped).toBe(true);
+      expect(summary.totalDeduction).toBe(47000000);
+
+      const custom = calculateExpenseDeductionSummary(docs, 2026, {
+        PIT_MEDICAL_MAX_YEARLY: '25000000',
+        PIT_EDUCATION_MAX_YEARLY: '26000000',
+      });
+      expect(custom.totalDeduction).toBe(51000000);
+    });
+
+    it('trước năm 2026 chỉ tính Từ thiện, không tính Y tế và Học phí theo luật cũ', () => {
+      const docs: ExpenseOcrResult[] = [
+        {
+          documentId: 'med-2025',
+          docTypeCode: 'MEDICAL_RECEIPT',
+          totalAmount: 1000000,
+          status: 'CONFIRMED',
+          medicalStatement: {
+            id: 'ms-2025',
+            documentId: 'med-2025',
+            fileUrl: 'https://cdn.test/ms.jpg',
+            status: 'CONFIRMED',
+            totalEligibleAmount: 1000000,
+            validationErrors: [],
+            lines: [],
+          },
+        },
+        {
+          documentId: 'edu-2025',
+          docTypeCode: 'EDUCATION_RECEIPT',
+          totalAmount: 5000000,
+          status: 'CONFIRMED',
+        },
+        {
+          documentId: 'charity-2025',
+          docTypeCode: 'DONATION_VOUCHER',
+          totalAmount: 2000000,
+          status: 'CONFIRMED',
+        },
+      ];
+
+      const summary = calculateExpenseDeductionSummary(docs, 2025);
+      expect(summary.appliesMedicalAndEducation).toBe(false);
+      expect(summary.medicalDeduction).toBe(0);
+      expect(summary.educationDeduction).toBe(0);
+      expect(summary.charityDeduction).toBe(2000000);
+      expect(summary.totalDeduction).toBe(2000000);
     });
   });
 });

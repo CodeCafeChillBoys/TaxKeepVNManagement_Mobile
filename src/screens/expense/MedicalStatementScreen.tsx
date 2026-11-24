@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Platform } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Platform, Image, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
@@ -9,6 +9,8 @@ import { theme } from '../../constants/theme';
 import { HeaderMotif } from '../../components/common/HeaderMotif';
 import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { Dialog } from '../../components/common/Dialog';
+import { DocumentViewerModal, DocumentViewerItem } from '../../components/common/DocumentViewerModal';
+import { isImageDocumentUri } from '../../components/common/imageZoomUtils';
 import { Card, Badge, Button, Separator, useToast } from '../../components/ui';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { expenseApi } from '../../api/expenseApi';
@@ -17,9 +19,11 @@ import { formatCurrencyVND, parseBackendError, toPercent } from './expenseValida
 import {
   validateStatementFile,
   isStatementProcessing,
+  shouldShowMedicalStatementImage,
   getStatementStatusMeta,
   getDeductionReasonLabel,
-  getStatementErrorLabel,
+  isLineExcluded,
+  normalizeStatementErrors,
   summarizeStatementLines,
 } from './medicalStatementUtils';
 
@@ -41,7 +45,13 @@ export const MedicalStatementScreen: React.FC = () => {
   const [deleting, setDeleting] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
   const [pollTimedOut, setPollTimedOut] = useState(false);
+  const [imageFailed, setImageFailed] = useState(false);
+  const [viewerDocument, setViewerDocument] = useState<DocumentViewerItem | null>(null);
   const pollCount = useRef(0);
+
+  useEffect(() => {
+    setImageFailed(false);
+  }, [statement?.fileUrl]);
 
   const load = useCallback(async () => {
     try {
@@ -226,14 +236,58 @@ export const MedicalStatementScreen: React.FC = () => {
         )}
       </Card>
 
-      {s.validationErrors?.length > 0 && (
+      {shouldShowMedicalStatementImage(s) && isImageDocumentUri(s.fileUrl, undefined, s.originalFilename) && (
+        <Card style={styles.card}>
+          <View style={styles.cardHeader}>
+            <Ionicons name="image-outline" size={16} color="#475569" />
+            <Text style={styles.cardTitle}>Ảnh bảng kê gốc</Text>
+          </View>
+          {!imageFailed ? (
+            <TouchableOpacity
+              activeOpacity={0.9}
+              style={styles.imagePreviewWrap}
+              onPress={() =>
+                setViewerDocument({
+                  uri: s.fileUrl,
+                  title: 'Ảnh bảng kê chi phí KCB',
+                  fileName: s.originalFilename || undefined,
+                  subtitle: `Được giảm trừ: ${formatCurrencyVND(eligibleTotal)}`,
+                  isReadable: true,
+                })
+              }
+              accessibilityRole="button"
+              accessibilityLabel="Phóng to ảnh bảng kê gốc"
+            >
+              <Image
+                source={{ uri: s.fileUrl }}
+                style={styles.statementImage}
+                resizeMode="contain"
+                onError={() => setImageFailed(true)}
+              />
+              <View style={styles.imageZoomBadge}>
+                <Ionicons name="search-outline" size={12} color="#FFFFFF" />
+                <Text style={styles.imageZoomBadgeText}>Phóng to</Text>
+              </View>
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.imageErrorBox}>
+              <Ionicons name="image-outline" size={26} color="#94A3B8" />
+              <Text style={styles.imageErrorText}>Không tải được ảnh bảng kê gốc.</Text>
+            </View>
+          )}
+        </Card>
+      )}
+
+      {normalizeStatementErrors(s.validationErrors).length > 0 && (
         <Card style={[styles.card, styles.cardWarning]}>
           <View style={styles.cardHeader}>
             <Ionicons name="alert-circle-outline" size={16} color="#B45309" />
-            <Text style={[styles.cardTitle, { color: '#92400E' }]}>Cần kiểm tra ({s.validationErrors.length})</Text>
+            <Text style={[styles.cardTitle, { color: '#92400E' }]}>
+              Cần kiểm tra ({normalizeStatementErrors(s.validationErrors).length})
+            </Text>
           </View>
-          {s.validationErrors.map((e, i) => (
-            <Text key={i} style={styles.errorText}>• {getStatementErrorLabel(e)}</Text>
+          {normalizeStatementErrors(s.validationErrors).map((msg, i) => (
+            <Text key={i} style={styles.errorText}>• {msg}</Text>
           ))}
         </Card>
       )}
@@ -266,25 +320,30 @@ export const MedicalStatementScreen: React.FC = () => {
             <Ionicons name="list-outline" size={16} color="#475569" />
             <Text style={styles.cardTitle}>Chi tiết dòng chi phí ({s.lines.length})</Text>
           </View>
-          {[...s.lines].sort((a, b) => a.lineOrder - b.lineOrder).map((l) => (
-            <View key={l.id} style={styles.lineRow}>
-              <View style={{ flex: 1, marginRight: 8 }}>
-                <Text style={styles.lineName}>{l.itemName}</Text>
-                {!!l.sectionName && <Text style={styles.hint}>{l.sectionName}</Text>}
-                {!l.isEligibleDeduction && !!l.deductionReason && (
-                  <Text style={styles.reasonText}>{getDeductionReasonLabel(l.deductionReason)}</Text>
-                )}
+          {[...s.lines].sort((a, b) => a.lineOrder - b.lineOrder).map((l) => {
+            const excluded = isLineExcluded(l);
+            return (
+              <View key={l.id} style={styles.lineRow}>
+                <View style={{ flex: 1, marginRight: 8 }}>
+                  <Text style={styles.lineName}>{l.itemName}</Text>
+                  {!!l.sectionName && <Text style={styles.hint}>{l.sectionName}</Text>}
+                  {excluded && (
+                    <Text style={styles.reasonText}>
+                      Nguyên nhân: {getDeductionReasonLabel(l.deductionReason, l)}
+                    </Text>
+                  )}
+                </View>
+                <View style={{ alignItems: 'flex-end' }}>
+                  <Text style={styles.lineAmount}>
+                    {formatCurrencyVND(!excluded ? l.eligibleAmount : l.patientCoPay + l.patientSelfPay)}
+                  </Text>
+                  <Badge variant={!excluded ? 'success' : 'destructive'}>
+                    {!excluded ? 'Giảm trừ' : 'Loại trừ'}
+                  </Badge>
+                </View>
               </View>
-              <View style={{ alignItems: 'flex-end' }}>
-                <Text style={styles.lineAmount}>
-                  {formatCurrencyVND(l.isEligibleDeduction ? l.eligibleAmount : l.patientCoPay + l.patientSelfPay)}
-                </Text>
-                <Badge variant={l.isEligibleDeduction ? 'success' : 'destructive'}>
-                  {l.isEligibleDeduction ? 'Giảm trừ' : 'Loại trừ'}
-                </Badge>
-              </View>
-            </View>
-          ))}
+            );
+          })}
         </Card>
       )}
 
@@ -329,6 +388,12 @@ export const MedicalStatementScreen: React.FC = () => {
         onPrimary={() => { if (!deleting) confirmDelete(); }}
         onSecondary={() => setShowDelete(false)}
         onRequestClose={() => setShowDelete(false)}
+      />
+
+      <DocumentViewerModal
+        visible={Boolean(viewerDocument)}
+        document={viewerDocument}
+        onClose={() => setViewerDocument(null)}
       />
     </SafeAreaView>
   );
@@ -375,4 +440,30 @@ const styles = StyleSheet.create({
   lineName: { fontSize: 13, color: '#0F172A', fontWeight: '600' },
   lineAmount: { fontSize: 13, fontWeight: '700', color: '#0F172A', marginBottom: 4 },
   reasonText: { fontSize: 12, color: '#B91C1C', marginTop: 2 },
+  imagePreviewWrap: { position: 'relative', borderRadius: 6, overflow: 'hidden' },
+  statementImage: { width: '100%', height: 220, borderRadius: 6, backgroundColor: '#0F172A' },
+  imageZoomBadge: {
+    position: 'absolute',
+    right: 10,
+    bottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(15, 23, 42, 0.78)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.22)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+  },
+  imageZoomBadgeText: { fontSize: 11, fontWeight: '700', color: '#FFFFFF' },
+  imageErrorBox: {
+    height: 140,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 6,
+    gap: 8,
+  },
+  imageErrorText: { fontSize: 12, color: '#64748B' },
 });

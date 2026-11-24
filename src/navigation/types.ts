@@ -19,11 +19,15 @@ export type RootStackParamList = {
   };
   TaxRegistration: { ocrDependentFill?: OcrDependentFill } | undefined;
   DependentSaved: {
+    dependentId?: string;
     fullName: string;
     relationship: string;
     groupCode: string;
     groupId?: number;
     effectiveFromMonth: string;
+  };
+  DependentDetail: {
+    dependentId: string;
   };
   ProofDocuments:
     | {

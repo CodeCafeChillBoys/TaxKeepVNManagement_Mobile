@@ -4,6 +4,7 @@ import { Platform } from 'react-native';
 import { config, getLocalApiBaseUrl } from '../constants/config';
 import { emitQuotaExceeded, quotaErrorFrom } from '../utils/subscriptionQuota';
 import { pickApiErrorMessage } from '../utils/apiErrorCatalog';
+import { emitPermissionDenied, parseForbiddenError } from '../utils/permissionError';
 
 // Hỗ trợ lưu token an toàn: trên thiết bị dùng SecureStore, trên Web dùng localStorage
 export const storageHelper = {
@@ -99,6 +100,19 @@ apiClient.interceptors.response.use(
     const picked = pickApiErrorMessage(errorCode, typeof beMessage === 'string' ? beMessage : '', '');
     if (picked) {
       error.message = picked;
+    }
+
+    // Lỗi phân quyền / 403 Forbidden: chuẩn hóa sang tiếng Việt và hiển thị Toast toàn cục
+    if (error.response?.status === 403) {
+      const forbidden = parseForbiddenError(error);
+      if (forbidden) {
+        error.message = forbidden.message;
+        (error as any).permissionError = forbidden;
+        const suppressToast = Boolean((error.config as any)?.suppressPermissionToast);
+        if (!suppressToast) {
+          emitPermissionDenied(forbidden);
+        }
+      }
     }
 
     if (error.response?.status === 401) {

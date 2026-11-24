@@ -651,6 +651,7 @@ export const ScanIdentityScreen: React.FC = () => {
                 status={fieldStatus(meta.key)}
                 unusedHint={!meta.usedInRegister}
                 keyboardType={meta.key === 'citizenId' ? 'numeric' : 'default'}
+                multiline={meta.key === 'address'}
                 onFocus={() => {
                   if (lowConfidence.includes(meta.key)) {
                     setViewedLowFields((prev) => new Set(prev).add(meta.key));

@@ -13,6 +13,7 @@ interface OcrFieldProps {
   placeholder?: string;
   unusedHint?: boolean;
   keyboardType?: 'default' | 'numeric';
+  multiline?: boolean;
 }
 
 export const OcrField: React.FC<OcrFieldProps> = React.memo(({
@@ -24,6 +25,7 @@ export const OcrField: React.FC<OcrFieldProps> = React.memo(({
   placeholder,
   unusedHint,
   keyboardType = 'default',
+  multiline = false,
 }) => {
   const isCheck = status === 'check';
   const isUnreadable = status === 'unreadable';
@@ -43,6 +45,7 @@ export const OcrField: React.FC<OcrFieldProps> = React.memo(({
       <TextInput
         style={[
           styles.input,
+          multiline && styles.inputMultiline,
           isCheck && styles.inputCheck,
           isUnreadable && styles.inputUnreadable,
         ]}
@@ -52,6 +55,9 @@ export const OcrField: React.FC<OcrFieldProps> = React.memo(({
         placeholder={placeholder}
         placeholderTextColor={theme.colors.textPlaceholder}
         keyboardType={keyboardType}
+        multiline={multiline}
+        scrollEnabled={multiline ? false : undefined}
+        textAlignVertical={multiline ? 'top' : 'center'}
       />
 
       {isUnreadable ? (
@@ -101,8 +107,16 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.border,
     backgroundColor: theme.colors.surface,
     paddingHorizontal: 14,
+    paddingVertical: 12,
     ...theme.typography.bodyLarge,
     color: theme.colors.textPrimary,
+  },
+  inputMultiline: {
+    minHeight: 76,
+    paddingTop: 12,
+    paddingBottom: 12,
+    lineHeight: 22,
+    textAlignVertical: 'top',
   },
   inputCheck: {
     backgroundColor: theme.colors.warningBackground,

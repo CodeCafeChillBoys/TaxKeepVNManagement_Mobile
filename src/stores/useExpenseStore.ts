@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { storageHelper } from '../api/apiClient';
 import { ExpenseOcrResult, TaxPeriodItem, TaxDocumentTypeItem } from '../types/expense';
 import { expenseApi, mapDocumentReviewToOcrResult } from '../api/expenseApi';
+import { isTaxPeriodLocked403 } from '../utils/permissionError';
 
 // Tạo khóa lưu trữ riêng biệt cho từng tài khoản người dùng, tránh lộ hóa đơn giữa các user
 export const getExpenseStorageKey = (userId?: string | null): string => {
@@ -216,9 +217,10 @@ export const useExpenseStore = create<ExpenseState>((set, get) => ({
       return period;
     } catch (err: any) {
       const isSubmitted =
-        err?.response?.status === 403 ||
-        err?.message?.toLowerCase().includes('submitted') ||
-        err?.message?.toLowerCase().includes('locked');
+        isTaxPeriodLocked403(err) ||
+        (err?.response?.status !== 403 &&
+          (err?.message?.toLowerCase().includes('submitted') ||
+            err?.message?.toLowerCase().includes('locked')));
 
       if (isSubmitted) {
         const existingPeriod = get().periods[year];

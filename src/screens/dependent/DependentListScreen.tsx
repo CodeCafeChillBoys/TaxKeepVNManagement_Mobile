@@ -149,15 +149,25 @@ const DependentLedgerRow = React.memo<DependentRowProps>(
             : ''}
         </Text>
 
-        <TouchableOpacity
-          onPress={() => onPressProof(dep)}
-          activeOpacity={0.8}
-          testID={`btnProofDoc_${dep.id}`}
-        >
-          <Text style={styles.proofLink}>
-            {dep.isProfileComplete ? 'Xem minh chứng' : 'Bổ sung minh chứng'}
-          </Text>
-        </TouchableOpacity>
+        <View style={styles.ledgerActionsRow}>
+          <TouchableOpacity
+            onPress={() => onPressDetail(dep.id)}
+            activeOpacity={0.8}
+            testID={`btnViewDetail_${dep.id}`}
+          >
+            <Text style={styles.detailLink}>Xem chi tiết</Text>
+          </TouchableOpacity>
+          <Text style={styles.actionDot}>·</Text>
+          <TouchableOpacity
+            onPress={() => onPressProof(dep)}
+            activeOpacity={0.8}
+            testID={`btnProofDoc_${dep.id}`}
+          >
+            <Text style={styles.proofLink}>
+              {dep.isProfileComplete ? 'Xem minh chứng' : 'Bổ sung minh chứng'}
+            </Text>
+          </TouchableOpacity>
+        </View>
       </TouchableOpacity>
     );
   }
@@ -196,31 +206,10 @@ export const DependentListScreen: React.FC = () => {
   } | null>(null);
 
   const handleViewDetail = useCallback(
-    async (depId: string) => {
-      setIsDetailModalVisible(true);
-      setDetailLoading(true);
-      try {
-        // getRules nạp tên giấy tờ (docName) từ DB để nhãn tài liệu đã nộp không hiện mã thô
-        const [detail] = await Promise.all([
-          dependentDocumentApi.getDependentById(depId),
-          dependentDocumentApi.getRules(),
-        ]);
-        if (!isMountedRef.current) return;
-        setSelectedDetail(detail);
-      } catch (err: unknown) {
-        if (!isMountedRef.current) return;
-        setIsDetailModalVisible(false);
-        toast.error(
-          toFriendlyErrorMessage(err, 'Không thể tải thông tin chi tiết người phụ thuộc.'),
-          'Chưa mở được hồ sơ'
-        );
-      } finally {
-        if (isMountedRef.current) {
-          setDetailLoading(false);
-        }
-      }
+    (depId: string) => {
+      navigation.navigate('DependentDetail', { dependentId: depId });
     },
-    [toast]
+    [navigation]
   );
 
   const fetchDependents = useCallback(async () => {
@@ -296,13 +285,14 @@ export const DependentListScreen: React.FC = () => {
     setChangeGroupVisible(true);
   };
 
-  const handleSelectChangeGroup = async (newGroup: string) => {
+  const handleSelectChangeGroup = async (newGroup: string, note?: string) => {
     if (!changeGroupPlan || changeGroupLoading) return;
     setChangeGroupLoading(true);
     try {
       const result = await runManualChangeGroup({
         dependentId: changeGroupPlan.dependentId,
         newGroup,
+        note,
         updateDependentGroup: dependentLifecycleApi.updateDependentGroup,
       });
       if (!isMountedRef.current) return;
@@ -779,8 +769,8 @@ export const DependentListScreen: React.FC = () => {
         currentGroup={changeGroupPlan?.currentGroup ?? ''}
         options={changeGroupPlan?.options ?? []}
         loading={changeGroupLoading}
-        onSelect={(code) => {
-          void handleSelectChangeGroup(code);
+        onSelect={(code, note) => {
+          void handleSelectChangeGroup(code, note);
         }}
         onCancel={() => {
           if (changeGroupLoading) return;
@@ -925,9 +915,26 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     color: '#444444',
   },
-  proofLink: {
+  ledgerActionsRow: {
     marginLeft: 38,
     marginTop: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  detailLink: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 13,
+    lineHeight: 18,
+    color: theme.colors.primaryDark,
+  },
+  actionDot: {
+    fontFamily: fonts.body,
+    fontSize: 13,
+    color: '#A8A29E',
+  },
+  proofLink: {
     fontFamily: fonts.bodySemi,
     fontSize: 13,
     lineHeight: 18,

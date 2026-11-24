@@ -10,6 +10,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { fonts } from '../../constants/fonts';
+import { onPermissionDenied } from '../../utils/permissionError';
 
 export type ToastVariant = 'default' | 'destructive' | 'success' | 'warning' | 'info';
 
@@ -54,13 +55,29 @@ export const globalToast = {
 export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [toasts, setToasts] = useState<ToastInternalItem[]>([]);
   const insets = useSafeAreaInsets();
+  const recentToastsRef = useRef<Map<string, number>>(new Map());
 
   const dismiss = useCallback((id?: string) => {
     setToasts((prev) => (id ? prev.filter((t) => t.id !== id) : []));
   }, []);
 
   const show = useCallback((options: ToastOptions) => {
-    const id = `toast-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    // Chống hiển thị trùng lặp toast giống hệt nhau trong vòng 2.5 giây
+    // (VD: interceptor 403 vừa hiện toast và màn hình gọi lại toast.error với cùng thông điệp)
+    const now = Date.now();
+    const dedupeKey = `${options.variant || 'default'}|${options.title || ''}|${options.description}`;
+    const lastShown = recentToastsRef.current.get(dedupeKey);
+    if (lastShown && now - lastShown < 2500) {
+      return;
+    }
+    recentToastsRef.current.set(dedupeKey, now);
+    if (recentToastsRef.current.size > 20) {
+      for (const [k, ts] of recentToastsRef.current.entries()) {
+        if (now - ts >= 2500) recentToastsRef.current.delete(k);
+      }
+    }
+
+    const id = `toast-${now}-${Math.random().toString(36).substring(2, 7)}`;
     const newItem: ToastInternalItem = { ...options, id };
     setToasts((prev) => [...prev.slice(-2), newItem]); // Max 2 toasts stacked
   }, []);
@@ -88,6 +105,13 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   useEffect(() => {
     globalToastRef = toastMethods;
+  }, [toastMethods]);
+
+  // Tự động hiển thị Toast tiếng Việt mỗi khi Backend trả về lỗi phân quyền 403 Forbidden
+  useEffect(() => {
+    return onPermissionDenied((err) => {
+      toastMethods.error(err.message, err.title);
+    });
   }, [toastMethods]);
 
   const contextValue = useMemo(() => ({ toast: toastMethods }), [toastMethods]);

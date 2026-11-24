@@ -105,28 +105,37 @@ const ExpenseSectionHeader = React.memo<ExpenseSectionHeaderProps>(({ group }) =
 
 interface ExpenseDocCardRowProps {
   doc: ExpenseOcrResult;
+  taxYear?: number | null;
+  systemConfigs?: Record<string, string>;
   onViewDetail: (doc: ExpenseOcrResult) => void;
   onDeleteDoc: (doc: ExpenseOcrResult) => void;
 }
 
-const ExpenseDocCardRow = React.memo<ExpenseDocCardRowProps>(({ doc, onViewDetail, onDeleteDoc }) => {
-  const statusVariant = getStatusBadgeVariant(doc.status);
-  const statusText = getStatusLabel(doc.status);
-  const isConfirmed = doc.status === 'CONFIRMED';
-  const isWithholdingDoc = isWithholdingDocType(doc.docTypeCode, doc.docTypeName);
+const ExpenseDocCardRow = React.memo<ExpenseDocCardRowProps>(
+  ({ doc, taxYear, systemConfigs, onViewDetail, onDeleteDoc }) => {
+    const statusVariant = getStatusBadgeVariant(doc.status);
+    const statusText = getStatusLabel(doc.status);
+    const isConfirmed = doc.status === 'CONFIRMED';
+    const isWithholdingDoc = isWithholdingDocType(doc.docTypeCode, doc.docTypeName);
+    const effectiveTaxYear = taxYear ?? doc.extractedYear;
 
-  return (
-    <Card style={styles.docCard}>
-      <TouchableOpacity activeOpacity={0.7} onPress={() => onViewDetail(doc)}>
-        <View style={styles.docCardBody}>
-          {/* Dòng 1: Trạng thái + Nhóm + Độ chính xác */}
-          <View style={styles.docCardTopRow}>
-            <Badge variant={statusVariant} style={styles.docStatusBadge}>{statusText}</Badge>
-            <View style={styles.docRightMeta}>
-              {doc.isNotReimbursed &&
-                requiresReimbursementConfirmation(doc.docTypeCode, doc.docTypeName) && (
-                  <Ionicons name="shield-checkmark-outline" size={13} color="#0F766E" />
-                )}
+    return (
+      <Card style={styles.docCard}>
+        <TouchableOpacity activeOpacity={0.7} onPress={() => onViewDetail(doc)}>
+          <View style={styles.docCardBody}>
+            {/* Dòng 1: Trạng thái + Nhóm + Độ chính xác */}
+            <View style={styles.docCardTopRow}>
+              <Badge variant={statusVariant} style={styles.docStatusBadge}>{statusText}</Badge>
+              <View style={styles.docRightMeta}>
+                {doc.isNotReimbursed &&
+                  requiresReimbursementConfirmation(
+                    doc.docTypeCode,
+                    doc.docTypeName,
+                    effectiveTaxYear,
+                    systemConfigs
+                  ) && (
+                    <Ionicons name="shield-checkmark-outline" size={13} color="#0F766E" />
+                  )}
               {doc.overallConfidence ? (
                 <Text style={styles.confidenceText}>
                   {(doc.overallConfidence * 100).toFixed(0)}% rõ nét
@@ -878,11 +887,13 @@ export const ExpenseListScreen: React.FC = () => {
     ({ item }: SectionListRenderItemInfo<ExpenseOcrResult, ExpenseSection>) => (
       <ExpenseDocCardRow
         doc={item}
+        taxYear={selectedYear}
+        systemConfigs={systemConfigs}
         onViewDetail={handleViewDetail}
         onDeleteDoc={handleDeleteDocPress}
       />
     ),
-    [handleViewDetail, handleDeleteDocPress]
+    [selectedYear, systemConfigs, handleViewDetail, handleDeleteDocPress]
   );
 
   const handleSelectCategoryOption = useCallback((code: string) => {

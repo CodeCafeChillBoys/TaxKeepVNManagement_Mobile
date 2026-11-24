@@ -86,26 +86,30 @@ export const ProvinceSelect: React.FC<ProvinceSelectProps> = React.memo(({
         </View>
       ) : null}
 
-      <TouchableOpacity
-        activeOpacity={0.75}
+      <View
         style={[
           styles.selectBox,
           visible && styles.selectBoxFocused,
           error ? styles.selectBoxError : null,
         ]}
-        onPress={handleOpen}
-        accessibilityRole="button"
-        accessibilityLabel={label}
       >
-        <Text
-          style={[
-            styles.selectText,
-            !displayValue && styles.placeholderText,
-          ]}
-          numberOfLines={1}
+        <TouchableOpacity
+          activeOpacity={0.75}
+          style={styles.selectTrigger}
+          onPress={handleOpen}
+          accessibilityRole="button"
+          accessibilityLabel={label}
         >
-          {displayValue || placeholder}
-        </Text>
+          <Text
+            style={[
+              styles.selectText,
+              !displayValue && styles.placeholderText,
+            ]}
+            numberOfLines={1}
+          >
+            {displayValue || placeholder}
+          </Text>
+        </TouchableOpacity>
         <View style={styles.rightActions}>
           {displayValue ? (
             <TouchableOpacity
@@ -118,13 +122,22 @@ export const ProvinceSelect: React.FC<ProvinceSelectProps> = React.memo(({
               <Ionicons name="close-circle" size={18} color={theme.colors.textSecondary} />
             </TouchableOpacity>
           ) : null}
-          <Ionicons
-            name="chevron-down"
-            size={18}
-            color={theme.colors.textSecondary}
-          />
+          <TouchableOpacity
+            activeOpacity={0.75}
+            style={styles.chevronBtn}
+            onPress={handleOpen}
+            hitSlop={{ top: 8, bottom: 8, left: 4, right: 8 }}
+            accessibilityRole="button"
+            accessibilityLabel={`Mở danh sách ${label}`}
+          >
+            <Ionicons
+              name="chevron-down"
+              size={18}
+              color={theme.colors.textSecondary}
+            />
+          </TouchableOpacity>
         </View>
-      </TouchableOpacity>
+      </View>
 
       {error ? (
         <Text style={styles.errorText}>{error}</Text>
@@ -269,11 +282,15 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.error,
     backgroundColor: theme.colors.errorBackground,
   },
-  selectText: {
+  selectTrigger: {
     flex: 1,
+    minHeight: 46,
+    justifyContent: 'center',
+    marginRight: 8,
+  },
+  selectText: {
     ...theme.typography.inputText,
     color: theme.colors.textPrimary,
-    marginRight: 8,
   },
   placeholderText: {
     color: theme.colors.textPlaceholder,
@@ -284,6 +301,9 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   clearBtn: {
+    padding: 2,
+  },
+  chevronBtn: {
     padding: 2,
   },
   errorText: {

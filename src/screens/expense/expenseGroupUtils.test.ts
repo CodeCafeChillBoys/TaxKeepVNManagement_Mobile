@@ -210,6 +210,27 @@ describe('expenseGroupUtils', () => {
       expect(requiresReimbursementConfirmation('VAT_INVOICE')).toBe(false);
       expect(requiresReimbursementConfirmation(null, null)).toBe(false);
     });
+
+    it('returns false for Medical and Education invoices in tax year 2025 or earlier, and true from 2026 onward', () => {
+      expect(requiresReimbursementConfirmation('MEDICAL_RECEIPT', 'Sức khỏe', 2025)).toBe(false);
+      expect(requiresReimbursementConfirmation('MEDICAL_RECEIPT', 'Sức khỏe', 2024)).toBe(false);
+      expect(requiresReimbursementConfirmation('TUITION_RECEIPT', 'Giáo dục', 2025)).toBe(false);
+      expect(requiresReimbursementConfirmation('CUSTOM_DOC', 'Hóa đơn học phí đại học', 2025)).toBe(false);
+      expect(requiresReimbursementConfirmation('CUSTOM_DOC', 'Chi phí khám chữa bệnh y tế', 2023)).toBe(false);
+
+      expect(requiresReimbursementConfirmation('MEDICAL_RECEIPT', 'Sức khỏe', 2026)).toBe(true);
+      expect(requiresReimbursementConfirmation('MEDICAL_RECEIPT', 'Sức khỏe', 2027)).toBe(true);
+      expect(requiresReimbursementConfirmation('TUITION_RECEIPT', 'Giáo dục', 2026)).toBe(true);
+      expect(requiresReimbursementConfirmation('CUSTOM_DOC', 'Hóa đơn học phí đại học', 2026)).toBe(true);
+
+      // Respects PIT_NEW_LAW_FROM_YEAR override when provided
+      expect(
+        requiresReimbursementConfirmation('MEDICAL_RECEIPT', 'Sức khỏe', 2026, { PIT_NEW_LAW_FROM_YEAR: '2027' })
+      ).toBe(false);
+      expect(
+        requiresReimbursementConfirmation('MEDICAL_RECEIPT', 'Sức khỏe', 2027, { PIT_NEW_LAW_FROM_YEAR: '2027' })
+      ).toBe(true);
+    });
   });
 
   describe('calculateExpenseDeductionSummary', () => {

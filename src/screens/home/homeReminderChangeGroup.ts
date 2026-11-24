@@ -1,12 +1,13 @@
 import type { ApiResponse } from '../../api/authApi';
+import type { DependentCatalog } from '../../api/dependentDocumentApi';
 import type {
   UpdateDependentGroupRequest,
   UpdateDependentGroupResponse,
 } from '../../api/dependentLifecycleApi';
 import {
-  groupCodeToIndex,
-  groupCodeToTitle,
+  groupName,
   mapDependentLifecycleError,
+  uiTabForGroup,
 } from '../dependent/dependentGroupUtils';
 
 export type HomeReminderInput = {
@@ -42,9 +43,10 @@ export type UpdateDependentGroupFn = (
 ) => Promise<ApiResponse<UpdateDependentGroupResponse>>;
 
 export function buildHomeReminderChangeGroupPlan(
-  reminder: HomeReminderInput
+  reminder: HomeReminderInput,
+  catalog: DependentCatalog | null | undefined
 ): HomeReminderConfirmPlan {
-  const newGroupLabel = groupCodeToTitle(reminder.recommendedGroup);
+  const newGroupLabel = groupName(catalog, reminder.recommendedGroup);
   return {
     dependentId: reminder.dependentId,
     newGroup: reminder.recommendedGroup,
@@ -58,8 +60,10 @@ export async function runHomeReminderChangeGroup(options: {
   dependentId: string;
   newGroup: string;
   updateDependentGroup: UpdateDependentGroupFn;
+  catalog: DependentCatalog | null | undefined;
 }): Promise<HomeReminderChangeResult> {
-  const { dependentId, newGroup, updateDependentGroup } = options;
+  const { dependentId, newGroup, updateDependentGroup, catalog } = options;
+  const tabOf = (code: string) => Math.max(0, uiTabForGroup(catalog, code));
   try {
     const res = await updateDependentGroup(dependentId, { newGroup });
     if (!res.success || !res.data) {
@@ -76,7 +80,7 @@ export async function runHomeReminderChangeGroup(options: {
         screen: 'ProofDocuments',
         params: {
           dependentId,
-          groupIndex: groupCodeToIndex(currentGroup),
+          groupIndex: tabOf(currentGroup),
           requiredDocuments: res.data.requiredDocuments ?? [],
         },
       },
@@ -95,7 +99,7 @@ export async function runHomeReminderChangeGroup(options: {
           screen: 'ProofDocuments',
           params: {
             dependentId,
-            groupIndex: groupCodeToIndex(newGroup),
+            groupIndex: tabOf(newGroup),
             requiredDocuments: ['STUDENT_CARD'],
           },
         },

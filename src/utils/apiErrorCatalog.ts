@@ -114,6 +114,7 @@ export const API_ERROR_MESSAGES: Record<string, string> = {
   REASON_REQUIRED: 'Vui lòng nhập lý do.',
   RESOLUTION_REQUIRED: 'Vui lòng nhập nội dung phán quyết.',
   RESPONSE_TOO_SHORT: 'Nội dung phản hồi còn quá ngắn.',
+  RULES_NOT_CONFIGURED: 'Nhóm này chưa được cấu hình danh mục giấy tờ, vui lòng liên hệ hỗ trợ.',
   REVIEW_NOT_ALLOWED: 'Chưa thể gửi đánh giá cho buổi tư vấn này.',
   ROOM_NOT_OPEN_YET: 'Phòng tư vấn chưa đến giờ mở.',
   SAME_GROUP: 'Người phụ thuộc đang ở nhóm điều kiện này rồi.',

@@ -25,18 +25,17 @@ import { DrumHeader } from '../../components/brand/DrumHeader';
 import { Dialog } from '../../components/common/Dialog';
 import { useToast } from '../../components/ui/Toast';
 import { ChangeGroupSheet } from '../../components/common/ChangeGroupSheet';
+import { CatalogErrorBanner } from '../../components/common/CatalogErrorBanner';
+import { useDependentCatalog } from '../../hooks/useDependentCatalog';
+import { getCachedCatalog } from '../../api/dependentCatalogStore';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
 import { RootStackParamList } from '../../navigation/types';
 import { dependentDocumentApi, type DependentItem } from '../../api/dependentDocumentApi';
 import { dependentLifecycleApi } from '../../api/dependentLifecycleApi';
 import { pickApiErrorMessage } from '../../utils/apiErrorCatalog';
-import {
-  RELATIONSHIP_OPTIONS,
-  ageAtEffectiveFrom,
-  isAge14OrOlderAtEffective,
-} from './dependentEligibility';
-import { groupCodeToTitle } from './dependentGroupUtils';
+import { ageAtEffectiveFrom, isAge14OrOlderAtEffective } from './dependentEligibility';
+import { groupName, relationshipName } from './dependentGroupUtils';
 import {
   DEPENDENT_MAX_LENGTHS,
   EditDependentFormState,
@@ -79,6 +78,12 @@ export const EditDependentScreen: React.FC = () => {
   const route = useRoute<Route>();
   const { toast } = useToast();
   const dependentId = route.params.dependentId;
+  const {
+    catalog,
+    error: catalogError,
+    loading: catalogLoading,
+    reload: reloadCatalog,
+  } = useDependentCatalog();
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -110,7 +115,7 @@ export const EditDependentScreen: React.FC = () => {
     setLoadError(null);
     try {
       const detail = await dependentDocumentApi.getDependentById(dependentId);
-      const state = dependentDetailToFormState(detail);
+      const state = dependentDetailToFormState(detail, getCachedCatalog());
       setForm(state);
       setBaseline(state);
       setProfileStatus(String(detail?.status || ''));
@@ -214,7 +219,7 @@ export const EditDependentScreen: React.FC = () => {
           fullName: result.fullName || form.fullName,
           birthDate: `${form.birthYear}-${form.birthMonth}-${form.birthDay}`,
           currentGroup: result.currentGroup || form.currentGroup,
-          groupTitle: groupCodeToTitle(result.currentGroup || form.currentGroup),
+          groupTitle: groupName(catalog, result.currentGroup || form.currentGroup),
           isProfileComplete: false,
           requiredDocs: Array.isArray(result.requiredDocuments) ? result.requiredDocuments : [],
           citizenId: result.citizenId ?? (form.citizenId.trim() || undefined),
@@ -224,7 +229,7 @@ export const EditDependentScreen: React.FC = () => {
           effectiveToMonth: result.effectiveToMonth || form.effectiveToMonth,
           status: result.status || 'PENDING_DOCUMENTS',
         };
-        navigation.navigate('ProofDocuments', buildProofDocumentsParams(dep));
+        navigation.navigate('ProofDocuments', buildProofDocumentsParams(dep, catalog));
         return;
       }
       toast.success('Hồ sơ người phụ thuộc đã được lưu.', 'Đã cập nhật');
@@ -248,6 +253,7 @@ export const EditDependentScreen: React.FC = () => {
       relationship: form.relationship,
       currentGroup: form.currentGroup,
       ageAtEffective,
+      catalog,
     });
     if (!plan.canChange) {
       toast.warning('Không còn nhóm điều kiện khác phù hợp với mối quan hệ hiện tại.', 'Chưa thể đổi nhóm');
@@ -259,8 +265,7 @@ export const EditDependentScreen: React.FC = () => {
 
   const fromParts = splitEffectiveMonth(form?.effectiveFromMonth);
   const toParts = splitEffectiveMonth(form?.effectiveToMonth);
-  const relLabel =
-    RELATIONSHIP_OPTIONS.find((r) => r.value === form?.relationship)?.label || form?.relationship || '—';
+  const relLabel = relationshipName(catalog, form?.relationship) || '—';
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
@@ -292,6 +297,13 @@ export const EditDependentScreen: React.FC = () => {
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
+            {catalogError ? (
+              <CatalogErrorBanner
+                message={catalogError}
+                loading={catalogLoading}
+                onRetry={() => void reloadCatalog()}
+              />
+            ) : null}
             {isInactive ? (
               <Text style={styles.identityNote}>
                 Hồ sơ người phụ thuộc đã ngừng hiệu lực nên không thể chỉnh sửa thông tin.
@@ -437,7 +449,7 @@ export const EditDependentScreen: React.FC = () => {
               <View style={styles.readonlyBox}>
                 <Text style={styles.dropdownText}>
                   {relLabel}
-                  {form.currentGroup ? ` · ${groupCodeToTitle(form.currentGroup)}` : ''}
+                  {form.currentGroup ? ` · ${groupName(catalog, form.currentGroup)}` : ''}
                 </Text>
               </View>
               {!isInactive ? (
@@ -626,6 +638,7 @@ export const EditDependentScreen: React.FC = () => {
               dependentId: changeGroupPlan.dependentId,
               newGroup: code,
               updateDependentGroup: dependentLifecycleApi.updateDependentGroup,
+              catalog,
             });
             if (!result.ok) {
               toast.error(result.message, 'Chưa chuyển được nhóm');

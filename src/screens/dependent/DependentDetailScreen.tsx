@@ -22,6 +22,8 @@ import { fonts } from '../../constants/fonts';
 import { DrumHeader } from '../../components/brand/DrumHeader';
 import { InfoNote } from '../../components/common/InfoNote';
 import { ChangeGroupSheet } from '../../components/common/ChangeGroupSheet';
+import { CatalogErrorBanner } from '../../components/common/CatalogErrorBanner';
+import { useDependentCatalog } from '../../hooks/useDependentCatalog';
 import { EditEffectivePeriodSheet } from '../../components/dependent/EditEffectivePeriodSheet';
 import {
   DocumentViewerModal,
@@ -41,7 +43,8 @@ import {
   getGroupTitle,
 } from '../../api/dependentDocumentApi';
 import { dependentLifecycleApi } from '../../api/dependentLifecycleApi';
-import { ageAtEffectiveFrom, RELATIONSHIP_OPTIONS } from './dependentEligibility';
+import { ageAtEffectiveFrom } from './dependentEligibility';
+import { relationshipName } from './dependentGroupUtils';
 import { buildProofDocumentsParams } from './proofDocumentsParams';
 import { buildEffectivePeriodUpdatePayload } from './editEffectivePeriod';
 import {
@@ -53,6 +56,7 @@ import { runSoftDeleteDependent } from './softDeleteDependent';
 import {
   calculateDependentAge,
   computeMissingMandatoryDocTypes,
+  describeMissingDoc,
   formatDependentDate,
   formatDependentMonthRange,
   getDependentStatusMeta,
@@ -63,9 +67,6 @@ type Route = RouteProp<RootStackParamList, 'DependentDetail'>;
 
 const NOOP = () => undefined;
 
-function getRelationshipLabel(code?: string): string {
-  return RELATIONSHIP_OPTIONS.find((item) => item.value === code)?.label || code || 'Người phụ thuộc';
-}
 
 export const DependentDetailScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
@@ -73,6 +74,14 @@ export const DependentDetailScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
   const { toast } = useToast();
   const { dependentId } = route.params;
+  const {
+    catalog,
+    error: catalogError,
+    loading: catalogLoading,
+    reload: reloadCatalog,
+  } = useDependentCatalog();
+  const getRelationshipLabel = (code?: string): string =>
+    relationshipName(catalog, code) || 'Người phụ thuộc';
 
   const isMountedRef = useRef(true);
   useEffect(() => {
@@ -220,9 +229,9 @@ export const DependentDetailScreen: React.FC = () => {
         effectiveFromMonth: detail.effectiveFromMonth,
         effectiveToMonth: detail.effectiveToMonth,
         status: detail.status,
-      })
+      }, catalog)
     );
-  }, [detail, dependentId, navigation]);
+  }, [catalog, detail, dependentId, navigation]);
 
   const handleOpenChangeGroup = useCallback(() => {
     if (!detail) return;
@@ -240,9 +249,10 @@ export const DependentDetailScreen: React.FC = () => {
     const plan = buildManualChangeGroupPlan({
       dependentId: detail.dependentId || dependentId,
       fullName: detail.fullName,
-      relationship: detail.relationship || 'CHILD',
+      relationship: detail.relationship || '',
       currentGroup: detail.currentGroup,
       ageAtEffective,
+      catalog,
     });
 
     if (!plan.canChange) {
@@ -255,7 +265,7 @@ export const DependentDetailScreen: React.FC = () => {
 
     setChangeGroupPlan(plan);
     setChangeGroupVisible(true);
-  }, [detail, dependentId, toast]);
+  }, [catalog, detail, dependentId, toast]);
 
   const handleConfirmChangeGroup = useCallback(
     async (newGroup: string, note?: string) => {
@@ -267,6 +277,7 @@ export const DependentDetailScreen: React.FC = () => {
           newGroup,
           note,
           updateDependentGroup: dependentLifecycleApi.updateDependentGroup,
+          catalog,
         });
         if (!isMountedRef.current) return;
         if (!result.ok) {
@@ -289,7 +300,7 @@ export const DependentDetailScreen: React.FC = () => {
         }
       }
     },
-    [changeGroupPlan, changeGroupLoading, navigation, toast]
+    [catalog, changeGroupPlan, changeGroupLoading, navigation, toast]
   );
 
   const handleConfirmSoftDelete = useCallback(async () => {
@@ -371,6 +382,14 @@ export const DependentDetailScreen: React.FC = () => {
             />
           }
         >
+          {catalogError ? (
+            <CatalogErrorBanner
+              message={catalogError}
+              loading={catalogLoading}
+              onRetry={() => void reloadCatalog()}
+            />
+          ) : null}
+
           {/* Header tên + nhóm */}
           <View style={styles.heroCard}>
             <Text style={styles.heroName}>{formatPersonName(detail.fullName)}</Text>
@@ -499,7 +518,9 @@ export const DependentDetailScreen: React.FC = () => {
               {missingDocs.map((docType, idx) => (
                 <View key={`${docType}_${idx}`} style={styles.missingRow}>
                   <Ionicons name="alert-circle-outline" size={16} color="#E65100" />
-                  <Text style={styles.missingText}>{getDocTypeLabel(docType)}</Text>
+                  <Text style={styles.missingText}>
+                    {describeMissingDoc(docType, docRules, detail.currentGroup)}
+                  </Text>
                 </View>
               ))}
             </View>

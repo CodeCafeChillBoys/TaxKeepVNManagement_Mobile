@@ -25,7 +25,8 @@ import {
 } from '../../api/taxRuleApi';
 import { DrumHeader } from '../../components/brand/DrumHeader';
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
-import { groupCodeToTitle } from '../dependent/dependentGroupUtils';
+import { groupName } from '../dependent/dependentGroupUtils';
+import { useDependentCatalog } from '../../hooks/useDependentCatalog';
 
 type CategoryTab = 'ALL' | 'BRACKET' | 'DEDUCTION' | 'DEPENDENT' | 'EXEMPTION';
 
@@ -207,6 +208,7 @@ function formatStatusVi(status?: string | null): string {
 
 export const LawConditionsScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
+  const { catalog } = useDependentCatalog({ refreshOnMount: false });
 
   const [ruleSets, setRuleSets] = useState<TaxRuleSetSummary[]>([]);
   const [selectedRuleSetId, setSelectedRuleSetId] = useState<string>('');
@@ -318,7 +320,7 @@ export const LawConditionsScreen: React.FC = () => {
         .toLowerCase();
       return (
         (d.name || '').toLowerCase().includes(normalizedQuery) ||
-        groupCodeToTitle(d.dependentType).toLowerCase().includes(normalizedQuery) ||
+        groupName(catalog, d.dependentType).toLowerCase().includes(normalizedQuery) ||
         conds.includes(normalizedQuery) ||
         docs.includes(normalizedQuery)
       );
@@ -335,7 +337,7 @@ export const LawConditionsScreen: React.FC = () => {
       ),
       dependents: allDeps.filter(matchDep),
     };
-  }, [detailData, normalizedQuery]);
+  }, [catalog, detailData, normalizedQuery]);
 
   const renderTaxRuleCard = (rule: TaxRuleItem, index: number) => {
     const key = `rule_${rule.ruleCode || index}`;
@@ -427,10 +429,10 @@ export const LawConditionsScreen: React.FC = () => {
   const renderDependentRuleCard = (dep: DependentRuleItem, index: number) => {
     const key = `dep_${dep.id || dep.dependentType || index}`;
     const isOpen = Boolean(expandedKeys[key]);
-    const title = dep.name || groupCodeToTitle(dep.dependentType);
+    const title = dep.name || groupName(catalog, dep.dependentType);
     const conditionsList = parseDependentConditionsList(dep.conditions);
     const previewText =
-      conditionsList.join(' · ') || groupCodeToTitle(dep.dependentType);
+      conditionsList.join(' · ') || groupName(catalog, dep.dependentType);
 
     return (
       <View key={key} style={styles.section}>

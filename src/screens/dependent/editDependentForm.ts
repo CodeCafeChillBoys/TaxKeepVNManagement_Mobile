@@ -1,4 +1,5 @@
 import { parseBirthDateParts } from './applyTaxRegistrationOcrFill';
+import type { DependentCatalog } from '../../api/dependentDocumentApi';
 import { groupsForRelationship } from './dependentGroupUtils';
 import { isBeforeBirthMonth } from './editEffectivePeriod';
 
@@ -71,19 +72,25 @@ export function splitEffectiveMonth(raw?: string | null): { year: string; month:
   return { year: m[1], month: m[2] };
 }
 
-/** Map chi tiết API → state form sửa hồ sơ NPT. */
-export function dependentDetailToFormState(detail: any): EditDependentFormState {
+/**
+ * Map chi tiết API → state form sửa hồ sơ NPT.
+ * Có catalog thì chỉnh nhóm về nhóm hợp lệ của quan hệ; chưa có catalog thì giữ nhóm từ API.
+ */
+export function dependentDetailToFormState(
+  detail: any,
+  catalog?: DependentCatalog | null
+): EditDependentFormState {
   const birth =
     parseBirthDateParts(String(detail?.birthDate || '')) || {
       birthDay: '01',
       birthMonth: '01',
       birthYear: String(new Date().getFullYear() - 10),
     };
-  const relationship = String(detail?.relationship || 'CHILD').toUpperCase();
-  const groups = groupsForRelationship(relationship);
+  const relationship = String(detail?.relationship || '').toUpperCase();
+  const groups = groupsForRelationship(catalog, relationship).map((g) => g.code.toUpperCase());
   let currentGroup = String(detail?.currentGroup || '').toUpperCase();
-  if (!currentGroup || !groups.includes(currentGroup)) {
-    currentGroup = groups[0] || '';
+  if (groups.length > 0 && (!currentGroup || !groups.includes(currentGroup))) {
+    currentGroup = groups[0];
   }
   return {
     fullName: String(detail?.fullName || ''),

@@ -8,6 +8,7 @@ import {
   needsIdentityChangeConfirm,
   splitEffectiveMonth,
 } from './editDependentForm';
+import { SEED_CATALOG } from './seedCatalog.test.fixture';
 
 describe('splitEffectiveMonth', () => {
   it('tách YYYY-MM hợp lệ', () => {
@@ -34,6 +35,22 @@ describe('dependentDetailToFormState', () => {
     expect(state.birthMonth).toBe('05');
     expect(state.birthYear).toBe('1960');
     expect(state.citizenId).toBe('079060001234');
+  });
+
+  it('có catalog: nhóm không thuộc quan hệ thì chọn nhóm đầu của quan hệ', () => {
+    const state = dependentDetailToFormState(
+      { relationship: 'PARENT', currentGroup: 'CHILD_UNDER_18', birthDate: '1960-05-15' },
+      SEED_CATALOG
+    );
+    expect(state.currentGroup).toBe('PARENT_DISABLED');
+  });
+
+  it('chưa có catalog: giữ nhóm từ API', () => {
+    const state = dependentDetailToFormState(
+      { relationship: 'PARENT', currentGroup: 'NEW_GROUP', birthDate: '1960-05-15' },
+      null
+    );
+    expect(state.currentGroup).toBe('NEW_GROUP');
   });
 });
 

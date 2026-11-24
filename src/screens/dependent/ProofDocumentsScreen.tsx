@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -20,6 +20,11 @@ import { theme } from '../../constants/theme';
 import { DrumHeader } from '../../components/brand/DrumHeader';
 import { useToast } from '../../components/ui/Toast';
 import { Dialog } from '../../components/common/Dialog';
+import { CatalogErrorBanner } from '../../components/common/CatalogErrorBanner';
+import { useDependentCatalog } from '../../hooks/useDependentCatalog';
+import { getCachedCatalog } from '../../api/dependentCatalogStore';
+import { RULES_NOT_CONFIGURED_LABEL } from '../../api/dependentDocHelpers';
+import { uiTabForGroup } from './dependentGroupUtils';
 import { formatPersonName } from '../../utils/formatPersonName';
 import {
   dependentDocumentApi,
@@ -35,7 +40,14 @@ import {
 } from '../../components/common/DocumentViewerModal';
 import { isImageDocumentUri } from '../../components/common/imageZoomUtils';
 import { RootStackParamList, RootNavigationProp } from '../../navigation/types';
-import { resolveProofDocumentsChecklist, selectRulesForTab } from './proofDocumentsParams';
+import {
+  buildDocSlots,
+  expandChecklistToRules,
+  resolveProofDocumentsChecklist,
+  RULES_NOT_CONFIGURED_CODE,
+  selectRulesForTab,
+  type DocSlot,
+} from './proofDocumentsParams';
 import {
   buildProofDocLawExplanation,
   extractYearFromEffectiveMonth,
@@ -53,6 +65,13 @@ import {
 
 type ProofDocumentsRouteProp = RouteProp<RootStackParamList, 'ProofDocuments'>;
 
+interface LawDocOption {
+  docType: string;
+  title: string;
+  targetGroup?: string;
+  ruleDescription?: string;
+}
+
 interface LawDocItem {
   key: string;
   code: string;
@@ -62,16 +81,64 @@ interface LawDocItem {
   isMandatory: boolean;
   targetGroup?: string;
   ruleDescription?: string;
+  /** Ô "nộp 1 trong N": các loại giấy người dùng được chọn; docType là loại đang chọn. */
+  options?: LawDocOption[];
 }
 
 interface LawGroupRequirement {
   groupId: number;
-  code: string;
   tabLabel: string;
   title: string;
   subtitle: string;
-  docs: LawDocItem[];
 }
+
+const ALTERNATIVE_SLOT_TITLE = 'Nộp 1 trong các giấy tờ:';
+const OPTIONAL_SUFFIX = ' (không bắt buộc)';
+
+type RuleLike = Pick<
+  DependentDocumentRuleItem,
+  'docType' | 'isMandatory' | 'alternativeGroup' | 'docName' | 'targetGroup' | 'description'
+>;
+
+/** Ô upload (gộp "chọn 1 trong N") → bước hiển thị trên màn. */
+function slotToLawDoc(slot: DocSlot<RuleLike>, idx: number, fallbackGroup?: string): LawDocItem {
+  const letter = String.fromCharCode(97 + idx);
+  const options: LawDocOption[] = slot.rules.map((r) => ({
+    docType: r.docType,
+    title: getDocTypeLabel(r.docType, r.docName),
+    targetGroup: r.targetGroup || fallbackGroup,
+    ruleDescription: r.description || undefined,
+  }));
+  const first = options[0];
+  if (options.length > 1) {
+    return {
+      key: slot.key,
+      code: letter,
+      docType: first.docType,
+      title: ALTERNATIVE_SLOT_TITLE,
+      shortLabel: options.map((o) => o.title).join(' / '),
+      isMandatory: true,
+      targetGroup: first.targetGroup,
+      ruleDescription: first.ruleDescription,
+      options,
+    };
+  }
+  return {
+    key: slot.key,
+    code: letter,
+    docType: first.docType,
+    title: slot.isMandatory ? first.title : `${first.title}${OPTIONAL_SUFFIX}`,
+    shortLabel: first.title,
+    isMandatory: slot.isMandatory,
+    targetGroup: first.targetGroup,
+    ruleDescription: first.ruleDescription,
+  };
+}
+
+const docMatchesSlot = (doc: LawDocItem, docType?: string | null): boolean =>
+  (doc.options ? doc.options.map((o) => o.docType) : [doc.docType]).some((t) =>
+    isSameProofDocType(t, docType)
+  );
 
 interface SelectedDocFile {
   name: string;
@@ -86,171 +153,37 @@ interface SelectedDocFile {
   needsReupload?: boolean;
 }
 
+// Tiêu đề / mô tả 5 tab theo luật. Danh sách giấy tờ lấy từ rule DB, không viết sẵn trong app.
 const LAW_GROUP_SPECS: LawGroupRequirement[] = [
   {
     groupId: 1,
-    code: 'CHILD_UNDER_18',
     tabLabel: 'Nhóm 1',
     title: 'Nhóm 1: Con dưới 18 tuổi',
     subtitle: 'Độ tuổi tính theo ngày sinh < 18 tuổi.',
-    docs: [
-      {
-        key: 'g1_birth',
-        code: 'a',
-        docType: 'BIRTH_CERTIFICATE',
-        title: 'Giấy khai sinh của con (hoặc bản trích lục khai sinh)',
-        shortLabel: 'Giấy khai sinh',
-        isMandatory: true,
-      },
-      {
-        key: 'g1_cccd',
-        code: 'b',
-        docType: 'CITIZEN_ID',
-        title: 'Căn cước công dân / Mã định danh cá nhân của con (nếu đã được cấp)',
-        shortLabel: 'CCCD của con',
-        isMandatory: false,
-      },
-    ],
   },
   {
     groupId: 2,
-    code: 'CHILD_OVER_18_STUDYING',
     tabLabel: 'Nhóm 2',
     title: 'Nhóm 2: Con từ 18 tuổi trở lên đang đi học',
     subtitle: 'Con từ đủ 18 tuổi và đang theo học đại học, cao đẳng, trung học chuyên nghiệp, dạy nghề.',
-    docs: [
-      {
-        key: 'g2_cccd',
-        code: 'a',
-        docType: 'CITIZEN_ID',
-        title: 'Căn cước công dân của con',
-        shortLabel: 'CCCD của con',
-        isMandatory: true,
-      },
-      {
-        key: 'g2_birth',
-        code: 'b',
-        docType: 'BIRTH_CERTIFICATE',
-        title: 'Giấy khai sinh của con (chứng minh quan hệ)',
-        shortLabel: 'Giấy khai sinh',
-        isMandatory: false,
-      },
-      {
-        key: 'g2_student',
-        code: 'c',
-        docType: 'STUDENT_CARD',
-        title: 'Thẻ sinh viên (còn hạn) hoặc Giấy xác nhận học sinh/sinh viên từ nhà trường',
-        shortLabel: 'Thẻ sinh viên',
-        isMandatory: true,
-      },
-    ],
   },
   {
     groupId: 3,
-    code: 'DISABLED_DEPENDENT',
     tabLabel: 'Nhóm 3',
     title: 'Nhóm 3: Con bị khuyết tật / Mất khả năng lao động',
     subtitle: 'Con đủ 18 tuổi trở lên nhưng không có khả năng tự lao động tạo thu nhập.',
-    docs: [
-      {
-        key: 'g3_cccd',
-        code: 'a',
-        docType: 'CITIZEN_ID',
-        title: 'Căn cước công dân của con',
-        shortLabel: 'CCCD của con',
-        isMandatory: true,
-      },
-      {
-        key: 'g3_birth',
-        code: 'b',
-        docType: 'BIRTH_CERTIFICATE',
-        title: 'Giấy khai sinh của con',
-        shortLabel: 'Giấy khai sinh',
-        isMandatory: false,
-      },
-      {
-        key: 'g3_disability',
-        code: 'c',
-        docType: 'DISABILITY_CERTIFICATE',
-        title: 'Giấy xác nhận mức độ khuyết tật hoặc Biên bản giám định y khoa mất khả năng lao động',
-        shortLabel: 'Giấy khuyết tật',
-        isMandatory: true,
-      },
-    ],
   },
   {
     groupId: 4,
-    code: 'SPOUSE_OR_PARENTS',
     tabLabel: 'Nhóm 4',
     title: 'Nhóm 4: Vợ / Chồng hoặc Cha / Mẹ',
     subtitle: 'Bao gồm: Vợ, chồng; cha mẹ đẻ, cha mẹ vợ/chồng, cha mẹ kế, cha mẹ nuôi hợp pháp.',
-    docs: [
-      {
-        key: 'g4_cccd',
-        code: 'a',
-        docType: 'CITIZEN_ID',
-        title: 'Căn cước công dân của người phụ thuộc (cha/mẹ hoặc vợ/chồng)',
-        shortLabel: 'CCCD NPT',
-        isMandatory: true,
-      },
-      {
-        key: 'g4_relation',
-        code: 'b',
-        docType: 'MARRIAGE_CERTIFICATE',
-        title: 'Giấy tờ chứng minh quan hệ',
-        shortLabel: 'Chứng minh quan hệ',
-        isMandatory: true,
-      },
-      {
-        key: 'g4_condition',
-        code: 'c',
-        docType: 'DISABILITY_CERTIFICATE',
-        title: 'Giấy tờ chứng minh điều kiện giảm trừ',
-        shortLabel: 'Điều kiện giảm trừ',
-        isMandatory: false,
-      },
-    ],
   },
   {
     groupId: 5,
-    code: 'OTHER_DEPENDENT',
     tabLabel: 'Nhóm 5',
     title: 'Nhóm 5: Cá nhân khác không nơi nương tựa trực tiếp nuôi dưỡng',
     subtitle: 'Bao gồm: Anh, chị, em ruột; ông bà nội/ngoại; cô dì chú bác ruột; cháu ruột.',
-    docs: [
-      {
-        key: 'g5_cccd_or_birth',
-        code: 'a',
-        docType: 'CITIZEN_ID',
-        title: 'Căn cước công dân / Giấy khai sinh của người phụ thuộc',
-        shortLabel: 'CCCD / GKS',
-        isMandatory: true,
-      },
-      {
-        key: 'g5_blood_relation',
-        code: 'b',
-        docType: 'RELATIONSHIP_CERTIFICATE',
-        title: 'Giấy tờ chứng minh quan hệ huyết thống (Giấy khai sinh các bên, cư trú CT07)',
-        shortLabel: 'Quan hệ huyết thống',
-        isMandatory: true,
-      },
-      {
-        key: 'g5_ubnd_cert',
-        code: 'c',
-        docType: 'SUPPORT_COMMITMENT_FORM',
-        title: 'Văn bản xác nhận của UBND cấp xã về việc trực tiếp nuôi dưỡng',
-        shortLabel: 'Xác nhận nuôi dưỡng',
-        isMandatory: true,
-      },
-      {
-        key: 'g5_labor_condition',
-        code: 'd',
-        docType: 'DISABILITY_CERTIFICATE',
-        title: 'Giấy tờ điều kiện lao động',
-        shortLabel: 'Điều kiện lao động',
-        isMandatory: false,
-      },
-    ],
   },
 ];
 
@@ -259,6 +192,12 @@ export const ProofDocumentsScreen: React.FC = () => {
   const route = useRoute<ProofDocumentsRouteProp>();
   const insets = useSafeAreaInsets();
   const { toast } = useToast();
+  const {
+    catalog,
+    error: catalogError,
+    loading: catalogLoading,
+    reload: reloadCatalog,
+  } = useDependentCatalog();
 
   const isMountedRef = useRef(true);
   useEffect(() => {
@@ -320,18 +259,29 @@ export const ProofDocumentsScreen: React.FC = () => {
   const [loadingTaxRules, setLoadingTaxRules] = useState<boolean>(false);
 
   const [allRules, setAllRules] = useState<DependentDocumentRuleItem[]>([]);
+  const [rulesLoading, setRulesLoading] = useState<boolean>(true);
   const [dynamicDocs, setDynamicDocs] = useState<LawDocItem[] | null>(null);
+  const [rulesNotConfigured, setRulesNotConfigured] = useState<boolean>(false);
+  // Loại giấy người dùng chọn trong ô "nộp 1 trong N", theo key ô
+  const [docChoices, setDocChoices] = useState<Record<string, string>>({});
 
   const currentGroupSpec = LAW_GROUP_SPECS[selectedGroupIdx];
-  // Danh sách dựng sẵn chỉ để xem hướng dẫn luật khi chưa tải được rule; không dùng để upload (mã giấy tờ phải từ DB)
-  const staticDocs = currentGroupSpec.docs;
   const docsFromDb = Boolean(dynamicDocs && dynamicDocs.length > 0);
-  const activeDocs = docsFromDb ? (dynamicDocs as LawDocItem[]) : staticDocs;
+  const activeDocs = useMemo<LawDocItem[]>(
+    () =>
+      (dynamicDocs || []).map((doc) => {
+        const chosen = doc.options?.find((o) => o.docType === docChoices[doc.key]);
+        return chosen
+          ? { ...doc, docType: chosen.docType, targetGroup: chosen.targetGroup, ruleDescription: chosen.ruleDescription }
+          : doc;
+      }),
+    [dynamicDocs, docChoices]
+  );
   // Tải được rule nhưng nhóm không có rule nào = admin chưa cấu hình, không phải lỗi mạng
   const RULES_NOT_LOADED_MESSAGE =
-    allRules.length > 0
-      ? 'Nhóm người phụ thuộc này chưa được cấu hình danh mục giấy tờ minh chứng trên hệ thống. Vui lòng liên hệ quản trị viên.'
-      : 'Chưa tải được danh mục giấy tờ của nhóm này từ hệ thống. Vui lòng kiểm tra kết nối và mở lại màn hình.';
+    rulesNotConfigured || allRules.length > 0
+      ? RULES_NOT_CONFIGURED_LABEL
+      : 'Chưa tải được danh mục giấy tờ của nhóm này từ hệ thống. Vui lòng kiểm tra kết nối và thử lại.';
 
   // Đảm bảo chỉ số bước luôn nằm trong phạm vi activeDocs
   useEffect(() => {
@@ -347,6 +297,7 @@ export const ProofDocumentsScreen: React.FC = () => {
   }, []);
 
   const loadRules = async () => {
+    setRulesLoading(true);
     try {
       const rules = await dependentDocumentApi.getRules();
       if (isMountedRef.current && rules && rules.length > 0) {
@@ -354,6 +305,8 @@ export const ProofDocumentsScreen: React.FC = () => {
       }
     } catch (err) {
       if (__DEV__) console.warn('loadRules err:', err);
+    } finally {
+      if (isMountedRef.current) setRulesLoading(false);
     }
   };
 
@@ -382,82 +335,68 @@ export const ProofDocumentsScreen: React.FC = () => {
 
   // Cập nhật danh sách tài liệu động theo quy tắc từ Backend API
   useEffect(() => {
-    const depGroupCode =
+    const depGroupCode: string | undefined =
       (route.params?.dependentData as any)?.groupCode ??
       (route.params?.dependentData as any)?.currentGroup ??
-      currentGroupSpec.code;
-    const filteredForLookup = selectRulesForTab(allRules, selectedGroupIdx, depGroupCode);
+      undefined;
+    const filteredForLookup = selectRulesForTab(allRules, selectedGroupIdx, depGroupCode, catalog);
 
     const fromPatch = resolveProofDocumentsChecklist({
       requiredDocuments: route.params?.requiredDocuments,
       fallbackDocTypes: [],
     });
+    if (fromPatch.some((d) => d.toUpperCase() === RULES_NOT_CONFIGURED_CODE)) {
+      setRulesNotConfigured(true);
+      setDynamicDocs(null);
+      return;
+    }
+    setRulesNotConfigured(false);
+
     if (fromPatch.length > 0) {
-      const docs: LawDocItem[] = fromPatch.map((docType, idx) => {
-        const letter = String.fromCharCode(97 + idx);
-        const matchedRule =
-          filteredForLookup.find((r) => isSameProofDocType(r.docType, docType)) ||
-          allRules.find((r) => isSameProofDocType(r.docType, docType));
-        const label = getDocTypeLabel(docType, matchedRule?.docName);
+      // Checklist từ BE: mã thuộc nhóm "chọn 1" kéo theo các giấy thay thế cùng nhóm
+      const rules = expandChecklistToRules<RuleLike>(fromPatch, filteredForLookup, (docType) => {
+        const matched = allRules.find((r) => isSameProofDocType(r.docType, docType));
         return {
-          key: `patch_${docType.toLowerCase()}_${idx}`,
-          code: letter,
           docType,
-          title: label,
-          shortLabel: label,
-          isMandatory: matchedRule ? Boolean(matchedRule.isMandatory) : true,
-          targetGroup: matchedRule?.targetGroup || depGroupCode,
-          ruleDescription: matchedRule?.description || undefined,
+          isMandatory: true,
+          alternativeGroup: null,
+          docName: matched?.docName,
+          targetGroup: matched?.targetGroup || depGroupCode || '',
+          description: matched?.description,
         };
       });
-      setDynamicDocs(docs);
+      setDynamicDocs(buildDocSlots(rules).map((slot, idx) => slotToLawDoc(slot, idx, depGroupCode)));
       return;
     }
 
     if (allRules.length === 0) return;
 
-    // Ô upload lấy hoàn toàn từ rule DB theo nhóm thật của NPT (vd PARENT_RETIRED)
-    const filteredRules = filteredForLookup;
-
-    if (filteredRules.length === 0) {
+    // Ô upload lấy hoàn toàn từ rule DB theo nhóm thật của NPT; rule cùng alternativeGroup gộp một ô
+    if (filteredForLookup.length === 0) {
       setDynamicDocs(null);
     } else {
-      // Đưa các chứng từ bắt buộc lên trước để người dùng upload xong bắt buộc trước
-      const ordered = [...filteredRules].sort((a, b) => Number(b.isMandatory) - Number(a.isMandatory));
-      const docs: LawDocItem[] = ordered.map((rule, idx) => {
-        const letter = String.fromCharCode(97 + idx); // a, b, c, d...
-        const label = getDocTypeLabel(rule.docType, rule.docName);
-        return {
-          key: `rule_${rule.docType.toLowerCase()}`,
-          code: letter,
-          docType: rule.docType,
-          title: label,
-          shortLabel: label,
-          isMandatory: Boolean(rule.isMandatory),
-          targetGroup: rule.targetGroup || depGroupCode,
-          ruleDescription: rule.description || undefined,
-        };
-      });
-      setDynamicDocs(docs);
+      setDynamicDocs(
+        buildDocSlots<RuleLike>(filteredForLookup).map((slot, idx) => slotToLawDoc(slot, idx, depGroupCode))
+      );
     }
-  }, [allRules, selectedGroupIdx, route.params?.dependentData, route.params?.requiredDocuments, currentGroupSpec.code]);
+  }, [allRules, catalog, selectedGroupIdx, route.params?.dependentData, route.params?.requiredDocuments]);
 
   // Tự động đồng bộ hóa tài liệu từ máy chủ (serverDocs) vào các bước
   useEffect(() => {
-    if (!serverDocs || serverDocs.length === 0) return;
+    if (!serverDocs || serverDocs.length === 0 || !dynamicDocs) return;
     const newUploadedKeys: Record<string, boolean> = {};
     const newSelectedFiles: Record<string, SelectedDocFile> = {};
+    const newChoices: Record<string, string> = {};
 
-    activeDocs.forEach((docSpec) => {
-      const matchingDoc = serverDocs.find(
-        (doc: any) =>
-          (doc.docType || '').toUpperCase() === (docSpec.docType || '').toUpperCase() ||
-          (docSpec.docType === 'CITIZEN_ID' && doc.docType === 'CITIZEN_CARD') ||
-          (docSpec.docType === 'CITIZEN_CARD' && doc.docType === 'CITIZEN_ID') ||
-          (docSpec.docType === 'STUDENT_CARD' && doc.docType === 'STUDENT_DOCUMENT') ||
-          (docSpec.docType === 'STUDENT_DOCUMENT' && doc.docType === 'STUDENT_CARD')
-      );
+    dynamicDocs.forEach((docSpec) => {
+      // Ô "nộp 1 trong N": giấy hợp lệ của bất kỳ loại nào trong ô đều tính là đủ
+      const candidates = serverDocs.filter((doc: any) => docMatchesSlot(docSpec, doc.docType));
+      const matchingDoc = candidates.find((doc: any) => doc.isCurrent !== false) || candidates[0];
       if (matchingDoc) {
+        if (docSpec.options) {
+          const opt = docSpec.options.find((o) => isSameProofDocType(o.docType, matchingDoc.docType));
+          if (opt) newChoices[docSpec.key] = opt.docType;
+        }
         // Giấy nộp trước khi đổi thông tin nhân thân (isCurrent=false) không còn được tính → chưa coi là đã lưu
         const stale = matchingDoc.isCurrent === false;
         newUploadedKeys[docSpec.key] = !stale;
@@ -479,19 +418,22 @@ export const ProofDocumentsScreen: React.FC = () => {
       const merged = { ...prev, ...newUploadedKeys };
       if (!hasAutoPositionedStepRef.current) {
         hasAutoPositionedStepRef.current = true;
-        setCurrentStepIdx(findInitialPendingStepIndex(activeDocs, merged));
+        setCurrentStepIdx(findInitialPendingStepIndex(dynamicDocs, merged));
       }
       return merged;
     });
     setSelectedFiles((prev) => ({ ...newSelectedFiles, ...prev }));
-  }, [serverDocs, activeDocs]);
+    setDocChoices((prev) => ({ ...newChoices, ...prev }));
+  }, [serverDocs, dynamicDocs]);
 
   const loadInitialData = async () => {
     try {
       const deps = await dependentDocumentApi.getDependents();
       if (!isMountedRef.current) return;
       if (deps.length > 0) {
-        const matched = deps.find((d) => d.currentGroup === currentGroupSpec.code);
+        const matched = deps.find(
+          (d) => uiTabForGroup(getCachedCatalog(), d.currentGroup) === selectedGroupIdx
+        );
         setSelectedDependent(matched || deps[0]);
       }
     } catch {
@@ -551,13 +493,19 @@ export const ProofDocumentsScreen: React.FC = () => {
           lawModalDoc.targetGroup ||
           (route.params?.dependentData as any)?.groupCode ||
           (route.params?.dependentData as any)?.currentGroup ||
-          selectedDependent?.currentGroup ||
-          currentGroupSpec.code,
+          selectedDependent?.currentGroup,
         groupIndex: selectedGroupIdx,
         ruleDescription: lawModalDoc.ruleDescription,
         taxRuleDetail: activeTaxRuleDetail,
+        catalog,
       })
     : null;
+
+  const handleChooseDocOption = (docKey: string, docType: string) => {
+    if (uploading) return;
+    setDocChoices((prev) => ({ ...prev, [docKey]: docType }));
+    setStepErrors((prev) => ({ ...prev, [docKey]: undefined }));
+  };
 
   const assignPickedFile = (docKey: string, file: SelectedDocFile) => {
     setSelectedFiles((prev) => ({
@@ -924,6 +872,14 @@ export const ProofDocumentsScreen: React.FC = () => {
           </View>
         ) : null}
 
+        {catalogError ? (
+          <CatalogErrorBanner
+            message={catalogError}
+            loading={catalogLoading}
+            onRetry={() => void reloadCatalog()}
+          />
+        ) : null}
+
         {/* Tiêu đề nhóm điều kiện */}
         <View style={styles.titleSection}>
           <Text style={styles.groupTitleText}>{currentGroupSpec.title}</Text>
@@ -1051,12 +1007,21 @@ export const ProofDocumentsScreen: React.FC = () => {
                           : styles.mandatoryBadgeTextOptional,
                       ]}
                     >
-                      {currentDoc.isMandatory ? 'Bắt buộc' : 'Tùy chọn'}
+                      {currentDoc.isMandatory ? 'Bắt buộc' : 'Không bắt buộc'}
                     </Text>
                   </View>
                 </View>
 
                 <Text style={styles.docFieldLabel}>{currentDoc.title}</Text>
+                {currentDoc.options ? (
+                  <View style={styles.docOptionList} testID={`docOptions_${currentDoc.key}`}>
+                    {currentDoc.options.map((opt) => (
+                      <Text key={opt.docType} style={styles.docOptionListItem}>
+                        • {opt.title}
+                      </Text>
+                    ))}
+                  </View>
+                ) : null}
               </View>
 
               <TouchableOpacity
@@ -1069,6 +1034,41 @@ export const ProofDocumentsScreen: React.FC = () => {
                 <Ionicons name="alert-circle-outline" size={22} color="#007AFF" />
               </TouchableOpacity>
             </View>
+
+            {/* Ô "nộp 1 trong N": chọn loại giấy trước khi chụp / chọn ảnh, upload gửi đúng loại đã chọn */}
+            {currentDoc.options ? (
+              <View style={styles.docChoiceWrap}>
+                <Text style={styles.docChoiceLabel}>Chọn loại giấy tờ bạn nộp:</Text>
+                <View style={styles.docChoiceRow}>
+                  {currentDoc.options.map((opt) => {
+                    const selected = opt.docType === currentDoc.docType;
+                    return (
+                      <TouchableOpacity
+                        key={opt.docType}
+                        style={[styles.docChoiceChip, selected && styles.docChoiceChipSelected]}
+                        onPress={() => handleChooseDocOption(currentDoc.key, opt.docType)}
+                        disabled={uploading}
+                        accessibilityRole="radio"
+                        accessibilityState={{ selected }}
+                        testID={`docChoice_${opt.docType}`}
+                      >
+                        <Ionicons
+                          name={selected ? 'radio-button-on' : 'radio-button-off'}
+                          size={16}
+                          color={selected ? theme.colors.primary : '#8E8E93'}
+                        />
+                        <Text
+                          style={[styles.docChoiceChipText, selected && styles.docChoiceChipTextSelected]}
+                          numberOfLines={2}
+                        >
+                          {opt.title}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+            ) : null}
 
             {/* Banner lỗi cụ thể từ BE cho chứng từ này */}
             {currentError ? (
@@ -1329,7 +1329,26 @@ export const ProofDocumentsScreen: React.FC = () => {
               ) : null}
             </View>
           </View>
-        ) : null}
+        ) : (rulesLoading || (!catalog && catalogLoading)) && !rulesNotConfigured ? (
+          <View style={styles.rulesEmptyCard}>
+            <ActivityIndicator size="small" color={theme.colors.primary} />
+            <Text style={styles.rulesEmptyText}>Đang tải danh mục giấy tờ...</Text>
+          </View>
+        ) : (
+          <View style={styles.rulesEmptyCard} testID="proofRulesEmpty">
+            <Ionicons name="alert-circle-outline" size={28} color="#B91C1C" />
+            <Text style={styles.rulesEmptyText}>{RULES_NOT_LOADED_MESSAGE}</Text>
+            {!rulesNotConfigured && allRules.length === 0 ? (
+              <TouchableOpacity
+                style={styles.rulesRetryBtn}
+                onPress={() => void loadRules()}
+                testID="proofRulesRetryBtn"
+              >
+                <Text style={styles.rulesRetryText}>Thử lại</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        )}
       </ScrollView>
 
       {/* Modal Bottom Sheet chọn nguồn ảnh thật từ máy */}
@@ -1555,6 +1574,80 @@ export const ProofDocumentsScreen: React.FC = () => {
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   mr4: { marginRight: 4 },
+  docOptionList: {
+    marginTop: 4,
+  },
+  docOptionListItem: {
+    fontSize: 13,
+    color: '#333333',
+    lineHeight: 19,
+  },
+  docChoiceWrap: {
+    marginBottom: 12,
+  },
+  docChoiceLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#1A1A1A',
+    marginBottom: 8,
+  },
+  docChoiceRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  docChoiceChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    maxWidth: '100%',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: '#FFFFFF',
+  },
+  docChoiceChipSelected: {
+    borderColor: theme.colors.primary,
+    backgroundColor: '#FBF5EE',
+  },
+  docChoiceChipText: {
+    flexShrink: 1,
+    fontSize: 13,
+    color: '#333333',
+  },
+  docChoiceChipTextSelected: {
+    color: theme.colors.primary,
+    fontWeight: '700',
+  },
+  rulesEmptyCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    padding: 20,
+    alignItems: 'center',
+    gap: 10,
+  },
+  rulesEmptyText: {
+    fontSize: 14,
+    color: '#333333',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  rulesRetryBtn: {
+    paddingHorizontal: 18,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: theme.colors.primary,
+  },
+  rulesRetryText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: theme.colors.primary,
+  },
   safeArea: {
     flex: 1,
     backgroundColor: theme.colors.background,

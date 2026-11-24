@@ -1,118 +1,88 @@
 /**
- * Helpers nhóm NPT + map lỗi lifecycle (PRD npt-lifecycle §5.1 / §8).
+ * Helpers nhóm NPT theo catalog từ BE (GET /dependents/catalog) + map lỗi lifecycle (PRD npt-lifecycle §5.1 / §8).
+ * Không viết cứng mã nhóm: nhãn, quan hệ, cấp nhóm đều lấy từ catalog.
  */
+import type { CatalogGroup, DependentCatalog } from '../../api/dependentDocumentApi';
 
-export type DependentRelationshipCode =
-  | 'CHILD'
-  | 'SPOUSE'
-  | 'PARENT'
-  | 'OTHER_DEPENDENT'
-  | string;
+export type DependentRelationshipCode = string;
 
-const GROUPS_BY_RELATIONSHIP: Record<string, string[]> = {
-  CHILD: ['CHILD_UNDER_18', 'CHILD_OVER_18_STUDYING', 'CHILD_OVER_18_DISABLED'],
-  SPOUSE: ['SPOUSE_DISABLED', 'SPOUSE_RETIRED'],
-  PARENT: ['PARENT_DISABLED', 'PARENT_RETIRED'],
-  OTHER_DEPENDENT: ['OTHER_HELPLESS'],
-};
+type MaybeCatalog = DependentCatalog | null | undefined;
 
-export function groupsForRelationship(relationship: DependentRelationshipCode): string[] {
-  return GROUPS_BY_RELATIONSHIP[relationship] ? [...GROUPS_BY_RELATIONSHIP[relationship]] : [];
+const upper = (s?: string | null): string => String(s || '').trim().toUpperCase();
+
+export function findCatalogGroup(catalog: MaybeCatalog, code?: string | null): CatalogGroup | undefined {
+  const c = upper(code);
+  if (!c || !catalog) return undefined;
+  return catalog.groups.find((g) => upper(g.code) === c);
 }
 
-/** Map enum CurrentGroup → index LAW_GROUP_SPECS / ProofDocuments (0..4). */
-export function groupCodeToIndex(currentGroup?: string): number {
-  switch (currentGroup) {
-    case 'CHILD_UNDER_18':
-      return 0;
-    case 'CHILD_OVER_18_STUDYING':
-    case 'CHILD_STUDYING':
-      return 1;
-    case 'CHILD_OVER_18_DISABLED':
-    case 'CHILD_DISABLED':
-    case 'DISABLED_DEPENDENT':
-      return 2;
-    case 'SPOUSE_RETIRED':
-    case 'SPOUSE_DISABLED':
-    case 'PARENT_RETIRED':
-    case 'PARENT_DISABLED':
-    case 'SPOUSE_OR_PARENTS':
-    case 'PARENT':
-    case 'SPOUSE':
-      return 3;
-    case 'OTHER_HELPLESS':
-    case 'OTHER_DEPENDENT':
-      return 4;
-    default:
-      return 0;
-  }
+/** Nhóm thuộc quan hệ, sắp theo displayOrder. */
+export function groupsForRelationship(
+  catalog: MaybeCatalog,
+  relationship: DependentRelationshipCode
+): CatalogGroup[] {
+  const rel = upper(relationship);
+  if (!rel || !catalog) return [];
+  return catalog.groups
+    .filter((g) => upper(g.relationshipCode) === rel)
+    .sort((a, b) => a.displayOrder - b.displayOrder);
 }
 
-/** Nhãn tiếng Việt cho enum nhóm điều kiện (UI confirm / sheet). */
-export function groupCodeToTitle(currentGroup?: string): string {
-  switch (currentGroup) {
-    case 'CHILD_UNDER_18':
-      return 'Nhóm 1: Con chưa thành niên (< 18 tuổi)';
-    case 'CHILD_OVER_18_STUDYING':
-    case 'CHILD_STUDYING':
-      return 'Nhóm 2: Con ≥ 18 tuổi đang theo học ĐH/CĐ';
-    case 'CHILD_OVER_18_DISABLED':
-    case 'CHILD_DISABLED':
-    case 'DISABLED_DEPENDENT':
-      return 'Nhóm 3: Con bị khuyết tật / Mất khả năng LĐ';
-    case 'SPOUSE_RETIRED':
-    case 'SPOUSE_DISABLED':
-    case 'PARENT_RETIRED':
-    case 'PARENT_DISABLED':
-    case 'SPOUSE_OR_PARENTS':
-    case 'PARENT':
-    case 'SPOUSE':
-    case 'PARENT_IN_LAW':
-      return 'Nhóm 4: Vợ / Chồng hoặc Cha / Mẹ';
-    case 'OTHER_HELPLESS':
-    case 'OTHER_DEPENDENT':
-      return 'Nhóm 5: Cá nhân không nơi nương tựa khác';
-    default:
-      return 'Người phụ thuộc';
-  }
+/** Tên nhóm trong catalog; không có thì trả lại mã. */
+export function groupName(catalog: MaybeCatalog, code?: string | null): string {
+  return findCatalogGroup(catalog, code)?.name || String(code || '');
 }
 
-const GROUP_CODES_FOR_DISPLAY = [
-  'CHILD_OVER_18_STUDYING',
-  'CHILD_OVER_18_STUDENT',
-  'CHILD_OVER_18_DISABLED',
-  'CHILD_UNDER_18',
-  'CHILD_STUDYING',
-  'CHILD_DISABLED',
-  'DISABLED_DEPENDENT',
-  'SPOUSE_OR_PARENTS',
-  'SPOUSE_DISABLED',
-  'SPOUSE_RETIRED',
-  'PARENT_IN_LAW',
-  'PARENT_DISABLED',
-  'PARENT_RETIRED',
-  'OTHER_DEPENDENT',
-  'OTHER_HELPLESS',
-  'PARENT',
-  'SPOUSE',
-].sort((a, b) => b.length - a.length);
+/** Tên quan hệ trong catalog; không có thì trả lại mã. */
+export function relationshipName(catalog: MaybeCatalog, code?: string | null): string {
+  const c = upper(code);
+  return catalog?.relationships.find((r) => upper(r.code) === c)?.name || String(code || '');
+}
 
-/** Đổi mã nhóm trong câu API thành nhãn người dùng đọc được. */
-export function humanizeGroupCodes(text?: string | null): string {
+/** Đổi mã nhóm trong câu API thành tên nhóm (mã dài thay trước để không cắt nhầm mã con). */
+export function humanizeGroupCodes(catalog: MaybeCatalog, text?: string | null): string {
   if (!text) return '';
-  return GROUP_CODES_FOR_DISPLAY.reduce(
-    (out, code) => out.split(code).join(groupCodeToTitle(code)),
-    text
-  );
+  if (!catalog) return text;
+  return [...catalog.groups]
+    .filter((g) => g.code)
+    .sort((a, b) => b.code.length - a.code.length)
+    .reduce((out, g) => out.split(g.code).join(g.name || g.code), text);
 }
 
+/** Nhóm có thể đổi sang: cùng quan hệ, khác nhóm hiện tại, không thấp hơn cấp hiện tại (BE chặn hạ nhóm). */
 export function filterChangeGroupOptions(
+  catalog: MaybeCatalog,
   relationship: DependentRelationshipCode,
-  currentGroup: string,
-  _ageAtEffective?: number
+  currentGroup: string
 ): string[] {
-  // Demo: không lọc theo tuổi — mọi nhóm cùng quan hệ (trừ nhóm hiện tại).
-  return groupsForRelationship(relationship).filter((g) => g !== currentGroup);
+  const current = findCatalogGroup(catalog, currentGroup);
+  const currentLevel = current?.level ?? 0;
+  return groupsForRelationship(catalog, relationship)
+    .filter((g) => upper(g.code) !== upper(currentGroup) && g.level >= currentLevel)
+    .map((g) => g.code);
+}
+
+/**
+ * Tab "Nhóm 1–5" (theo luật) của một nhóm catalog, xếp theo thuộc tính chứ không theo mã nhóm.
+ * Mã quan hệ CHILD / SPOUSE / PARENT là phân loại của luật (con; vợ chồng, cha mẹ) nên được so trực tiếp.
+ */
+export function uiTabForCatalogGroup(group: CatalogGroup): number {
+  const rel = upper(group.relationshipCode);
+  // Con: tách 3 tab theo cờ khuyết tật / đi học; không cờ (con dưới tuổi giới hạn) là tab đầu
+  if (rel === 'CHILD') {
+    if (group.requireDisabled) return 2;
+    if (group.requireStudying) return 1;
+    return 0;
+  }
+  // Vợ/chồng và cha/mẹ chung một tab theo luật
+  if (rel === 'SPOUSE' || rel === 'PARENT') return 3;
+  return 4;
+}
+
+/** Tab UI của mã nhóm; mã không có trong catalog thì -1. */
+export function uiTabForGroup(catalog: MaybeCatalog, code?: string | null): number {
+  const group = findCatalogGroup(catalog, code);
+  return group ? uiTabForCatalogGroup(group) : -1;
 }
 
 function getErrorCode(error: unknown): string | null {
@@ -140,12 +110,16 @@ function isNetworkError(error: unknown): boolean {
 export function mapDependentLifecycleError(error: unknown): string {
   const code = getErrorCode(error);
   if (code === 'SAME_GROUP') return 'Người phụ thuộc đã ở nhóm này.';
+  // BE liệt kê mã hợp lệ lấy từ DB trong message; UI chỉ báo chung, không lộ mã
   if (code === 'INVALID_GROUP') return 'Nhóm điều kiện không hợp lệ.';
   if (code === 'GROUP_RELATIONSHIP_MISMATCH') {
     return 'Nhóm không khớp quan hệ hiện tại.';
   }
   if (code === 'GROUP_AGE_MISMATCH') {
     return 'Nhóm không khớp tuổi tại ngày bắt đầu hiệu lực giảm trừ.';
+  }
+  if (code === 'RULES_NOT_CONFIGURED') {
+    return 'Nhóm này chưa được cấu hình danh mục giấy tờ, vui lòng liên hệ hỗ trợ.';
   }
 
   const status = getHttpStatus(error);

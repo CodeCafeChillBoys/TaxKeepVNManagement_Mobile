@@ -39,16 +39,21 @@ import {
 } from './homeReminderChangeGroup';
 import {
   buildPendingUploadAgeReminders,
+  canChangeGroupFromReminder,
   isReminderAwaitingUploadOnly,
+  isTurningSoonStatus,
   mergeAgeTransitionReminders,
   proofNavFromAgeReminder,
+  transitionAgeFromStatus,
 } from './homeAgeReminderBanner';
 import { Dialog } from '../../components/common/Dialog';
 import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
 import { MainTabBar } from '../../components/navigation/MainTabBar';
 import { useToast } from '../../components/ui/Toast';
-import { humanizeGroupCodes } from '../dependent/dependentGroupUtils';
+import { humanizeGroupCodes, uiTabForGroup } from '../dependent/dependentGroupUtils';
+import { useDependentCatalog } from '../../hooks/useDependentCatalog';
+import type { DependentCatalog } from '../../api/dependentDocumentApi';
 import { buildProofDocumentsParams } from '../dependent/proofDocumentsParams';
 import { formatPersonName } from '../../utils/formatPersonName';
 import { sanitizeUiMessage } from '../../utils/friendlyError';
@@ -273,9 +278,11 @@ function extractConsultationTarget(item: NotificationItem): {
 const NotificationRow = memo(function NotificationRow({
   item,
   onPress,
+  catalog,
 }: {
   item: NotificationItem;
   onPress: (item: NotificationItem) => void;
+  catalog: DependentCatalog | null;
 }) {
   const isAgeReminder =
     item.notificationType === 'AGE_TRANSITION_ALERT' ||
@@ -310,10 +317,10 @@ const NotificationRow = memo(function NotificationRow({
         ]}
         numberOfLines={2}
       >
-        {humanizeGroupCodes(item.title)}
+        {humanizeGroupCodes(catalog, item.title)}
       </Text>
       <Text style={styles.notifMessage} numberOfLines={4}>
-        {humanizeGroupCodes(item.message)}
+        {humanizeGroupCodes(catalog, item.message)}
       </Text>
       {isAgeReminder ? (
         <Text style={styles.notifActionPrompt}>Bổ sung giấy tờ</Text>
@@ -332,8 +339,14 @@ export const HomeScreen: React.FC = () => {
   const userRole = (user?.role || '').toLowerCase();
   const isExpert = userRole === 'expert' || userRole.includes('expert');
 
-  const [reminders, setReminders] = useState<AgeReminderItemDto[]>([]);
+  const { catalog } = useDependentCatalog({ refreshOnMount: false });
+  const [apiReminders, setApiReminders] = useState<AgeReminderItemDto[]>([]);
   const [dependents, setDependents] = useState<DependentItem[]>([]);
+  // Nhắc chờ nộp giấy tính theo cờ nhóm trong catalog nên tính lại khi catalog về sau dữ liệu NPT
+  const reminders = useMemo(
+    () => mergeAgeTransitionReminders(apiReminders, buildPendingUploadAgeReminders(dependents, catalog)),
+    [apiReminders, dependents, catalog]
+  );
   const [reminderPatching, setReminderPatching] = useState(false);
   const [changeGroupConfirm, setChangeGroupConfirm] =
     useState<HomeReminderConfirmPlan | null>(null);
@@ -501,8 +514,7 @@ export const HomeScreen: React.FC = () => {
 
         const remindersData = remindersRes.status === 'fulfilled' ? remindersRes.value : [];
         const deps = depsRes.status === 'fulfilled' ? depsRes.value : [];
-        const pendingUpload = buildPendingUploadAgeReminders(deps);
-        setReminders(mergeAgeTransitionReminders(remindersData, pendingUpload));
+        setApiReminders(remindersData);
         setDependents(deps);
 
         if (unreadRes.status === 'fulfilled') {
@@ -562,10 +574,11 @@ export const HomeScreen: React.FC = () => {
 
     for (const r of reminders) {
       const name = formatPersonName(r.fullName);
-      const isSoon = r.transitionStatus === 'TURNING_18_SOON';
+      const isSoon = isTurningSoonStatus(r.transitionStatus);
+      const milestone = transitionAgeFromStatus(r.transitionStatus) ?? 18;
       items.push({
         id: `age-${r.dependentId}`,
-        title: isSoon ? `${name} sắp tròn 18 tuổi` : `${name} đã tròn 18 tuổi`,
+        title: isSoon ? `${name} sắp tròn ${milestone} tuổi` : `${name} đã tròn ${milestone} tuổi`,
         subtitle: 'Nộp giấy tờ sinh viên để không bị tạm dừng giảm trừ',
         kind: 'age',
         reminder: r,
@@ -696,20 +709,31 @@ export const HomeScreen: React.FC = () => {
   const handleReminderUploadPress = useCallback(
     (item: AgeReminderItemDto) => {
       if (reminderPatching) return;
-      if (isReminderAwaitingUploadOnly(item)) {
-        const nav = proofNavFromAgeReminder(item);
+      if (isReminderAwaitingUploadOnly(item, catalog)) {
+        const nav = proofNavFromAgeReminder(item, catalog);
         navigation.navigate(nav.screen, nav.params);
         return;
       }
-      setChangeGroupConfirm(
-        buildHomeReminderChangeGroupPlan({
+      // BE không gợi ý nhóm đích: không mở đổi nhóm, chỉ mở giấy tờ của nhóm hiện tại
+      if (!canChangeGroupFromReminder(item)) {
+        navigation.navigate('ProofDocuments', {
           dependentId: item.dependentId,
-          fullName: item.fullName,
-          recommendedGroup: item.recommendedGroup || 'CHILD_OVER_18_STUDYING',
-        })
+          groupIndex: Math.max(0, uiTabForGroup(catalog, item.currentGroup)),
+        });
+        return;
+      }
+      setChangeGroupConfirm(
+        buildHomeReminderChangeGroupPlan(
+          {
+            dependentId: item.dependentId,
+            fullName: item.fullName,
+            recommendedGroup: item.recommendedGroup,
+          },
+          catalog
+        )
       );
     },
-    [navigation, reminderPatching]
+    [catalog, navigation, reminderPatching]
   );
 
   const handleConfirmReminderChangeGroup = useCallback(async () => {
@@ -722,6 +746,7 @@ export const HomeScreen: React.FC = () => {
         dependentId: plan.dependentId,
         newGroup: plan.newGroup,
         updateDependentGroup: dependentLifecycleApi.updateDependentGroup,
+        catalog,
       });
       if (!result.ok) {
         toast.error(
@@ -734,7 +759,7 @@ export const HomeScreen: React.FC = () => {
     } finally {
       setReminderPatching(false);
     }
-  }, [changeGroupConfirm, navigation, reminderPatching, toast]);
+  }, [catalog, changeGroupConfirm, navigation, reminderPatching, toast]);
 
   const handleTodoPress = useCallback(
     (item: TodoItem) => {
@@ -743,10 +768,10 @@ export const HomeScreen: React.FC = () => {
         return;
       }
       if (item.dependent) {
-        navigation.navigate('ProofDocuments', buildProofDocumentsParams(item.dependent));
+        navigation.navigate('ProofDocuments', buildProofDocumentsParams(item.dependent, catalog));
       }
     },
-    [handleReminderUploadPress, navigation]
+    [catalog, handleReminderUploadPress, navigation]
   );
 
   const handleJoinUpcomingMeeting = useCallback(async () => {
@@ -774,9 +799,9 @@ export const HomeScreen: React.FC = () => {
 
   const renderNotifItem = useCallback(
     ({ item }: { item: NotificationItem }) => (
-      <NotificationRow item={item} onPress={handleNotificationPress} />
+      <NotificationRow item={item} onPress={handleNotificationPress} catalog={catalog} />
     ),
-    [handleNotificationPress]
+    [catalog, handleNotificationPress]
   );
 
   const notifKeyExtractor = useCallback((item: NotificationItem) => item.notificationId, []);
@@ -915,7 +940,7 @@ export const HomeScreen: React.FC = () => {
                           : styles.noShowTitleDanger,
                       ]}
                     >
-                      {humanizeGroupCodes(notif.title)}
+                      {humanizeGroupCodes(catalog, notif.title)}
                     </Text>
                   </View>
                   <Text
@@ -928,7 +953,7 @@ export const HomeScreen: React.FC = () => {
                         : styles.noShowBodyDanger,
                     ]}
                   >
-                    {humanizeGroupCodes(notif.message)}
+                    {humanizeGroupCodes(catalog, notif.message)}
                   </Text>
                   <View style={styles.noShowLinkRow}>
                     <Text

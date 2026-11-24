@@ -20,6 +20,14 @@ describe('dependentDocumentError', () => {
   });
 
   describe('parseDependentUploadError', () => {
+    it('maps RULES_NOT_CONFIGURED to the not-configured message', () => {
+      const parsed = parseDependentUploadError({
+        response: { status: 400, data: { errors: { errorCode: 'RULES_NOT_CONFIGURED' }, message: 'x' } },
+      });
+      expect(parsed.code).toBe('RULES_NOT_CONFIGURED');
+      expect(parsed.message).toMatch(/chưa được cấu hình danh mục giấy tờ/);
+    });
+
     it('maps DOC_TYPE_MISMATCH and humanizes enum codes', () => {
       const parsed = parseDependentUploadError({
         response: {

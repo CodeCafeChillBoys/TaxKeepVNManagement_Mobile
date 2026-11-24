@@ -22,6 +22,8 @@ import { fonts } from '../../constants/fonts';
 import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { HomeHeaderButton } from '../../components/navigation/HomeHeaderButton';
 import { useToast } from '../../components/ui/Toast';
+import { CatalogErrorBanner } from '../../components/common/CatalogErrorBanner';
+import { useDependentCatalog } from '../../hooks/useDependentCatalog';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { dependentDocumentApi } from '../../api/dependentDocumentApi';
 import { isBeforeBirthMonth } from './editEffectivePeriod';
@@ -37,14 +39,14 @@ import {
   ELIGIBILITY_CLEARED_TOAST,
   filterEligibleGroups,
   filterEligibleRelationships,
+  GROUP_NOT_CONFIGURED_MESSAGE,
+  intersectConfiguredGroups,
   isAge14OrOlderAtEffective,
   isGroupEligibleFor,
-  mapUiGroupToBackendEnum,
   reconcileEligibilitySelection,
-  RELATIONSHIP_OPTIONS,
+  relationshipOptions,
   sanitizeOcrEligibility,
-  selectDbGroupsForUi,
-  subGroupConditionLabel,
+  selectGroupsForTab,
 } from './dependentEligibility';
 
 const DAYS = Array.from({ length: 31 }, (_, i) => String(i + 1).padStart(2, '0'));
@@ -91,6 +93,12 @@ export const TaxRegistrationScreen: React.FC = () => {
   const route = useRoute<RouteProp<RootStackParamList, 'TaxRegistration'>>();
   const insets = useSafeAreaInsets();
   const { toast } = useToast();
+  const {
+    catalog,
+    error: catalogError,
+    loading: catalogLoading,
+    reload: reloadCatalog,
+  } = useDependentCatalog();
 
   const isMountedRef = useRef(true);
   useEffect(() => {
@@ -109,7 +117,7 @@ export const TaxRegistrationScreen: React.FC = () => {
   const [birthMonth, setBirthMonth] = useState<string>('06');
   const [birthYear, setBirthYear] = useState<string>('2018');
 
-  const [relationship, setRelationship] = useState<string>('CHILD');
+  const [relationship, setRelationship] = useState<string>('');
 
   const [startDay, setStartDay] = useState<string>('01');
   const [startMonth, setStartMonth] = useState<string>('01');
@@ -130,18 +138,33 @@ export const TaxRegistrationScreen: React.FC = () => {
   const isAge14OrOlder = isAge14OrOlderAtEffective(ageAtEffective);
 
   const eligibleRelationships = useMemo(
-    () => filterEligibleRelationships(ageAtEffective),
-    [ageAtEffective]
+    () => filterEligibleRelationships(catalog, ageAtEffective),
+    [catalog, ageAtEffective]
   );
   const eligibleGroups = useMemo(
-    () => filterEligibleGroups(relationship || 'CHILD', ageAtEffective),
-    [relationship, ageAtEffective]
+    () => filterEligibleGroups(catalog, relationship, ageAtEffective),
+    [catalog, relationship, ageAtEffective]
   );
+
+  // Catalog về lần đầu: chọn sẵn quan hệ đầu danh sách (theo displayOrder) như form cũ
+  useEffect(() => {
+    if (!relationship && eligibleRelationships.length > 0) {
+      setRelationship(eligibleRelationships[0].value);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eligibleRelationships]);
 
   const skipReconcileToastRef = useRef(true);
 
   useEffect(() => {
+    if (!catalog) return;
+    if (!relationship) {
+      // Lần đầu catalog về: effect trên vừa chọn sẵn quan hệ, không có gì để đối chiếu
+      skipReconcileToastRef.current = false;
+      return;
+    }
     const { next, clearedGroup, clearedRelationship } = reconcileEligibilitySelection(
+      catalog,
       { relationship, selectedGroupIdx },
       ageAtEffective
     );
@@ -152,7 +175,7 @@ export const TaxRegistrationScreen: React.FC = () => {
     }
     skipReconcileToastRef.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ageAtEffective]);
+  }, [ageAtEffective, catalog]);
 
   const [activePicker, setActivePicker] = useState<{
     title: string;
@@ -176,11 +199,13 @@ export const TaxRegistrationScreen: React.FC = () => {
       effectiveFromMonth
     );
     const sanitized = sanitizeOcrEligibility(
+      catalog,
       {
         relationship: patch.relationship,
         selectedGroupIdx: patch.selectedGroupIdx,
       },
-      age
+      age,
+      relationship
     );
 
     skipReconcileToastRef.current = true;
@@ -218,7 +243,15 @@ export const TaxRegistrationScreen: React.FC = () => {
       return;
     }
 
-    if (selectedGroupIdx < 0 || !isGroupEligibleFor(selectedGroupIdx, relationship, ageAtEffective)) {
+    if (!catalog) {
+      toast.warning(catalogError || 'Đang tải danh mục nhóm người phụ thuộc. Vui lòng thử lại.', 'Chưa có danh mục');
+      return;
+    }
+
+    if (
+      selectedGroupIdx < 0 ||
+      !isGroupEligibleFor(catalog, selectedGroupIdx, relationship, ageAtEffective)
+    ) {
       toast.warning(
         'Vui lòng chọn nhóm điều kiện phù hợp với ngày sinh và thời điểm bắt đầu hiệu lực.',
         'Nhóm điều kiện chưa phù hợp'
@@ -260,36 +293,33 @@ export const TaxRegistrationScreen: React.FC = () => {
     }
     const effectiveTo = hasEndDate ? `${endYear}-${endMonth}` : `${startYear}-12`;
 
-    const mapped = mapUiGroupToBackendEnum(selectedGroupIdx, relationship);
-    if (!mapped) {
+    const candidates = selectGroupsForTab(catalog, selectedGroupIdx, relationship);
+    if (candidates.length === 0) {
       toast.warning('Mối quan hệ và nhóm điều kiện chưa khớp nhau. Vui lòng chọn lại.', 'Cần kiểm tra lại');
       return;
     }
-    const relCode = mapped.relationship;
-    let groupEnumCode = chosenGroup || mapped.currentGroup;
+    const relCode = relationship;
+    let groupEnumCode = chosenGroup || '';
     if (!groupEnumCode) {
-      // Nhóm 4: nhóm con (vd PARENT_DISABLED) lấy từ các nhóm đang có rule trong DB, không gán cứng
-      const options = selectDbGroupsForUi(
-        selectedGroupIdx,
+      // Chỉ cho chọn nhóm đã có rule giấy tờ trong DB (GET /dependents/groups)
+      const options = intersectConfiguredGroups(
+        candidates,
         await dependentDocumentApi.getGroups(relCode)
       );
       if (!isMountedRef.current) return;
       if (options.length === 0) {
-        toast.warning(
-          'Điều kiện đăng ký cho mối quan hệ này chưa được cấu hình trên hệ thống. Vui lòng liên hệ quản trị viên.',
-          'Chưa có nhóm điều kiện'
-        );
+        toast.warning(GROUP_NOT_CONFIGURED_MESSAGE, 'Chưa có nhóm điều kiện');
         return;
       }
       if (options.length > 1) {
         openPicker(
           'Chọn điều kiện giảm trừ',
           'subGroup',
-          options.map((g) => ({ value: g, label: subGroupConditionLabel(g) }))
+          options.map((g) => ({ value: g.code, label: g.name || g.code }))
         );
         return;
       }
-      groupEnumCode = options[0];
+      groupEnumCode = options[0].code;
     }
 
     let createdDependentId = '';
@@ -363,7 +393,7 @@ export const TaxRegistrationScreen: React.FC = () => {
           break;
         case 'relationship':
           setRelationship(val);
-          if (!isGroupEligibleFor(selectedGroupIdx, val, ageAtEffective)) {
+          if (!isGroupEligibleFor(catalog, selectedGroupIdx, val, ageAtEffective)) {
             setSelectedGroupIdx(-1);
           }
           break;
@@ -396,7 +426,7 @@ export const TaxRegistrationScreen: React.FC = () => {
       setActivePicker(null);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activePicker, selectedGroupIdx, ageAtEffective, handleContinue]
+    [activePicker, catalog, selectedGroupIdx, ageAtEffective, handleContinue]
   );
 
   const pickerKeyExtractor = useCallback((item: PickerItem) => String(item.value), []);
@@ -408,7 +438,7 @@ export const TaxRegistrationScreen: React.FC = () => {
   );
 
   const selectedRelLabel =
-    RELATIONSHIP_OPTIONS.find((r) => r.value === relationship)?.label || 'Chọn mối quan hệ';
+    relationshipOptions(catalog).find((r) => r.value === relationship)?.label || 'Chọn mối quan hệ';
   const selectedGroupTitle =
     selectedGroupIdx >= 0
       ? CONDITION_GROUP_OPTIONS.find((g) => g.index === selectedGroupIdx)?.title ??
@@ -446,6 +476,13 @@ export const TaxRegistrationScreen: React.FC = () => {
           keyboardShouldPersistTaps="handled"
         >
           <View style={styles.scrollContent}>
+            {catalogError ? (
+              <CatalogErrorBanner
+                message={catalogError}
+                loading={catalogLoading}
+                onRetry={() => void reloadCatalog()}
+              />
+            ) : null}
             <TouchableOpacity
               activeOpacity={0.85}
               style={styles.ocrQuickCard}

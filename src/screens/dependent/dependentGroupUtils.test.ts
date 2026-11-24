@@ -1,72 +1,110 @@
 import {
   filterChangeGroupOptions,
-  groupCodeToIndex,
+  groupName,
   groupsForRelationship,
   humanizeGroupCodes,
   mapDependentLifecycleError,
+  relationshipName,
+  uiTabForGroup,
 } from './dependentGroupUtils';
+import { SEED_CATALOG } from './seedCatalog.test.fixture';
+import type { DependentCatalog } from '../../api/dependentDocumentApi';
 
 describe('dependentGroupUtils', () => {
   describe('groupsForRelationship', () => {
-    it('returns CHILD groups for CHILD relationship', () => {
-      expect(groupsForRelationship('CHILD')).toEqual([
+    it('returns CHILD groups sorted by displayOrder', () => {
+      expect(groupsForRelationship(SEED_CATALOG, 'CHILD').map((g) => g.code)).toEqual([
         'CHILD_UNDER_18',
-        'CHILD_OVER_18_STUDYING',
         'CHILD_OVER_18_DISABLED',
+        'CHILD_OVER_18_STUDYING',
       ]);
     });
 
-    it('returns SPOUSE groups for SPOUSE', () => {
-      expect(groupsForRelationship('SPOUSE')).toEqual([
-        'SPOUSE_DISABLED',
+    it('sorts by displayOrder, not by array order', () => {
+      const catalog: DependentCatalog = {
+        relationships: [],
+        groups: [
+          { ...SEED_CATALOG.groups[4], displayOrder: 1 },
+          { ...SEED_CATALOG.groups[3], displayOrder: 2 },
+        ],
+      };
+      expect(groupsForRelationship(catalog, 'SPOUSE').map((g) => g.code)).toEqual([
         'SPOUSE_RETIRED',
+        'SPOUSE_DISABLED',
       ]);
     });
 
-    it('returns empty for unknown relationship', () => {
-      expect(groupsForRelationship('UNKNOWN')).toEqual([]);
+    it('returns empty for unknown relationship or missing catalog', () => {
+      expect(groupsForRelationship(SEED_CATALOG, 'UNKNOWN')).toEqual([]);
+      expect(groupsForRelationship(null, 'CHILD')).toEqual([]);
+    });
+  });
+
+  describe('groupName / relationshipName', () => {
+    it('returns catalog name', () => {
+      expect(groupName(SEED_CATALOG, 'PARENT_RETIRED')).toBe('Cha/Mẹ ngoài độ tuổi lao động');
+      expect(groupName(SEED_CATALOG, 'parent_retired')).toBe('Cha/Mẹ ngoài độ tuổi lao động');
+      expect(relationshipName(SEED_CATALOG, 'SPOUSE')).toBe('Vợ/chồng');
+    });
+
+    it('falls back to the code when not found', () => {
+      expect(groupName(SEED_CATALOG, 'NEW_AI_GROUP')).toBe('NEW_AI_GROUP');
+      expect(groupName(null, 'CHILD_UNDER_18')).toBe('CHILD_UNDER_18');
+      expect(groupName(SEED_CATALOG, undefined)).toBe('');
     });
   });
 
   describe('filterChangeGroupOptions', () => {
-    it('excludes current group and keeps same relationship only', () => {
-      expect(filterChangeGroupOptions('CHILD', 'CHILD_UNDER_18')).toEqual([
-        'CHILD_OVER_18_STUDYING',
+    it('same relationship, excludes current, level >= current', () => {
+      expect(filterChangeGroupOptions(SEED_CATALOG, 'CHILD', 'CHILD_UNDER_18')).toEqual([
         'CHILD_OVER_18_DISABLED',
+        'CHILD_OVER_18_STUDYING',
       ]);
     });
 
-    it('returns empty when OTHER_DEPENDENT already OTHER_HELPLESS', () => {
-      expect(filterChangeGroupOptions('OTHER_DEPENDENT', 'OTHER_HELPLESS')).toEqual([]);
-    });
-
-    it('does not filter by age (FE age validate off)', () => {
-      expect(filterChangeGroupOptions('CHILD', 'CHILD_OVER_18_DISABLED', 10)).toEqual([
-        'CHILD_UNDER_18',
-        'CHILD_OVER_18_STUDYING',
-      ]);
-      expect(filterChangeGroupOptions('CHILD', 'CHILD_UNDER_18', 30)).toEqual([
-        'CHILD_OVER_18_STUDYING',
+    it('does not offer a lower level (BE blocks downgrade)', () => {
+      expect(filterChangeGroupOptions(SEED_CATALOG, 'CHILD', 'CHILD_OVER_18_STUDYING')).toEqual([
         'CHILD_OVER_18_DISABLED',
       ]);
-      expect(filterChangeGroupOptions('PARENT', 'PARENT_RETIRED', 17)).toEqual([
-        'PARENT_DISABLED',
+      expect(filterChangeGroupOptions(SEED_CATALOG, 'PARENT', 'PARENT_RETIRED')).toEqual([]);
+      expect(filterChangeGroupOptions(SEED_CATALOG, 'PARENT', 'PARENT_DISABLED')).toEqual([
+        'PARENT_RETIRED',
       ]);
+    });
+
+    it('returns empty when relationship has a single group', () => {
+      expect(filterChangeGroupOptions(SEED_CATALOG, 'OTHER_DEPENDENT', 'OTHER_HELPLESS')).toEqual([]);
     });
   });
 
-  describe('groupCodeToIndex', () => {
-    it('maps known codes to LAW_GROUP index 0..4', () => {
-      expect(groupCodeToIndex('CHILD_UNDER_18')).toBe(0);
-      expect(groupCodeToIndex('CHILD_OVER_18_STUDYING')).toBe(1);
-      expect(groupCodeToIndex('CHILD_OVER_18_DISABLED')).toBe(2);
-      expect(groupCodeToIndex('SPOUSE_DISABLED')).toBe(3);
-      expect(groupCodeToIndex('PARENT_RETIRED')).toBe(3);
-      expect(groupCodeToIndex('OTHER_HELPLESS')).toBe(4);
+  describe('uiTabForGroup', () => {
+    it('maps all 8 seed groups by attributes', () => {
+      expect(uiTabForGroup(SEED_CATALOG, 'CHILD_UNDER_18')).toBe(0);
+      expect(uiTabForGroup(SEED_CATALOG, 'CHILD_OVER_18_STUDYING')).toBe(1);
+      expect(uiTabForGroup(SEED_CATALOG, 'CHILD_OVER_18_DISABLED')).toBe(2);
+      expect(uiTabForGroup(SEED_CATALOG, 'SPOUSE_DISABLED')).toBe(3);
+      expect(uiTabForGroup(SEED_CATALOG, 'SPOUSE_RETIRED')).toBe(3);
+      expect(uiTabForGroup(SEED_CATALOG, 'PARENT_DISABLED')).toBe(3);
+      expect(uiTabForGroup(SEED_CATALOG, 'PARENT_RETIRED')).toBe(3);
+      expect(uiTabForGroup(SEED_CATALOG, 'OTHER_HELPLESS')).toBe(4);
     });
 
-    it('defaults unknown to 0', () => {
-      expect(groupCodeToIndex('NOPE')).toBe(0);
+    it('maps new groups added by admin without code changes', () => {
+      const catalog: DependentCatalog = {
+        relationships: [],
+        groups: [
+          ...SEED_CATALOG.groups,
+          { code: 'FOSTER_CHILD', name: 'Con nuôi', relationshipCode: 'CHILD', requireDisabled: false, requireStudying: false, level: 0, displayOrder: 9 },
+          { code: 'GRANDCHILD', name: 'Cháu', relationshipCode: 'GRANDCHILD', requireDisabled: false, requireStudying: false, level: 0, displayOrder: 10 },
+        ],
+      };
+      expect(uiTabForGroup(catalog, 'FOSTER_CHILD')).toBe(0);
+      expect(uiTabForGroup(catalog, 'GRANDCHILD')).toBe(4);
+    });
+
+    it('returns -1 for codes not in catalog', () => {
+      expect(uiTabForGroup(SEED_CATALOG, 'NOPE')).toBe(-1);
+      expect(uiTabForGroup(null, 'CHILD_UNDER_18')).toBe(-1);
     });
   });
 
@@ -92,7 +130,10 @@ describe('dependentGroupUtils', () => {
         mapDependentLifecycleError({
           response: {
             status: 400,
-            data: { errors: { errorCode: 'INVALID_GROUP' } },
+            data: {
+              message: 'Nhóm không hợp lệ. Mã hợp lệ: CHILD_UNDER_18, NEW_GROUP',
+              errors: { errorCode: 'INVALID_GROUP' },
+            },
           },
         })
       ).toBe('Nhóm điều kiện không hợp lệ.');
@@ -114,6 +155,14 @@ describe('dependentGroupUtils', () => {
       ).toMatch(/tuổi.*hiệu lực/i);
     });
 
+    it('maps RULES_NOT_CONFIGURED', () => {
+      expect(
+        mapDependentLifecycleError({
+          response: { status: 400, data: { errors: { errorCode: 'RULES_NOT_CONFIGURED' } } },
+        })
+      ).toMatch(/chưa được cấu hình danh mục giấy tờ/);
+    });
+
     it('maps 403, 404, and network', () => {
       expect(
         mapDependentLifecycleError({ response: { status: 403, data: {} } })
@@ -131,13 +180,29 @@ describe('dependentGroupUtils', () => {
   });
 
   describe('humanizeGroupCodes', () => {
-    it('replaces group enums with user labels', () => {
+    it('replaces group codes with catalog names', () => {
       const raw =
         "chuyển từ nhóm 'CHILD_OVER_18_STUDYING' sang nhóm 'CHILD_UNDER_18'.";
-      expect(raw).not.toContain(humanizeGroupCodes(raw));
-      expect(humanizeGroupCodes(raw)).toContain('Nhóm 2:');
-      expect(humanizeGroupCodes(raw)).toContain('Nhóm 1:');
-      expect(humanizeGroupCodes(raw)).not.toContain('CHILD_');
+      const out = humanizeGroupCodes(SEED_CATALOG, raw);
+      expect(out).toContain('Con từ 18 tuổi trở lên đang đi học');
+      expect(out).toContain('Con dưới 18 tuổi');
+      expect(out).not.toContain('CHILD_');
+    });
+
+    it('replaces longer codes first', () => {
+      const catalog: DependentCatalog = {
+        relationships: [],
+        groups: [
+          { code: 'CHILD', name: 'Con', relationshipCode: 'CHILD', requireDisabled: false, requireStudying: false, level: 0, displayOrder: 1 },
+          { code: 'CHILD_STUDYING', name: 'Con đi học', relationshipCode: 'CHILD', requireDisabled: false, requireStudying: true, level: 1, displayOrder: 2 },
+        ],
+      };
+      expect(humanizeGroupCodes(catalog, 'CHILD_STUDYING')).toBe('Con đi học');
+    });
+
+    it('keeps text when catalog not loaded', () => {
+      expect(humanizeGroupCodes(null, 'abc')).toBe('abc');
+      expect(humanizeGroupCodes(SEED_CATALOG, null)).toBe('');
     });
   });
 });

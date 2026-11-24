@@ -7,6 +7,7 @@ import {
   normalizeOcrForForm,
   toIsoDate,
 } from './ocrUtils';
+import { SEED_CATALOG } from '../dependent/seedCatalog.test.fixture';
 
 describe('ocrUtils mappers', () => {
   describe('toIsoDate', () => {
@@ -34,63 +35,50 @@ describe('ocrUtils mappers', () => {
   });
 
   describe('aliasSuggestedGroup (PRD §8.4)', () => {
-    it('maps CHILD_OVER_18_STUDENT to idx 1 with CHILD', () => {
-      expect(aliasSuggestedGroup('CHILD_OVER_18_STUDENT')).toEqual({
+    it('maps catalog groups to tab + relationship from the catalog', () => {
+      expect(aliasSuggestedGroup(SEED_CATALOG, 'CHILD_OVER_18_STUDYING')).toEqual({
         selectedGroupIdx: 1,
         relationship: 'CHILD',
       });
     });
 
     it('maps known codes per alias table', () => {
-      expect(aliasSuggestedGroup('CHILD_UNDER_18')).toEqual({
+      expect(aliasSuggestedGroup(SEED_CATALOG, 'CHILD_UNDER_18')).toEqual({
         selectedGroupIdx: 0,
         relationship: 'CHILD',
       });
-      expect(aliasSuggestedGroup('CHILD_OVER_18_STUDYING')).toEqual({
+      expect(aliasSuggestedGroup(SEED_CATALOG, 'CHILD_OVER_18_STUDYING')).toEqual({
         selectedGroupIdx: 1,
         relationship: 'CHILD',
       });
-      expect(aliasSuggestedGroup('DISABLED_DEPENDENT')).toEqual({
+      expect(aliasSuggestedGroup(SEED_CATALOG, 'CHILD_OVER_18_DISABLED')).toEqual({
         selectedGroupIdx: 2,
         relationship: 'CHILD',
       });
-      expect(aliasSuggestedGroup('CHILD_OVER_18_DISABLED')).toEqual({
-        selectedGroupIdx: 2,
-        relationship: 'CHILD',
-      });
-      expect(aliasSuggestedGroup('SPOUSE')).toEqual({
+      expect(aliasSuggestedGroup(SEED_CATALOG, 'SPOUSE_DISABLED')).toEqual({
         selectedGroupIdx: 3,
         relationship: 'SPOUSE',
       });
-      expect(aliasSuggestedGroup('ELDERLY_PARENT')).toEqual({
+      expect(aliasSuggestedGroup(SEED_CATALOG, 'PARENT_RETIRED')).toEqual({
         selectedGroupIdx: 3,
         relationship: 'PARENT',
       });
-      expect(aliasSuggestedGroup('PARENT_RETIRED')).toEqual({
-        selectedGroupIdx: 3,
-        relationship: 'PARENT',
-      });
-      expect(aliasSuggestedGroup('SPOUSE_OR_PARENTS')).toEqual({
-        selectedGroupIdx: 3,
-      });
-      expect(aliasSuggestedGroup('OTHER')).toEqual({
-        selectedGroupIdx: 4,
-        relationship: 'OTHER_DEPENDENT',
-      });
-      expect(aliasSuggestedGroup('OTHER_DEPENDENT')).toEqual({
-        selectedGroupIdx: 4,
-        relationship: 'OTHER_DEPENDENT',
-      });
-      expect(aliasSuggestedGroup('OTHER_HELPLESS')).toEqual({
+      expect(aliasSuggestedGroup(SEED_CATALOG, 'OTHER_HELPLESS')).toEqual({
         selectedGroupIdx: 4,
         relationship: 'OTHER_DEPENDENT',
       });
     });
 
     it('returns null for empty or unknown codes', () => {
-      expect(aliasSuggestedGroup('')).toBeNull();
-      expect(aliasSuggestedGroup(null)).toBeNull();
-      expect(aliasSuggestedGroup('WEIRD_CODE')).toBeNull();
+      expect(aliasSuggestedGroup(SEED_CATALOG, '')).toBeNull();
+      expect(aliasSuggestedGroup(SEED_CATALOG, null)).toBeNull();
+      expect(aliasSuggestedGroup(SEED_CATALOG, 'WEIRD_CODE')).toBeNull();
+    });
+
+    it('does not auto-select legacy AI codes missing from the catalog', () => {
+      expect(aliasSuggestedGroup(SEED_CATALOG, 'SPOUSE_OR_PARENTS')).toBeNull();
+      expect(aliasSuggestedGroup(SEED_CATALOG, 'CHILD_OVER_18_STUDENT')).toBeNull();
+      expect(aliasSuggestedGroup(null, 'CHILD_UNDER_18')).toBeNull();
     });
   });
 
@@ -174,7 +162,8 @@ describe('ocrUtils mappers', () => {
           gender: 'Nam',
           issueDate: '',
         },
-        'CHILD_OVER_18_STUDENT',
+        'CHILD_OVER_18_STUDYING',
+        SEED_CATALOG,
         asOf
       );
 
@@ -184,7 +173,7 @@ describe('ocrUtils mappers', () => {
       expect(fill.birthCertNumber).toBeUndefined();
       expect(fill.selectedGroupIdx).toBe(1);
       expect(fill.relationship).toBe('CHILD');
-      expect(fill.suggestedGroup).toBe('CHILD_OVER_18_STUDENT');
+      expect(fill.suggestedGroup).toBe('CHILD_OVER_18_STUDYING');
     });
 
     it('uses birthCertNumber when age < 14', () => {
@@ -199,6 +188,7 @@ describe('ocrUtils mappers', () => {
           documentNumber: 'GKS-77',
         },
         'CHILD_UNDER_18',
+        SEED_CATALOG,
         asOf
       );
 
@@ -220,6 +210,7 @@ describe('ocrUtils mappers', () => {
           documentNumber: 'GKS-9',
         },
         undefined,
+        SEED_CATALOG,
         asOf
       );
 
@@ -229,7 +220,7 @@ describe('ocrUtils mappers', () => {
       expect(fill.relationship).toBeUndefined();
     });
 
-    it('does not set relationship for SPOUSE_OR_PARENTS', () => {
+    it('does not pick a group for codes missing from the catalog', () => {
       const fill = mapToDependentFill(
         {
           fullName: 'A',
@@ -240,11 +231,13 @@ describe('ocrUtils mappers', () => {
           issueDate: '',
         },
         'SPOUSE_OR_PARENTS',
+        SEED_CATALOG,
         asOf
       );
 
-      expect(fill.selectedGroupIdx).toBe(3);
+      expect(fill.selectedGroupIdx).toBeUndefined();
       expect(fill.relationship).toBeUndefined();
+      expect(fill.suggestedGroup).toBe('SPOUSE_OR_PARENTS');
     });
   });
 

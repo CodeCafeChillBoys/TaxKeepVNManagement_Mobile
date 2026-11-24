@@ -1,6 +1,8 @@
 import {
   formatCurrencyVND,
   calculateItemsTotal,
+  resolveInitialInvoiceTotalAmount,
+  isValidInvoiceTotalAmount,
   validateCrucialFields,
   getValidationMatrixErrorDetails,
   parseBackendError,
@@ -50,6 +52,43 @@ describe('expenseValidationUtils', () => {
 
     it('returns 0 for empty array', () => {
       expect(calculateItemsTotal([])).toBe(0);
+    });
+  });
+
+  describe('resolveInitialInvoiceTotalAmount', () => {
+    it('preserves 0 payable amount even when invoice line items have positive totals (e.g. 100% sponsored)', () => {
+      const items = [
+        { itemOrder: 1, itemName: 'Học phí học kỳ 1', quantity: 1, unitPrice: 12000000, totalPrice: 12000000 },
+      ];
+      expect(resolveInitialInvoiceTotalAmount(0, items)).toBe(0);
+      expect(resolveInitialInvoiceTotalAmount('0', items)).toBe(0);
+    });
+
+    it('falls back to items total when initialTotalAmount is null or undefined', () => {
+      const items = [
+        { itemOrder: 1, itemName: 'Khám bệnh', quantity: 1, unitPrice: 250000, totalPrice: 250000 },
+      ];
+      expect(resolveInitialInvoiceTotalAmount(null, items)).toBe(250000);
+      expect(resolveInitialInvoiceTotalAmount(undefined, items)).toBe(250000);
+    });
+
+    it('returns positive initialTotalAmount directly', () => {
+      expect(resolveInitialInvoiceTotalAmount(500000, [])).toBe(500000);
+    });
+  });
+
+  describe('isValidInvoiceTotalAmount', () => {
+    it('allows 0 and positive amounts for invoice confirmation', () => {
+      expect(isValidInvoiceTotalAmount(0)).toBe(true);
+      expect(isValidInvoiceTotalAmount(1500000)).toBe(true);
+    });
+
+    it('rejects negative, NaN, infinite, null, and undefined values', () => {
+      expect(isValidInvoiceTotalAmount(-1)).toBe(false);
+      expect(isValidInvoiceTotalAmount(Number.NaN)).toBe(false);
+      expect(isValidInvoiceTotalAmount(Number.POSITIVE_INFINITY)).toBe(false);
+      expect(isValidInvoiceTotalAmount(null)).toBe(false);
+      expect(isValidInvoiceTotalAmount(undefined)).toBe(false);
     });
   });
 

@@ -129,8 +129,8 @@ const ALL_HOME_UTILITIES: HomeUtilityItem[] = [
   },
   {
     id: 'law_conditions',
-    label: 'Điều kiện luật',
-    keywords: 'dieu kien luat thue quy dinh van ban',
+    label: 'Luật thuế TNCN',
+    keywords: 'luat thue tncn dieu kien luat quy tac thue bieu thue giam tru gia canh mien thue van ban',
     icon: 'book-outline',
     inServiceGroup: true,
     testID: 'homeLawConditionsCard',
@@ -420,31 +420,45 @@ export const HomeScreen: React.FC = () => {
     } catch {}
   }, [draftFavoriteIds]);
 
+  const bannerInnerWidth = Math.max(0, bannerCardWidth - 2);
+  const bannerHeight =
+    bannerInnerWidth > 0 ? Math.round(bannerInnerWidth * (440 / 1024)) : 0;
+
   const goToBannerSlide = useCallback(
     (index: number) => {
       setBannerSlideIndex(index);
-      if (bannerCardWidth > 0 && bannerScrollRef.current) {
+      if (bannerInnerWidth > 0 && bannerScrollRef.current) {
         bannerScrollRef.current.scrollTo({
-          x: index * bannerCardWidth,
+          x: index * bannerInnerWidth,
           animated: true,
         });
       }
     },
-    [bannerCardWidth]
+    [bannerInnerWidth]
   );
+
+  // Giữ vị trí scroll khớp chính xác khi đổi kích thước màn hình / xoay ngang
+  useEffect(() => {
+    if (!isExpert && bannerInnerWidth > 0 && bannerScrollRef.current) {
+      bannerScrollRef.current.scrollTo({
+        x: bannerSlideIndex * bannerInnerWidth,
+        animated: false,
+      });
+    }
+  }, [bannerInnerWidth, isExpert]);
 
   useEffect(() => {
     if (isExpert) {
       setBannerSlideIndex(0);
       return;
     }
-    if (bannerCardWidth <= 0) return;
+    if (bannerInnerWidth <= 0) return;
 
     const timer = setInterval(() => {
       setBannerSlideIndex((prev) => {
         const next = prev === 0 ? 1 : 0;
         bannerScrollRef.current?.scrollTo({
-          x: next * bannerCardWidth,
+          x: next * bannerInnerWidth,
           animated: true,
         });
         return next;
@@ -452,7 +466,7 @@ export const HomeScreen: React.FC = () => {
     }, 5500);
 
     return () => clearInterval(timer);
-  }, [bannerCardWidth, isExpert]);
+  }, [bannerInnerWidth, isExpert]);
 
   useFocusEffect(
     useCallback(() => {
@@ -1094,8 +1108,14 @@ export const HomeScreen: React.FC = () => {
                 >
                   <Image
                     source={CONSULT_BANNER_IMAGE}
-                    style={styles.consultBannerImage}
-                    resizeMode="cover"
+                    style={[
+                      styles.consultBannerImage,
+                      bannerInnerWidth > 0 && {
+                        width: bannerInnerWidth,
+                        height: bannerHeight,
+                      },
+                    ]}
+                    resizeMode="stretch"
                   />
                 </TouchableOpacity>
               ) : (
@@ -1103,67 +1123,77 @@ export const HomeScreen: React.FC = () => {
                   <View
                     style={[
                       styles.consultBannerCard,
-                      bannerCardWidth > 0 && {
-                        height: Math.round(
-                          bannerCardWidth * (bannerSlideIndex === 0 ? 341 / 1024 : 576 / 1024)
-                        ),
-                      },
+                      bannerHeight > 0 && { height: bannerHeight + 2 },
                     ]}
                     testID="homeConsultBanner"
                   >
-                    <ScrollView
-                      ref={bannerScrollRef}
-                      horizontal
-                      pagingEnabled
-                      showsHorizontalScrollIndicator={false}
-                      scrollEventThrottle={16}
-                      onMomentumScrollEnd={(e) => {
-                        if (bannerCardWidth > 0) {
+                    {bannerInnerWidth > 0 ? (
+                      <ScrollView
+                        ref={bannerScrollRef}
+                        horizontal
+                        pagingEnabled
+                        showsHorizontalScrollIndicator={false}
+                        scrollEventThrottle={16}
+                        style={{ width: bannerInnerWidth, height: bannerHeight }}
+                        contentContainerStyle={styles.bannerScrollContent}
+                        onMomentumScrollEnd={(e) => {
                           const idx = Math.round(
-                            e.nativeEvent.contentOffset.x / bannerCardWidth
+                            e.nativeEvent.contentOffset.x / bannerInnerWidth
                           );
                           setBannerSlideIndex(idx === 1 ? 1 : 0);
-                        }
-                      }}
-                    >
-                      {/* Slide 1: Tư vấn cùng chuyên gia thuế */}
+                        }}
+                      >
+                        {/* Slide 1: Tư vấn cùng chuyên gia thuế */}
+                        <TouchableOpacity
+                          style={[
+                            styles.bannerSlideItem,
+                            { width: bannerInnerWidth, height: bannerHeight },
+                          ]}
+                          onPress={() => navigation.navigate('ExpertList')}
+                          activeOpacity={0.9}
+                          accessibilityRole="button"
+                          accessibilityLabel="Tư vấn cùng chuyên gia thuế - Đặt lịch tư vấn ngay"
+                          testID="homeConsultBannerSlide1"
+                        >
+                          <Image
+                            source={CONSULT_BANNER_IMAGE}
+                            style={{ width: bannerInnerWidth, height: bannerHeight }}
+                            resizeMode="stretch"
+                          />
+                        </TouchableOpacity>
+
+                        {/* Slide 2: Đăng ký làm chuyên gia thuế */}
+                        <TouchableOpacity
+                          style={[
+                            styles.bannerSlideItem,
+                            { width: bannerInnerWidth, height: bannerHeight },
+                          ]}
+                          onPress={() => navigation.navigate('ExpertApplication')}
+                          activeOpacity={0.9}
+                          accessibilityRole="button"
+                          accessibilityLabel="Đăng ký làm chuyên gia thuế TaxKeep VN"
+                          testID="homeConsultBannerSlide2"
+                        >
+                          <Image
+                            source={EXPERT_PARTNER_BANNER_IMAGE}
+                            style={{ width: bannerInnerWidth, height: bannerHeight }}
+                            resizeMode="stretch"
+                          />
+                        </TouchableOpacity>
+                      </ScrollView>
+                    ) : (
                       <TouchableOpacity
-                        style={[
-                          styles.bannerSlideItem,
-                          bannerCardWidth > 0 && { width: bannerCardWidth },
-                        ]}
+                        style={styles.bannerSlideItem}
                         onPress={() => navigation.navigate('ExpertList')}
                         activeOpacity={0.9}
-                        accessibilityRole="button"
-                        accessibilityLabel="Tư vấn cùng chuyên gia thuế - Đặt lịch tư vấn ngay"
-                        testID="homeConsultBannerSlide1"
                       >
                         <Image
                           source={CONSULT_BANNER_IMAGE}
                           style={styles.consultBannerImage}
-                          resizeMode="cover"
+                          resizeMode="stretch"
                         />
                       </TouchableOpacity>
-
-                      {/* Slide 2: Đăng ký làm chuyên gia thuế */}
-                      <TouchableOpacity
-                        style={[
-                          styles.bannerSlideItem,
-                          bannerCardWidth > 0 && { width: bannerCardWidth },
-                        ]}
-                        onPress={() => navigation.navigate('ExpertApplication')}
-                        activeOpacity={0.9}
-                        accessibilityRole="button"
-                        accessibilityLabel="Đăng ký làm chuyên gia thuế TaxKeep VN"
-                        testID="homeConsultBannerSlide2"
-                      >
-                        <Image
-                          source={EXPERT_PARTNER_BANNER_IMAGE}
-                          style={styles.partnerBannerImage}
-                          resizeMode="cover"
-                        />
-                      </TouchableOpacity>
-                    </ScrollView>
+                    )}
                   </View>
 
                   {/* Chấm chỉ báo chuyển slide */}
@@ -2078,20 +2108,22 @@ const styles = StyleSheet.create({
     borderColor: '#E8D5B5',
     ...theme.shadows.card,
   },
+  bannerScrollContent: {
+    alignItems: 'flex-start',
+  },
   bannerSlideItem: {
     width: '100%',
     alignItems: 'center',
-    justifyContent: 'flex-start',
+    justifyContent: 'center',
+    overflow: 'hidden',
   },
   consultBannerImage: {
     width: '100%',
-    height: undefined,
-    aspectRatio: 1024 / 341,
+    aspectRatio: 1024 / 440,
   },
   partnerBannerImage: {
     width: '100%',
-    height: undefined,
-    aspectRatio: 1024 / 576,
+    aspectRatio: 1024 / 440,
   },
   bannerDotsRow: {
     flexDirection: 'row',

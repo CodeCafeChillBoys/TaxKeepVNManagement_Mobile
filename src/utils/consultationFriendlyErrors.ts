@@ -1,4 +1,5 @@
 import { messageForErrorCode } from './apiErrorCatalog';
+import { parseForbiddenError } from './permissionError';
 
 /**
  * Chuyển đổi mã lỗi và thông điệp kỹ thuật từ máy chủ sang ngôn ngữ tiếng Việt
@@ -197,6 +198,13 @@ export function toFriendlyConsultationError(
   }
 
   if (upperCode === 'FORBIDDEN' || status === 403) {
+    const forbidden = parseForbiddenError(err);
+    if (forbidden) {
+      return {
+        title: forbidden.title,
+        message: forbidden.message,
+      };
+    }
     return {
       title: 'Không có quyền thao tác',
       message: 'Tài khoản của bạn không có quyền thực hiện thao tác này.',

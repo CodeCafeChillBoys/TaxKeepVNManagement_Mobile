@@ -93,6 +93,7 @@ export function mapDocumentReviewToOcrResult(
     taxWithheld: doc.taxWithheld ?? null,
     insuranceDeducted: doc.insuranceDeducted ?? null,
     crossCheckResult: (doc as any).crossCheckResult || null,
+    medicalStatement: doc.medicalStatement ?? null,
     isNotReimbursed: doc.isNotReimbursed ?? false,
     items: (doc.items || []).map((it, idx) => ({
       itemOrder: it.itemOrder || idx + 1,
@@ -286,6 +287,9 @@ async function resolveUserId(userId?: string): Promise<string | undefined> {
 
   return undefined;
 }
+
+// Lưu token đã bị từ chối 403 khi gọi /api/admin/system-configs để không gọi lặp lại cho tài khoản người dùng thường
+let systemConfigForbiddenToken: string | null = null;
 
 export const expenseApi = {
   /**
@@ -496,19 +500,25 @@ export const expenseApi = {
    * Lấy toàn bộ danh sách cấu hình hệ thống từ Admin (GET /api/admin/system-configs)
    */
   async getSystemConfigs(activeOnly = true): Promise<SystemConfigItem[]> {
+    const token = await storageHelper.getItem(config.storageKeys.accessToken);
+    if (token && systemConfigForbiddenToken === token) {
+      return [];
+    }
     try {
       const res = await apiClient.get<any>(`/api/admin/system-configs`, {
         params: { activeOnly },
-      });
+        suppressPermissionToast: true,
+      } as any);
       const raw = res.data;
       if (Array.isArray(raw)) return raw;
       if (Array.isArray(raw?.value)) return raw.value;
       if (Array.isArray(raw?.data)) return raw.data;
       return [];
-    } catch (err) {
-      if (__DEV__) {
-        console.warn('Lỗi khi tải cấu hình hệ thống từ Backend:', err);
+    } catch (err: any) {
+      if (err?.response?.status === 403 && token) {
+        systemConfigForbiddenToken = token;
       }
+      // Tài khoản người dùng thường (không có quyền admin.system_config.manage) sẽ nhận 403 và tự động dùng ngưỡng mặc định (0.8)
       return [];
     }
   },
@@ -518,16 +528,24 @@ export const expenseApi = {
    * GET /api/admin/system-configs/threshold/test-resolve?categoryCode={categoryCode}
    */
   async resolveThreshold(categoryCode?: string | null): Promise<ThresholdResolveResponse> {
+    const token = await storageHelper.getItem(config.storageKeys.accessToken);
+    if (token && systemConfigForbiddenToken === token) {
+      return {
+        category_code: categoryCode || null,
+        resolved_threshold: 0.8,
+        note: 'Ngưỡng mặc định cho người dùng',
+      };
+    }
     try {
       const params = categoryCode ? { categoryCode } : {};
       const res = await apiClient.get<ThresholdResolveResponse>(
         `/api/admin/system-configs/threshold/test-resolve`,
-        { params }
+        { params, suppressPermissionToast: true } as any
       );
       return res.data;
-    } catch (err) {
-      if (__DEV__) {
-        console.warn('Lỗi khi resolve ngưỡng nhận diện từ Backend:', err);
+    } catch (err: any) {
+      if (err?.response?.status === 403 && token) {
+        systemConfigForbiddenToken = token;
       }
       return {
         category_code: categoryCode || null,

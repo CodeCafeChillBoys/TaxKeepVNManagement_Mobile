@@ -17,6 +17,7 @@ function portalToBody(node: React.ReactNode): React.ReactNode {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { fonts } from '../../constants/fonts';
+import { onPermissionDenied } from '../../utils/permissionError';
 
 export type ToastVariant = 'default' | 'destructive' | 'success' | 'warning' | 'info';
 
@@ -62,13 +63,29 @@ export const globalToast = {
 export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [toasts, setToasts] = useState<ToastInternalItem[]>([]);
   const insets = useSafeAreaInsets();
+  const recentToastsRef = useRef<Map<string, number>>(new Map());
 
   const dismiss = useCallback((id?: string) => {
     setToasts((prev) => (id ? prev.filter((t) => t.id !== id) : []));
   }, []);
 
   const show = useCallback((options: ToastOptions) => {
-    const id = `toast-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    // Chống hiển thị trùng lặp toast giống hệt nhau trong vòng 2.5 giây
+    // (VD: interceptor 403 vừa hiện toast và màn hình gọi lại toast.error với cùng thông điệp)
+    const now = Date.now();
+    const dedupeKey = `${options.variant || 'default'}|${options.title || ''}|${options.description}`;
+    const lastShown = recentToastsRef.current.get(dedupeKey);
+    if (lastShown && now - lastShown < 2500) {
+      return;
+    }
+    recentToastsRef.current.set(dedupeKey, now);
+    if (recentToastsRef.current.size > 20) {
+      for (const [k, ts] of recentToastsRef.current.entries()) {
+        if (now - ts >= 2500) recentToastsRef.current.delete(k);
+      }
+    }
+
+    const id = `toast-${now}-${Math.random().toString(36).substring(2, 7)}`;
     const newItem: ToastInternalItem = { ...options, id };
     setToasts((prev) => [...prev.slice(-4), newItem]);
   }, []);
@@ -96,6 +113,13 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   useEffect(() => {
     globalToastRef = toastMethods;
+  }, [toastMethods]);
+
+  // Tự động hiển thị Toast tiếng Việt mỗi khi Backend trả về lỗi phân quyền 403 Forbidden
+  useEffect(() => {
+    return onPermissionDenied((err) => {
+      toastMethods.error(err.message, err.title);
+    });
   }, [toastMethods]);
 
   const contextValue = useMemo(() => ({ toast: toastMethods }), [toastMethods]);
@@ -173,6 +197,8 @@ const VARIANT_CONFIGS = {
   },
 } as const;
 
+const USE_NATIVE_DRIVER = Platform.OS !== 'web';
+
 const ToastCard = React.memo<{ item: ToastInternalItem; onDismiss: (id: string) => void }>(
   ({ item, onDismiss }) => {
     const opacity = useRef(new Animated.Value(0)).current;
@@ -184,12 +210,12 @@ const ToastCard = React.memo<{ item: ToastInternalItem; onDismiss: (id: string) 
         Animated.timing(opacity, {
           toValue: 0,
           duration: 180,
-          useNativeDriver: Platform.OS !== 'web',
+          useNativeDriver: USE_NATIVE_DRIVER,
         }),
         Animated.timing(translateY, {
           toValue: -14,
           duration: 180,
-          useNativeDriver: Platform.OS !== 'web',
+          useNativeDriver: USE_NATIVE_DRIVER,
         }),
       ]).start(() => {
         if (isMountedRef.current) {
@@ -204,13 +230,13 @@ const ToastCard = React.memo<{ item: ToastInternalItem; onDismiss: (id: string) 
         Animated.timing(opacity, {
           toValue: 1,
           duration: 220,
-          useNativeDriver: Platform.OS !== 'web',
+          useNativeDriver: USE_NATIVE_DRIVER,
         }),
         Animated.spring(translateY, {
           toValue: 0,
           friction: 8,
           tension: 80,
-          useNativeDriver: Platform.OS !== 'web',
+          useNativeDriver: USE_NATIVE_DRIVER,
         }),
       ]);
       enterAnim.start();

@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { fonts } from '../../constants/fonts';
+import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { formatPersonName } from '../../utils/formatPersonName';
 import { CONDITION_GROUP_OPTIONS, RELATIONSHIP_OPTIONS } from './dependentEligibility';
@@ -33,8 +34,23 @@ export const DependentSavedScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
   const route = useRoute<Route>();
   const insets = useSafeAreaInsets();
-  const { fullName, relationship, groupCode, groupId, effectiveFromMonth } = route.params;
+  const { dependentId, fullName, relationship, groupCode, groupId, effectiveFromMonth } = route.params;
   const displayName = formatPersonName(fullName) || fullName;
+
+  const goToDetail = () => {
+    if (!dependentId) {
+      goToList();
+      return;
+    }
+    navigation.reset({
+      index: 2,
+      routes: [
+        { name: 'Home' },
+        { name: 'DependentList' },
+        { name: 'DependentDetail', params: { dependentId } },
+      ],
+    });
+  };
 
   const goToList = () => {
     navigation.reset({
@@ -46,7 +62,7 @@ export const DependentSavedScreen: React.FC = () => {
   return (
     <View style={styles.safe}>
       <StatusBar style="dark" />
-      <SavedPattern />
+      <DrumPatternBackdrop variant="soft" />
       <ScrollView
         contentContainerStyle={[
           styles.scroll,
@@ -91,15 +107,30 @@ export const DependentSavedScreen: React.FC = () => {
 
       <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 16) }]}>
         <View style={styles.footerInner}>
+          {dependentId ? (
+            <TouchableOpacity
+              style={styles.button}
+              activeOpacity={0.85}
+              onPress={goToDetail}
+              accessibilityRole="button"
+              accessibilityLabel="Xem chi tiết hồ sơ người phụ thuộc"
+              testID="dependentSavedViewDetail"
+            >
+              <Text style={styles.buttonText}>Xem chi tiết hồ sơ</Text>
+            </TouchableOpacity>
+          ) : null}
+
           <TouchableOpacity
-            style={styles.button}
+            style={dependentId ? styles.secondaryButton : styles.button}
             activeOpacity={0.85}
             onPress={goToList}
             accessibilityRole="button"
             accessibilityLabel="Về danh sách người phụ thuộc"
             testID="dependentSavedGoList"
           >
-            <Text style={styles.buttonText}>Về danh sách người phụ thuộc</Text>
+            <Text style={dependentId ? styles.secondaryButtonText : styles.buttonText}>
+              Về danh sách người phụ thuộc
+            </Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -338,6 +369,7 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 520,
     alignSelf: 'center',
+    gap: 10,
   },
   button: {
     minHeight: 52,
@@ -353,6 +385,24 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 20,
     color: '#FFFFFF',
+    textAlign: 'center',
+  },
+  secondaryButton: {
+    minHeight: 48,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1.5,
+    borderColor: '#8B1E1E',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 11,
+  },
+  secondaryButtonText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 15,
+    lineHeight: 20,
+    color: '#8B1E1E',
     textAlign: 'center',
   },
 });

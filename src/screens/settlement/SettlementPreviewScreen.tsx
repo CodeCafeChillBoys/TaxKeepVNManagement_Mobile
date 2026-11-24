@@ -14,6 +14,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { HomeHeaderButton } from '../../components/navigation/HomeHeaderButton';
 import { fonts } from '../../constants/fonts';
+import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { useToast } from '../../components/ui/Toast';
 import { toFriendlyErrorMessage } from '../../utils/friendlyError';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
@@ -139,6 +140,7 @@ export const SettlementPreviewScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right']}>
+      <DrumPatternBackdrop variant="soft" />
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.side}
@@ -305,8 +307,9 @@ const styles = StyleSheet.create({
     flex: 1,
     textAlign: 'center',
     fontFamily: fonts.serifBold,
+    fontWeight: '700',
     fontSize: 20,
-    color: theme.colors.textPrimary,
+    color: theme.colors.primaryDark,
   },
   scroll: { paddingHorizontal: 22, paddingBottom: 24, paddingTop: 8 },
   containerInner: {

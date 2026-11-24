@@ -19,6 +19,7 @@ import { CustomButton } from '../../components/common/CustomButton';
 import { ProvinceSelect } from '../../components/common/ProvinceSelect';
 import { PasswordStrengthBar } from '../../components/common/PasswordStrengthBar';
 import { HeaderMotif } from '../../components/common/HeaderMotif';
+import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { Dialog } from '../../components/common/Dialog';
 import { TermsCheckbox } from '../../components/auth/TermsCheckbox';
 import { useToast } from '../../components/ui/Toast';
@@ -247,6 +248,7 @@ export const RegisterScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      <DrumPatternBackdrop variant="soft" />
       <HeaderMotif
         title="ĐĂNG KÝ TÀI KHOẢN"
         onBack={() => handleLeavePage(() => navigation.goBack())}

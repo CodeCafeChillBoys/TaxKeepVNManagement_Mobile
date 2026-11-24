@@ -21,6 +21,7 @@ import { TaxRegistrationScreen } from '../screens/dependent/TaxRegistrationScree
 import { EditDependentScreen } from '../screens/dependent/EditDependentScreen';
 import { ProofDocumentsScreen } from '../screens/dependent/ProofDocumentsScreen';
 import { DependentSavedScreen } from '../screens/dependent/DependentSavedScreen';
+import { DependentDetailScreen } from '../screens/dependent/DependentDetailScreen';
 import { DependentListScreen } from '../screens/dependent/DependentListScreen';
 import { ScanIdentityScreen } from '../screens/common/ScanIdentityScreen';
 import { ExpenseListScreen } from '../screens/expense/ExpenseListScreen';
@@ -91,6 +92,7 @@ const ThemedTaxRegistrationScreen = withTheme(TaxRegistrationScreen);
 const ThemedEditDependentScreen = withTheme(EditDependentScreen);
 const ThemedProofDocumentsScreen = withTheme(ProofDocumentsScreen);
 const ThemedDependentSavedScreen = withTheme(DependentSavedScreen);
+const ThemedDependentDetailScreen = withTheme(DependentDetailScreen);
 const ThemedDependentListScreen = withTheme(DependentListScreen);
 const ThemedScanIdentityScreen = withTheme(ScanIdentityScreen);
 const ThemedExpenseListScreen = withTheme(ExpenseListScreen);
@@ -202,6 +204,7 @@ export const RootNavigator: React.FC = () => {
         <Stack.Screen name="EditDependent" component={ThemedEditDependentScreen} />
         <Stack.Screen name="ProofDocuments" component={ThemedProofDocumentsScreen} />
         <Stack.Screen name="DependentSaved" component={ThemedDependentSavedScreen} />
+        <Stack.Screen name="DependentDetail" component={ThemedDependentDetailScreen} />
         <Stack.Screen name="DependentList" component={ThemedDependentListScreen} options={tabScreenOptions} />
         <Stack.Screen name="ScanIdentity" component={ThemedScanIdentityScreen} />
         <Stack.Screen name="ExpenseList" component={ThemedExpenseListScreen} />

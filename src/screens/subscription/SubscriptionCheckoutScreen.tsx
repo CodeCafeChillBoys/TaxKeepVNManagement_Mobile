@@ -17,6 +17,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { config } from '../../constants/config';
 import { fonts } from '../../constants/fonts';
+import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { subscriptionApi } from '../../api/subscriptionApi';
@@ -152,6 +153,7 @@ export const SubscriptionCheckoutScreen: React.FC = () => {
 
   const header = (
     <>
+      <DrumPatternBackdrop variant="soft" />
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.side}
@@ -353,8 +355,9 @@ const styles = StyleSheet.create({
     flex: 1,
     textAlign: 'center',
     fontFamily: fonts.serifBold,
+    fontWeight: '700',
     fontSize: 20,
-    color: theme.colors.textPrimary,
+    color: theme.colors.primaryDark,
   },
   content: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 24 },
 

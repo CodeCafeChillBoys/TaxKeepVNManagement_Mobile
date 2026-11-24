@@ -21,11 +21,15 @@ export type RootStackParamList = {
   /** Sửa thông tin hồ sơ NPT đã tạo (PUT /dependents/{id}) */
   EditDependent: { dependentId: string };
   DependentSaved: {
+    dependentId?: string;
     fullName: string;
     relationship: string;
     groupCode: string;
     groupId?: number;
     effectiveFromMonth: string;
+  };
+  DependentDetail: {
+    dependentId: string;
   };
   ProofDocuments:
     | {

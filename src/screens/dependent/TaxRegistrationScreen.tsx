@@ -19,6 +19,7 @@ import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
+import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { HomeHeaderButton } from '../../components/navigation/HomeHeaderButton';
 import { useToast } from '../../components/ui/Toast';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
@@ -416,6 +417,7 @@ export const TaxRegistrationScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      <DrumPatternBackdrop variant="soft" />
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.backBtn}
@@ -836,17 +838,17 @@ const styles = StyleSheet.create({
   homeSlot: { width: 44, alignItems: 'flex-end', justifyContent: 'center' },
   safeArea: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: theme.colors.background,
   },
   header: {
-    height: 64,
-    backgroundColor: '#EBE4D5',
+    height: 52,
+    backgroundColor: 'transparent',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#DDD5C4',
+    borderBottomColor: theme.colors.goldLight,
   },
   backBtn: {
     width: 44,
@@ -859,7 +861,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 18,
     fontWeight: '700',
-    color: '#1A1A1A',
+    color: theme.colors.primaryDark,
     textAlign: 'center',
   },
   scrollOuter: {

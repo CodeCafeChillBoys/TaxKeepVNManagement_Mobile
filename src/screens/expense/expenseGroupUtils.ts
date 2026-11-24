@@ -25,6 +25,35 @@ export function isWithholdingDocType(code?: string | null, name?: string | null)
   );
 }
 
+/**
+ * Ô xác nhận "chưa được bồi hoàn từ bảo hiểm hoặc nguồn khác" chỉ áp dụng và hiển thị
+ * cho các hóa đơn thuộc nhóm Y tế (TO_VIEN_PHI) và Giáo dục (TO_GIAO_DUC).
+ * Các loại hóa đơn / chứng từ còn lại (Từ thiện, Bảo hiểm, Khấu trừ thuế, Khác...) không áp dụng và ẩn trên FE.
+ */
+export function requiresReimbursementConfirmation(
+  code?: string | null,
+  name?: string | null
+): boolean {
+  if (isWithholdingDocType(code, name)) return false;
+  const group = getGroupKeyFromDocTypeCode(code);
+  if (group === 'TO_VIEN_PHI' || group === 'TO_GIAO_DUC') return true;
+  if (name) {
+    const n = name.trim().toLowerCase();
+    if (
+      n.includes('y tế') ||
+      n.includes('viện phí') ||
+      n.includes('khám chữa bệnh') ||
+      n.includes('bệnh viện') ||
+      n.includes('giáo dục') ||
+      n.includes('học phí') ||
+      n.includes('đào tạo')
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export interface ExpenseGroup {
   key: ExpenseGroupKey;
   order: number;
@@ -536,6 +565,143 @@ export function groupExpensesByAiClassification(
   }
 
   return allGroups.filter((g) => g.items.length > 0);
+}
+
+export const DEFAULT_NEW_LAW_FROM_YEAR = 2026;
+export const DEFAULT_MEDICAL_MAX_YEARLY = 23_000_000;
+export const DEFAULT_EDUCATION_MAX_YEARLY = 24_000_000;
+
+export interface ExpenseDeductionSummary {
+  taxYear: number;
+  appliesMedicalAndEducation: boolean;
+  /** Tổng khấu trừ (giảm trừ) hợp lệ từ các hóa đơn chi phí trong kỳ (đã áp trần theo quy định) */
+  totalDeduction: number;
+  /** Số tiền giảm trừ y tế sau khi áp trần năm */
+  medicalDeduction: number;
+  /** Tổng chi phí y tế hợp lệ trước khi áp trần */
+  medicalRawAmount: number;
+  /** Mức trần giảm trừ y tế/năm (0 nếu không áp dụng) */
+  medicalCap: number;
+  isMedicalCapped: boolean;
+  /** Số tiền giảm trừ học phí sau khi áp trần năm */
+  educationDeduction: number;
+  /** Tổng chi phí học phí hợp lệ trước khi áp trần */
+  educationRawAmount: number;
+  /** Mức trần giảm trừ học phí/năm (0 nếu không áp dụng) */
+  educationCap: number;
+  isEducationCapped: boolean;
+  /** Số tiền giảm trừ từ thiện, nhân đạo, khuyến học */
+  charityDeduction: number;
+  /** Số hóa đơn y tế đã duyệt nhưng chưa có bảng kê KCB hợp lệ hoặc đã được bảo hiểm bồi hoàn */
+  medicalExcludedCount: number;
+}
+
+function parsePositiveConfigNumber(
+  configs: Record<string, string> | undefined,
+  key: string,
+  fallback: number
+): number {
+  const raw = configs?.[key];
+  if (raw === undefined || raw === null || raw === '') return fallback;
+  const parsed = Number(String(raw).replace(/,/g, '').trim());
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+/**
+ * Tính toán thống kê Tổng khấu trừ / giảm trừ từ các hóa đơn chi phí đã duyệt trong kỳ năm.
+ * Bám sát logic Backend TaxSettlementService.LoadReceiptDeductionsAsync:
+ * - Chỉ tính chứng từ ở trạng thái CONFIRMED.
+ * - Y tế (MEDICAL_RECEIPT / TO_VIEN_PHI): áp dụng từ năm 2026 (Luật 109/2025/QH15),
+ *   chỉ tính khi có Bảng kê chi phí KCB ở trạng thái CONFIRMED và chưa bồi hoàn bảo hiểm,
+ *   lấy theo medicalStatement.totalEligibleAmount và áp trần PIT_MEDICAL_MAX_YEARLY (23 triệu/năm).
+ * - Học phí (EDUCATION_RECEIPT / TO_GIAO_DUC): áp dụng từ năm 2026, áp trần PIT_EDUCATION_MAX_YEARLY (24 triệu/năm).
+ * - Từ thiện (DONATION_VOUCHER / TO_TU_THIEN): áp dụng cho mọi năm tính thuế (TT 111/2013/TT-BTC).
+ * - Không tính Chứng từ khấu trừ thuế TNCN (WITHHOLDING_VOUCHER) vào chi phí giảm trừ.
+ */
+export function calculateExpenseDeductionSummary(
+  expenses: ExpenseOcrResult[],
+  taxYear?: number | null,
+  systemConfigs?: Record<string, string>
+): ExpenseDeductionSummary {
+  const effectiveYear = taxYear || new Date().getFullYear();
+  const newLawFromYear = parsePositiveConfigNumber(
+    systemConfigs,
+    'PIT_NEW_LAW_FROM_YEAR',
+    DEFAULT_NEW_LAW_FROM_YEAR
+  );
+  const appliesMedicalAndEducation = effectiveYear >= newLawFromYear;
+  const medicalCap = appliesMedicalAndEducation
+    ? parsePositiveConfigNumber(systemConfigs, 'PIT_MEDICAL_MAX_YEARLY', DEFAULT_MEDICAL_MAX_YEARLY)
+    : 0;
+  const educationCap = appliesMedicalAndEducation
+    ? parsePositiveConfigNumber(systemConfigs, 'PIT_EDUCATION_MAX_YEARLY', DEFAULT_EDUCATION_MAX_YEARLY)
+    : 0;
+
+  let medicalRawAmount = 0;
+  let educationRawAmount = 0;
+  let charityDeduction = 0;
+  let medicalExcludedCount = 0;
+
+  for (const doc of expenses || []) {
+    if (String(doc.status || '').toUpperCase() !== 'CONFIRMED') continue;
+    if (isWithholdingDocType(doc.docTypeCode, doc.docTypeName)) continue;
+
+    const groupKey = getGroupKeyFromDocTypeCode(doc.docTypeCode);
+
+    if (groupKey === 'TO_VIEN_PHI') {
+      if (!appliesMedicalAndEducation) continue;
+      const stmtConfirmed =
+        String(doc.medicalStatement?.status || '').toUpperCase() === 'CONFIRMED';
+      const notReimbursed = doc.isNotReimbursed !== false;
+
+      if (stmtConfirmed && notReimbursed) {
+        const eligible = Number(doc.medicalStatement?.totalEligibleAmount ?? 0);
+        if (Number.isFinite(eligible) && eligible > 0) {
+          medicalRawAmount += eligible;
+        }
+      } else {
+        medicalExcludedCount += 1;
+      }
+      continue;
+    }
+
+    if (groupKey === 'TO_GIAO_DUC') {
+      if (!appliesMedicalAndEducation) continue;
+      const amt = Number(doc.totalAmount ?? 0);
+      if (Number.isFinite(amt) && amt > 0) {
+        educationRawAmount += amt;
+      }
+      continue;
+    }
+
+    if (groupKey === 'TO_TU_THIEN') {
+      const amt = Number(doc.totalAmount ?? 0);
+      if (Number.isFinite(amt) && amt > 0) {
+        charityDeduction += amt;
+      }
+    }
+  }
+
+  const medicalDeduction =
+    medicalCap > 0 ? Math.min(medicalRawAmount, medicalCap) : medicalRawAmount;
+  const educationDeduction =
+    educationCap > 0 ? Math.min(educationRawAmount, educationCap) : educationRawAmount;
+
+  return {
+    taxYear: effectiveYear,
+    appliesMedicalAndEducation,
+    totalDeduction: medicalDeduction + educationDeduction + charityDeduction,
+    medicalDeduction,
+    medicalRawAmount,
+    medicalCap,
+    isMedicalCapped: medicalCap > 0 && medicalRawAmount > medicalCap,
+    educationDeduction,
+    educationRawAmount,
+    educationCap,
+    isEducationCapped: educationCap > 0 && educationRawAmount > educationCap,
+    charityDeduction,
+    medicalExcludedCount,
+  };
 }
 
 /**

@@ -132,6 +132,9 @@ export interface ExpenseOcrResult {
   // Kết quả đối chiếu với thu nhập theo tháng (cho chứng từ khấu trừ thuế)
   crossCheckResult?: import('../api/incomeSourceApi').IncomeSourceCrossCheckResult | null;
 
+  // Bảng kê chi phí KCB đi kèm hóa đơn viện phí
+  medicalStatement?: MedicalStatement | null;
+
   status: 'UPLOADED' | 'EXTRACTED' | 'CONFIRMED' | 'FAILED' | 'REJECTED';
   createdAt?: string;
 }

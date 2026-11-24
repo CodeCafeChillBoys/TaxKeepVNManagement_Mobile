@@ -15,6 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { theme } from '../../constants/theme';
 import { HeaderMotif } from '../../components/common/HeaderMotif';
+import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { CustomButton } from '../../components/common/CustomButton';
 import { Dialog } from '../../components/common/Dialog';
 import { InfoNote } from '../../components/common/InfoNote';
@@ -465,6 +466,7 @@ export const ScanIdentityScreen: React.FC = () => {
 
   const renderSource = () => (
     <SafeAreaView style={styles.safe}>
+      <DrumPatternBackdrop variant="soft" />
       <HeaderMotif title="QUÉT CĂN CƯỚC CÔNG DÂN" onBack={skipManual} />
       <ScrollView contentContainerStyle={styles.sourceContent} showsVerticalScrollIndicator={false}>
         <View style={styles.contentWrap}>
@@ -504,6 +506,7 @@ export const ScanIdentityScreen: React.FC = () => {
 
   const renderBackOffer = () => (
     <SafeAreaView style={styles.safe}>
+      <DrumPatternBackdrop variant="soft" />
       <HeaderMotif title="THÊM MẶT SAU" onBack={() => setScreen('source')} />
       <ScrollView contentContainerStyle={styles.sourceContent} showsVerticalScrollIndicator={false}>
         <View style={styles.contentWrap}>
@@ -606,6 +609,7 @@ export const ScanIdentityScreen: React.FC = () => {
 
   const renderReview = () => (
     <SafeAreaView style={styles.safe} edges={['top']}>
+      <DrumPatternBackdrop variant="soft" />
       <HeaderMotif title="KIỂM TRA THÔNG TIN" onBack={() => setScreen('source')} />
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -651,6 +655,7 @@ export const ScanIdentityScreen: React.FC = () => {
                 status={fieldStatus(meta.key)}
                 unusedHint={!meta.usedInRegister}
                 keyboardType={meta.key === 'citizenId' ? 'numeric' : 'default'}
+                multiline={meta.key === 'address'}
                 onFocus={() => {
                   if (lowConfidence.includes(meta.key)) {
                     setViewedLowFields((prev) => new Set(prev).add(meta.key));

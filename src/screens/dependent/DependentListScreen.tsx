@@ -47,6 +47,9 @@ import {
   type ManualChangeGroupPlan,
 } from './manualChangeGroup';
 import { buildSoftDeletePlan, runSoftDeleteDependent } from './softDeleteDependent';
+import { buildEffectivePeriodUpdatePayload, formatPeriodShort } from './editEffectivePeriod';
+import { pickApiErrorMessage } from '../../utils/apiErrorCatalog';
+import { EditEffectivePeriodSheet } from '../../components/dependent/EditEffectivePeriodSheet';
 
 const DEDUCTION_PER_DEPENDENT = 6200000;
 
@@ -110,23 +113,26 @@ const DependentLedgerRow = React.memo<DependentRowProps>(
     const idValue = dep.citizenId || dep.birthCertNumber || 'Chưa cập nhật';
 
     return (
-      <TouchableOpacity
-        style={styles.ledgerRow}
-        activeOpacity={0.88}
-        onPress={() => onPressDetail(dep.id)}
-        testID={`dependentCard_${dep.id}`}
-      >
+      <View style={styles.ledgerRow} testID={`dependentCard_${dep.id}`}>
         <View style={styles.ledgerTop}>
-          <Text style={styles.ledgerIndex}>{String(index + 1).padStart(2, '0')}</Text>
-          <View style={styles.ledgerMain}>
-            <Text style={styles.cardName}>{displayName}</Text>
-            <Text style={styles.ledgerMeta}>
-              {getRelationshipLabel(dep.relationship)} · {age} tuổi ·{' '}
-              <Text style={dep.isProfileComplete ? styles.statusCompleteText : styles.statusPendingText}>
-                {dep.isProfileComplete ? 'Đủ hồ sơ' : 'Chờ minh chứng'}
+          <TouchableOpacity
+            style={styles.ledgerMainPress}
+            activeOpacity={0.88}
+            onPress={() => onPressDetail(dep.id)}
+            accessibilityRole="button"
+            accessibilityLabel={`Xem hồ sơ ${displayName}`}
+          >
+            <Text style={styles.ledgerIndex}>{String(index + 1).padStart(2, '0')}</Text>
+            <View style={styles.ledgerMain}>
+              <Text style={styles.cardName}>{displayName}</Text>
+              <Text style={styles.ledgerMeta}>
+                {getRelationshipLabel(dep.relationship)} · {age} tuổi ·{' '}
+                <Text style={dep.isProfileComplete ? styles.statusCompleteText : styles.statusPendingText}>
+                  {dep.isProfileComplete ? 'Đủ hồ sơ' : 'Chờ minh chứng'}
+                </Text>
               </Text>
-            </Text>
-          </View>
+            </View>
+          </TouchableOpacity>
           <TouchableOpacity
             style={styles.rowMenuBtn}
             onPress={() => onPressMenu(dep)}
@@ -139,15 +145,17 @@ const DependentLedgerRow = React.memo<DependentRowProps>(
           </TouchableOpacity>
         </View>
 
-        <Text style={styles.ledgerLine}>
-          {idLabel} {idValue}
-        </Text>
-        <Text style={styles.ledgerLine} numberOfLines={2}>
-          {dep.groupTitle}
-          {dep.effectiveFromMonth || dep.effectiveToMonth
-            ? ` · ${dep.effectiveFromMonth || '01/2026'} → ${dep.effectiveToMonth || '12/2026'}`
-            : ''}
-        </Text>
+        <TouchableOpacity activeOpacity={0.88} onPress={() => onPressDetail(dep.id)}>
+          <Text style={styles.ledgerLine}>
+            {idLabel} {idValue}
+          </Text>
+          <Text style={styles.ledgerLine} numberOfLines={2}>
+            {dep.groupTitle}
+            {dep.effectiveFromMonth || dep.effectiveToMonth
+              ? ` · ${formatPeriodShort(dep.effectiveFromMonth)} → ${formatPeriodShort(dep.effectiveToMonth)}`
+              : ''}
+          </Text>
+        </TouchableOpacity>
 
         <TouchableOpacity
           onPress={() => onPressProof(dep)}
@@ -158,7 +166,7 @@ const DependentLedgerRow = React.memo<DependentRowProps>(
             {dep.isProfileComplete ? 'Xem minh chứng' : 'Bổ sung minh chứng'}
           </Text>
         </TouchableOpacity>
-      </TouchableOpacity>
+      </View>
     );
   }
 );
@@ -194,6 +202,12 @@ export const DependentListScreen: React.FC = () => {
     confirmTitle: string;
     fromDetailModal: boolean;
   } | null>(null);
+
+  const [periodEditVisible, setPeriodEditVisible] = useState(false);
+  const [periodFrom, setPeriodFrom] = useState('2026-01');
+  const [periodTo, setPeriodTo] = useState('2026-12');
+  const [periodSaving, setPeriodSaving] = useState(false);
+  const [periodError, setPeriodError] = useState<string | null>(null);
 
   const handleViewDetail = useCallback(
     async (depId: string) => {
@@ -503,14 +517,16 @@ export const DependentListScreen: React.FC = () => {
         animationType="slide"
         onRequestClose={() => setIsDetailModalVisible(false)}
       >
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setIsDetailModalVisible(false)}
-        >
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity
+            style={styles.modalBackdrop}
+            activeOpacity={1}
+            onPress={() => setIsDetailModalVisible(false)}
+            accessibilityRole="button"
+            accessibilityLabel="Đóng chi tiết"
+          />
           <View
             style={[styles.detailModalSheet, { paddingBottom: Math.max(insets.bottom, 12) }]}
-            onStartShouldSetResponder={() => true}
           >
             <View style={styles.detailModalHandle} />
 
@@ -590,12 +606,28 @@ export const DependentListScreen: React.FC = () => {
                     </View>
                   ) : null}
 
-                  <View style={styles.modalDetailRow}>
+                  <TouchableOpacity
+                    style={styles.modalDetailRow}
+                    onPress={() => {
+                      setPeriodFrom(selectedDetail.effectiveFromMonth || '2026-01');
+                      setPeriodTo(selectedDetail.effectiveToMonth || '2026-12');
+                      setPeriodError(null);
+                      setIsDetailModalVisible(false);
+                      setPeriodEditVisible(true);
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Sửa thời gian hiệu lực"
+                    testID="btnEditEffectivePeriodRow"
+                  >
                     <Text style={styles.modalDetailLabel}>Thời gian hiệu lực:</Text>
-                    <Text style={styles.modalDetailVal}>
-                      {selectedDetail.effectiveFromMonth || '01/2026'} → {selectedDetail.effectiveToMonth || '12/2026'}
-                    </Text>
-                  </View>
+                    <View style={styles.periodValueRow}>
+                      <Text style={styles.modalDetailVal}>
+                        {formatPeriodShort(selectedDetail.effectiveFromMonth)} →{' '}
+                        {formatPeriodShort(selectedDetail.effectiveToMonth)}
+                      </Text>
+                      <Ionicons name="create-outline" size={16} color={theme.colors.primary} />
+                    </View>
+                  </TouchableOpacity>
                 </View>
 
                 <View style={styles.detailCardSection}>
@@ -661,21 +693,26 @@ export const DependentListScreen: React.FC = () => {
                             </Text>
                             <Text style={styles.docItemDate}>
                               Ngày nộp: {formatShortDate(doc.uploadedAt)} •{' '}
-                              <Text style={doc.isReadable ? styles.validStatusText : styles.pendingStatusText}>
-                                {doc.isReadable ? '✓ Hợp lệ' : 'Đang kiểm tra'}
+                              <Text
+                                style={
+                                  doc.isCurrent === false || !doc.isReadable
+                                    ? styles.pendingStatusText
+                                    : styles.validStatusText
+                                }
+                              >
+                                {doc.isCurrent === false
+                                  ? 'Cần nộp lại'
+                                  : doc.isReadable
+                                    ? '✓ Hợp lệ'
+                                    : 'Đang kiểm tra'}
                               </Text>
                             </Text>
                           </View>
 
-                          <TouchableOpacity
-                            style={styles.viewDocActionBtn}
-                            onPress={handleDocPress}
-                            accessibilityRole="button"
-                            accessibilityLabel="Xem ảnh"
-                          >
+                          <View style={styles.viewDocActionBtn}>
                             <Ionicons name="eye-outline" size={15} color={theme.colors.primary} />
                             <Text style={styles.viewDocActionText}>Xem</Text>
-                          </TouchableOpacity>
+                          </View>
                         </TouchableOpacity>
                       );
                     })
@@ -688,6 +725,44 @@ export const DependentListScreen: React.FC = () => {
                 </View>
 
                 <View style={styles.modalActionRow}>
+                  <TouchableOpacity
+                    style={styles.modalSecondaryBtn}
+                    onPress={() => {
+                      const id = selectedDetail.dependentId;
+                      setIsDetailModalVisible(false);
+                      navigation.navigate('EditDependent', { dependentId: id });
+                    }}
+                    testID="btnEditDependentProfile"
+                  >
+                    <Ionicons
+                      name="create-outline"
+                      size={18}
+                      color={theme.colors.primary}
+                      style={styles.btnIcon}
+                    />
+                    <Text style={styles.modalSecondaryBtnText}>Sửa hồ sơ</Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.modalSecondaryBtn}
+                    onPress={() => {
+                      setPeriodFrom(selectedDetail.effectiveFromMonth || '2026-01');
+                      setPeriodTo(selectedDetail.effectiveToMonth || '2026-12');
+                      setPeriodError(null);
+                      setIsDetailModalVisible(false);
+                      setPeriodEditVisible(true);
+                    }}
+                    testID="btnEditEffectivePeriod"
+                  >
+                    <Ionicons
+                      name="calendar-outline"
+                      size={18}
+                      color={theme.colors.primary}
+                      style={styles.btnIcon}
+                    />
+                    <Text style={styles.modalSecondaryBtnText}>Sửa thời gian hiệu lực</Text>
+                  </TouchableOpacity>
+
                   <TouchableOpacity
                     style={styles.modalSecondaryBtn}
                     onPress={() =>
@@ -759,7 +834,7 @@ export const DependentListScreen: React.FC = () => {
               </ScrollView>
             ) : null}
           </View>
-        </TouchableOpacity>
+        </View>
       </Modal>
 
       <DocumentViewerModal
@@ -815,6 +890,74 @@ export const DependentListScreen: React.FC = () => {
           setSoftDeleteTarget(null);
           if (reopen && selectedDetail) {
             setIsDetailModalVisible(true);
+          }
+        }}
+      />
+
+      <EditEffectivePeriodSheet
+        visible={periodEditVisible}
+        personName={selectedDetail ? formatPersonName(selectedDetail.fullName) : ''}
+        periodFrom={periodFrom}
+        periodTo={periodTo}
+        birthDate={selectedDetail?.birthDate}
+        saving={periodSaving}
+        error={periodError}
+        onChangeFrom={(ym) => {
+          setPeriodFrom(ym);
+          setPeriodError(null);
+        }}
+        onChangeTo={(ym) => {
+          setPeriodTo(ym);
+          setPeriodError(null);
+        }}
+        onCancel={() => {
+          if (periodSaving) return;
+          setPeriodEditVisible(false);
+          if (selectedDetail) setIsDetailModalVisible(true);
+        }}
+        onSave={async () => {
+          if (!selectedDetail || periodSaving) return;
+          const built = buildEffectivePeriodUpdatePayload(selectedDetail, periodFrom, periodTo);
+                  if (!built.ok) {
+                    setPeriodError(built.message);
+                    toast.warning(built.message, 'Thời gian hiệu lực');
+                    return;
+                  }
+          setPeriodSaving(true);
+          setPeriodError(null);
+          try {
+            await dependentDocumentApi.updateDependent(
+              selectedDetail.dependentId,
+              built.payload
+            );
+            const refreshed = await dependentDocumentApi.getDependentById(
+              selectedDetail.dependentId
+            );
+            setSelectedDetail(refreshed);
+            setPeriodEditVisible(false);
+            setIsDetailModalVisible(true);
+            toast.success('Đã cập nhật thời gian hiệu lực.', 'Thành công');
+            const data = await dependentDocumentApi.getDependents();
+            if (isMountedRef.current) setDependents(data);
+                  } catch (err: unknown) {
+                    const anyErr = err as {
+                      errorCode?: string;
+                      message?: string;
+                      response?: { data?: { message?: string; errorCode?: string; errors?: { errorCode?: string } } };
+                    };
+                    const code =
+                      anyErr.errorCode ||
+                      anyErr.response?.data?.errors?.errorCode ||
+                      anyErr.response?.data?.errorCode;
+                    const message = pickApiErrorMessage(
+                      code,
+                      anyErr.response?.data?.message || anyErr.message,
+                      'Không thể cập nhật thời gian hiệu lực.'
+                    );
+                    setPeriodError(message);
+                    toast.error(message, 'Không thể cập nhật');
+          } finally {
+            setPeriodSaving(false);
           }
         }}
       />
@@ -884,6 +1027,12 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   ledgerTop: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  ledgerMainPress: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 10,
@@ -1024,6 +1173,13 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'flex-end',
   },
+  modalBackdrop: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+  },
   detailModalSheet: {
     width: '100%',
     maxWidth: 600,
@@ -1135,6 +1291,13 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#666666',
     flexShrink: 0,
+  },
+  periodValueRow: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 6,
   },
   modalDetailVal: {
     flex: 1,

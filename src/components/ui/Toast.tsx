@@ -7,6 +7,13 @@ import {
   TouchableOpacity,
   Platform,
 } from 'react-native';
+function portalToBody(node: React.ReactNode): React.ReactNode {
+  if (Platform.OS !== 'web' || typeof document === 'undefined') return node;
+  const reactDom = 'react-dom';
+  const createPortal = (require(reactDom) as { createPortal: (child: React.ReactNode, el: Element) => React.ReactNode })
+    .createPortal;
+  return createPortal(node, document.body);
+}
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { fonts } from '../../constants/fonts';
@@ -17,6 +24,7 @@ export interface ToastOptions {
   title?: string;
   description: string;
   variant?: ToastVariant;
+  /** Số ms tự tắt. Bỏ trống hoặc 0: chỉ tắt khi người dùng bấm X. */
   duration?: number;
   actionText?: string;
   onAction?: () => void;
@@ -62,23 +70,23 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const show = useCallback((options: ToastOptions) => {
     const id = `toast-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
     const newItem: ToastInternalItem = { ...options, id };
-    setToasts((prev) => [...prev.slice(-2), newItem]); // Max 2 toasts stacked
+    setToasts((prev) => [...prev.slice(-4), newItem]);
   }, []);
 
   const error = useCallback((description: string, title: string = 'Chưa thể thực hiện') => {
-    show({ description, title, variant: 'destructive', duration: 4500 });
+    show({ description, title, variant: 'destructive' });
   }, [show]);
 
   const success = useCallback((description: string, title: string = 'Thực hiện thành công') => {
-    show({ description, title, variant: 'success', duration: 3500 });
+    show({ description, title, variant: 'success' });
   }, [show]);
 
   const warning = useCallback((description: string, title: string = 'Lưu ý kiểm tra') => {
-    show({ description, title, variant: 'warning', duration: 4000 });
+    show({ description, title, variant: 'warning' });
   }, [show]);
 
   const info = useCallback((description: string, title?: string) => {
-    show({ description, title, variant: 'info', duration: 3500 });
+    show({ description, title, variant: 'info' });
   }, [show]);
 
   const toastMethods = useMemo(
@@ -96,16 +104,19 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     <ToastContext.Provider value={contextValue}>
       {children}
       {toasts.length > 0 ? (
-        <View
-          style={[
-            styles.container,
-            { top: Math.max(insets.top, 12) + 6, pointerEvents: 'box-none' as any },
-          ]}
-        >
-          {toasts.map((t) => (
-            <ToastCard key={t.id} item={t} onDismiss={dismiss} />
-          ))}
-        </View>
+        portalToBody(
+          <View
+            style={[
+              styles.container,
+              { top: Math.max(insets.top, 12) + 6 },
+            ]}
+            pointerEvents="box-none"
+          >
+            {toasts.map((t) => (
+              <ToastCard key={t.id} item={t} onDismiss={dismiss} />
+            ))}
+          </View>
+        )
       ) : null}
     </ToastContext.Provider>
   );
@@ -173,12 +184,12 @@ const ToastCard = React.memo<{ item: ToastInternalItem; onDismiss: (id: string) 
         Animated.timing(opacity, {
           toValue: 0,
           duration: 180,
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
         }),
         Animated.timing(translateY, {
           toValue: -14,
           duration: 180,
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
         }),
       ]).start(() => {
         if (isMountedRef.current) {
@@ -193,24 +204,27 @@ const ToastCard = React.memo<{ item: ToastInternalItem; onDismiss: (id: string) 
         Animated.timing(opacity, {
           toValue: 1,
           duration: 220,
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
         }),
         Animated.spring(translateY, {
           toValue: 0,
           friction: 8,
           tension: 80,
-          useNativeDriver: true,
+          useNativeDriver: Platform.OS !== 'web',
         }),
       ]);
       enterAnim.start();
 
-      const timer = setTimeout(() => {
-        handleClose();
-      }, item.duration || 4000);
+      const stayOpen = !item.duration || item.duration <= 0;
+      const timer = stayOpen
+        ? null
+        : setTimeout(() => {
+            handleClose();
+          }, item.duration);
 
       return () => {
         isMountedRef.current = false;
-        clearTimeout(timer);
+        if (timer) clearTimeout(timer);
         enterAnim.stop();
       };
     }, [handleClose, item.duration, opacity, translateY]);
@@ -271,10 +285,11 @@ const ToastCard = React.memo<{ item: ToastInternalItem; onDismiss: (id: string) 
 
 const styles = StyleSheet.create({
   container: {
-    position: 'absolute',
+    position: (Platform.OS === 'web' ? 'fixed' : 'absolute') as 'absolute',
     left: 16,
     right: 16,
-    zIndex: 99999,
+    zIndex: 100000,
+    elevation: 100000,
     alignItems: 'center',
     gap: 8,
   },

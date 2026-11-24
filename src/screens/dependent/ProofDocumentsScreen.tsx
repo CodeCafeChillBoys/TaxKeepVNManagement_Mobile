@@ -33,7 +33,15 @@ import {
   DocumentViewerItem,
 } from '../../components/common/DocumentViewerModal';
 import { RootStackParamList, RootNavigationProp } from '../../navigation/types';
-import { resolveProofDocumentsChecklist, selectNewUploads, selectRulesForTab } from './proofDocumentsParams';
+import {
+  listDocsNeedingReupload,
+  resolveProofDocumentsChecklist,
+  selectNewUploads,
+  selectRulesForTab,
+} from './proofDocumentsParams';
+
+const REVERIFY_FAILED_MESSAGE = (lines: string[]) =>
+  `Quét lại giấy đã lưu không khớp thông tin mới:\n${lines.join('\n')}\nBấm "Đổi ảnh khác" ở ô đó để chụp/chọn lại.`;
 
 type ProofDocumentsRouteProp = RouteProp<RootStackParamList, 'ProofDocuments'>;
 
@@ -249,6 +257,7 @@ export const ProofDocumentsScreen: React.FC = () => {
         docType?: string;
         uploadedAt?: string;
         isReadable?: boolean;
+        needsReupload?: boolean;
       }
     >
   >({});
@@ -374,8 +383,11 @@ export const ProofDocumentsScreen: React.FC = () => {
           (docSpec.docType === 'STUDENT_DOCUMENT' && doc.docType === 'STUDENT_CARD')
       );
       if (matchingDoc) {
-        newUploadedKeys[docSpec.key] = true;
+        // Giấy nộp trước khi đổi thông tin nhân thân (isCurrent=false) không còn được tính → chưa coi là đã lưu
+        const stale = matchingDoc.isCurrent === false;
+        newUploadedKeys[docSpec.key] = !stale;
         newSelectedFiles[docSpec.key] = {
+          needsReupload: stale,
           name: (matchingDoc.fileUrl || '').split('/').pop() || docSpec.title,
           sizeText: 'Đã lưu trên máy chủ',
           type: matchingDoc.fileMimeType || 'image/jpeg',
@@ -584,6 +596,33 @@ export const ProofDocumentsScreen: React.FC = () => {
       setUploading(true);
       let uploadCount = 0;
 
+      // Giấy nộp trước khi đổi thông tin nhân thân: quét lại chính ảnh đã lưu theo thông tin mới
+      const reverifyFailures: string[] = [];
+      for (const doc of listDocsNeedingReupload(activeDocs, selectedFiles)) {
+        const stored = selectedFiles[doc.key];
+        try {
+          const res = await dependentDocumentApi.reuploadStoredDocument(dependentId, doc.docType, stored);
+          uploadCount++;
+          setUploadedKeys((prev) => ({ ...prev, [doc.key]: true }));
+          setSelectedFiles((prev) => ({
+            ...prev,
+            [doc.key]: {
+              ...prev[doc.key],
+              needsReupload: false,
+              docId: res?.docId ?? prev[doc.key]?.docId,
+              uploadedAt: res?.uploadedAt,
+            },
+          }));
+        } catch (e: any) {
+          reverifyFailures.push(`${doc.title}: ${e?.message || 'không khớp thông tin mới'}`);
+        }
+      }
+      if (reverifyFailures.length > 0) {
+        setUploading(false);
+        toast.error(REVERIFY_FAILED_MESSAGE(reverifyFailures), 'Minh chứng chưa khớp');
+        return;
+      }
+
       for (const [key, fileObj] of entriesToUpload) {
         const docType = activeDocs.find((d) => d.key === key)?.docType;
         if (!docType) continue;
@@ -650,74 +689,6 @@ export const ProofDocumentsScreen: React.FC = () => {
     } catch (err: any) {
       setUploading(false);
       toast.error(err?.message || 'Không thể tải lên giấy tờ minh chứng. Vui lòng thử lại.', 'Lỗi lưu giấy tờ');
-    }
-  };
-
-  // Nộp hồ sơ minh chứng lên Backend API
-  const handleUploadAll = async () => {
-    const activeDocKeys = activeDocs.map((d) => d.key);
-    const chosenEntries = selectNewUploads(selectedFiles, activeDocKeys);
-
-    if (chosenEntries.length === 0) {
-      const hasSaved = activeDocKeys.some((k) => selectedFiles[k]?.docId);
-      toast.warning(
-        hasSaved
-          ? 'Giấy tờ đã lưu trước đó vẫn được giữ. Bấm "Đổi ảnh khác" ở ô cần thay nếu muốn tải ảnh mới.'
-          : 'Vui lòng bấm vào ô khung bên dưới để chụp ảnh hoặc chọn tệp minh chứng.',
-        hasSaved ? 'Không có ảnh mới' : 'Chưa chọn minh chứng'
-      );
-      return;
-    }
-
-    const dependentId =
-      route.params?.dependentId ||
-      (route.params?.dependentData as any)?.id ||
-      selectedDependent?.id;
-
-    if (!dependentId) {
-      toast.warning('Không tìm thấy hồ sơ người phụ thuộc để tải lên.', 'Chưa có hồ sơ');
-      return;
-    }
-
-    if (!docsFromDb) {
-      toast.warning(RULES_NOT_LOADED_MESSAGE, 'Chưa có danh mục giấy tờ');
-      return;
-    }
-
-    try {
-      setUploading(true);
-      let lastRes: any = null;
-
-      // Upload từng tệp lên Backend API thật
-      for (const [key, fileObj] of chosenEntries) {
-        const docType = activeDocs.find((d) => d.key === key)?.docType;
-        if (!docType) continue;
-
-        const res = await dependentDocumentApi.uploadDocument(dependentId, docType, fileObj);
-        lastRes = res;
-        setUploadedKeys((prev) => ({ ...prev, [key]: true }));
-      }
-
-      const msg = lastRes?.isProfileComplete
-        ? 'Tải lên thành công! Hồ sơ minh chứng người phụ thuộc đã đủ điều kiện giảm trừ gia cảnh.'
-        : 'Tải lên thành công! Ảnh minh chứng đã được lưu trữ bảo mật trên hệ thống Tổng cục Thuế.';
-
-      const goHome = () => navigation.reset({ index: 0, routes: [{ name: 'Home' }] });
-
-      setDialog({
-        title: 'Tải lên thành công',
-        message: msg,
-        primaryLabel: 'Về trang chủ',
-        onPrimary: () => {
-          setDialog(null);
-          goHome();
-        },
-      });
-    } catch (err: any) {
-      const errMsg = err.response?.data?.message || 'Không thể tải lên tệp. Vui lòng thử lại sau.';
-      toast.error(errMsg, 'Lỗi tải lên');
-    } finally {
-      setUploading(false);
     }
   };
 
@@ -848,9 +819,15 @@ export const ProofDocumentsScreen: React.FC = () => {
                     <Text style={styles.selectedFileName} numberOfLines={1}>
                       {selectedFile.name}
                     </Text>
-                    <Text style={styles.selectedFileSize}>
-                      {isUploaded ? '✓ Đã lưu trên máy chủ' : `Kích thước: ${selectedFile.sizeText}`}
-                    </Text>
+                    {selectedFile.needsReupload ? (
+                      <Text style={[styles.selectedFileSize, styles.reuploadText]}>
+                        Thông tin nhân thân đã đổi: bấm "Lưu thông tin hồ sơ" để quét lại ảnh này.
+                      </Text>
+                    ) : (
+                      <Text style={styles.selectedFileSize}>
+                        {isUploaded ? '✓ Đã lưu trên máy chủ' : `Kích thước: ${selectedFile.sizeText}`}
+                      </Text>
+                    )}
 
                     {/* Hàng nút hành động: Xem ảnh lớn & Đổi ảnh */}
                     <View style={styles.docActionButtonsRow}>
@@ -1241,6 +1218,11 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#666666',
     marginBottom: 8,
+  },
+  reuploadText: {
+    color: theme.colors.warning,
+    textAlign: 'center',
+    fontWeight: '600',
   },
   docActionButtonsRow: {
     flexDirection: 'row',

@@ -23,6 +23,7 @@ import { HomeHeaderButton } from '../../components/navigation/HomeHeaderButton';
 import { useToast } from '../../components/ui/Toast';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { dependentDocumentApi } from '../../api/dependentDocumentApi';
+import { isBeforeBirthMonth } from './editEffectivePeriod';
 import { sanitizeUiMessage, toFriendlyErrorMessage } from '../../utils/friendlyError';
 import {
   applyTaxRegistrationOcrFill,
@@ -249,6 +250,13 @@ export const TaxRegistrationScreen: React.FC = () => {
 
     const birthDate = `${birthYear}-${birthMonth}-${birthDay}`;
     const effectiveFrom = effectiveFromMonth;
+    if (isBeforeBirthMonth(effectiveFrom, birthDate)) {
+      toast.warning(
+        `Tháng bắt đầu không được trước tháng sinh (${birthMonth}/${birthYear}).`,
+        'Thời gian hiệu lực'
+      );
+      return;
+    }
     const effectiveTo = hasEndDate ? `${endYear}-${endMonth}` : `${startYear}-12`;
 
     const mapped = mapUiGroupToBackendEnum(selectedGroupIdx, relationship);

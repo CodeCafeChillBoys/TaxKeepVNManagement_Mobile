@@ -18,6 +18,8 @@ export type RootStackParamList = {
     lockedCitizenId?: string;
   };
   TaxRegistration: { ocrDependentFill?: OcrDependentFill } | undefined;
+  /** Sửa thông tin hồ sơ NPT đã tạo (PUT /dependents/{id}) */
+  EditDependent: { dependentId: string };
   DependentSaved: {
     fullName: string;
     relationship: string;

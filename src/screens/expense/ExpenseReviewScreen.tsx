@@ -42,6 +42,7 @@ import {
   getGroupKeyFromDocTypeCode,
   getGroupMetadata,
   getDocumentTypeIcon,
+  isCharityDocType,
   isWithholdingDocType,
   requiresReimbursementConfirmation,
 } from './expenseGroupUtils';
@@ -190,9 +191,9 @@ export const ExpenseReviewScreen: React.FC = () => {
     [currentDocTypeCode, currentDocTypeName]
   );
 
-  // Ô xác nhận chưa bồi hoàn bảo hiểm chỉ hiển thị & áp dụng cho hóa đơn Y tế và Giáo dục
-  const showReimbursementConfirmation = useMemo(
-    () => requiresReimbursementConfirmation(currentDocTypeCode, currentDocTypeName),
+  // Loại hóa đơn / chứng từ Từ thiện không hiển thị mục Danh sách dịch vụ & Chi phí
+  const isCharity = useMemo(
+    () => isCharityDocType(currentDocTypeCode, currentDocTypeName),
     [currentDocTypeCode, currentDocTypeName]
   );
 
@@ -209,6 +210,36 @@ export const ExpenseReviewScreen: React.FC = () => {
   const [buyerName, setBuyerName] = useState<string>(initialData.buyerName || '');
   const [buyerIdCard, setBuyerIdCard] = useState<string>(initialData.buyerIdCard || '');
   const [buyerAddress, setBuyerAddress] = useState<string>(initialData.buyerAddress || '');
+
+  // Năm tính thuế hiệu lực của hóa đơn (ưu tiên ngày lập hóa đơn -> năm trích xuất -> kỳ tính thuế đang chọn)
+  const effectiveInvoiceTaxYear = useMemo(() => {
+    const cleanDate = invoiceDate.trim();
+    const isoMatch = cleanDate.match(/^(\d{4})[-/]\d{1,2}[-/]\d{1,2}$/);
+    if (isoMatch) {
+      const parsed = parseInt(isoMatch[1], 10);
+      if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    }
+    const vnMatch = cleanDate.match(/^\d{1,2}[-/]\d{1,2}[-/](\d{4})$/);
+    if (vnMatch) {
+      const parsed = parseInt(vnMatch[1], 10);
+      if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    }
+    const extracted = Number(initialData.extractedYear);
+    if (Number.isFinite(extracted) && extracted > 0) return extracted;
+    return activeTaxYear;
+  }, [invoiceDate, initialData.extractedYear, activeTaxYear]);
+
+  // Ô xác nhận chưa bồi hoàn bảo hiểm chỉ hiển thị & áp dụng cho hóa đơn Y tế và Giáo dục từ năm 2026 trở về sau
+  const showReimbursementConfirmation = useMemo(
+    () =>
+      requiresReimbursementConfirmation(
+        currentDocTypeCode,
+        currentDocTypeName,
+        effectiveInvoiceTaxYear,
+        systemConfigs
+      ),
+    [currentDocTypeCode, currentDocTypeName, effectiveInvoiceTaxYear, systemConfigs]
+  );
 
   // Form state riêng cho Hóa đơn thông thường
   const [paymentMethod, setPaymentMethod] = useState<string>(initialData.paymentMethod || 'Chuyển khoản');
@@ -1262,19 +1293,7 @@ export const ExpenseReviewScreen: React.FC = () => {
                   );
                 })}
               </Card>
-            ) : (
-              <Card style={[styles.card, styles.cardSuccess]}>
-                <View style={styles.cardHeader}>
-                  <Ionicons name="checkmark-done-circle-outline" size={15} color="#16A34A" />
-                  <Text style={[styles.cardHeaderTitle, { color: '#15803D' }]}>
-                    {isWithholding ? 'Chứng từ đáp ứng điều kiện quyết toán thuế' : 'Hóa đơn đáp ứng điều kiện giảm trừ thuế'}
-                  </Text>
-                </View>
-                <Text style={styles.successDesc}>
-                  Đúng kỳ tính thuế {incomeYear || initialData.extractedYear || new Date().getFullYear()}, thông tin pháp lý đầy đủ và minh bạch.
-                </Text>
-              </Card>
-            )}
+            ) : null}
 
             {/* PHẦN DÀNH RIÊNG CHO CHỨNG TỪ KHẤU TRỪ: Tóm tắt nghĩa vụ thuế TNCN & Đối chiếu */}
             {isWithholding ? (
@@ -1749,78 +1768,80 @@ export const ExpenseReviewScreen: React.FC = () => {
                   <FieldInput label="Hình thức thanh toán" value={paymentMethod} onChange={setPaymentMethod} placeholder="Chuyển khoản" required />
                 </Card>
 
-                {/* 5. Bảng kê chi tiết */}
-                <Card style={styles.card}>
-                  <View style={styles.cardHeaderRow}>
-                    <View style={styles.cardHeaderLeft}>
-                      <Ionicons name="list-outline" size={15} color="#475569" />
-                      <Text style={styles.cardHeaderTitle} numberOfLines={1}>
-                        Danh sách dịch vụ & Chi phí ({items.length})
-                      </Text>
-                    </View>
-                    {!isReadOnly && (
-                      <TouchableOpacity onPress={() => handleOpenItemModal()} style={styles.addItemBtn}>
-                        <Ionicons name="add" size={14} color="#fff" />
-                        <Text style={styles.addItemBtnText}>Thêm</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-
-                  {items.length === 0 ? (
-                    <Text style={styles.emptyItems}>
-                      {isReadOnly ? 'Không có dịch vụ nào.' : "Chưa có dịch vụ. Bấm 'Thêm' để bổ sung."}
-                    </Text>
-                  ) : (
-                    items.map((it, idx) => (
-                      <View key={idx} style={styles.itemRow}>
-                        <View style={styles.itemOrderBadge}>
-                          <Text style={styles.itemOrderText}>{it.itemOrder || idx + 1}</Text>
-                        </View>
-                        <View style={{ flex: 1, marginHorizontal: 10 }}>
-                          <Text style={styles.itemName}>{it.itemName}</Text>
-                          <Text style={styles.itemMeta}>
-                            {it.quantity} {it.unit || 'lần'} × {formatCurrencyVND(it.unitPrice)}
-                          </Text>
-                        </View>
-                        <View style={{ alignItems: 'flex-end' }}>
-                          <Text style={styles.itemAmount}>{formatCurrencyVND(it.totalPrice)}</Text>
-                          {!isReadOnly && (
-                            <View style={styles.itemActions}>
-                              <TouchableOpacity onPress={() => handleOpenItemModal(idx)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
-                                <Ionicons name="pencil-outline" size={14} color="#475569" />
-                              </TouchableOpacity>
-                              <TouchableOpacity onPress={() => handleDeleteItem(idx)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
-                                <Ionicons name="trash-outline" size={14} color="#EF4444" />
-                              </TouchableOpacity>
-                            </View>
-                          )}
-                        </View>
+                {/* 5. Bảng kê chi tiết (ẩn với chứng từ Từ thiện) */}
+                {!isCharity && (
+                  <Card style={styles.card}>
+                    <View style={styles.cardHeaderRow}>
+                      <View style={styles.cardHeaderLeft}>
+                        <Ionicons name="list-outline" size={15} color="#475569" />
+                        <Text style={styles.cardHeaderTitle} numberOfLines={1}>
+                          Danh sách dịch vụ & Chi phí ({items.length})
+                        </Text>
                       </View>
-                    ))
-                  )}
-
-                  {items.length > 0 && (
-                    <>
-                      <Separator style={{ marginVertical: 12 }} />
-                      <View style={styles.totalRow}>
-                        <Text style={styles.totalLabel}>Tổng các dòng:</Text>
-                        <Text style={styles.totalValue}>{formatCurrencyVND(itemsSum)}</Text>
-                      </View>
-                      <View style={[styles.totalRow, { marginTop: 4 }]}>
-                        <Text style={[styles.totalLabel, { color: '#8B1E1E', fontWeight: '700' }]}>Thực tế thanh toán:</Text>
-                        <Text style={[styles.totalValue, { color: '#8B1E1E', fontSize: 16 }]}>{formatCurrencyVND(totalAmount)}</Text>
-                      </View>
-                      {itemsSum !== totalAmount && (
-                        <View style={styles.diffNotice}>
-                          <Ionicons name="information-circle-outline" size={14} color="#D97706" />
-                          <Text style={styles.diffNoticeText}>
-                            Chênh lệch do chiết khấu, bồi thường bảo hiểm hoặc điều chỉnh thực tế.
-                          </Text>
-                        </View>
+                      {!isReadOnly && (
+                        <TouchableOpacity onPress={() => handleOpenItemModal()} style={styles.addItemBtn}>
+                          <Ionicons name="add" size={14} color="#fff" />
+                          <Text style={styles.addItemBtnText}>Thêm</Text>
+                        </TouchableOpacity>
                       )}
-                    </>
-                  )}
-                </Card>
+                    </View>
+
+                    {items.length === 0 ? (
+                      <Text style={styles.emptyItems}>
+                        {isReadOnly ? 'Không có dịch vụ nào.' : "Chưa có dịch vụ. Bấm 'Thêm' để bổ sung."}
+                      </Text>
+                    ) : (
+                      items.map((it, idx) => (
+                        <View key={idx} style={styles.itemRow}>
+                          <View style={styles.itemOrderBadge}>
+                            <Text style={styles.itemOrderText}>{it.itemOrder || idx + 1}</Text>
+                          </View>
+                          <View style={{ flex: 1, marginHorizontal: 10 }}>
+                            <Text style={styles.itemName}>{it.itemName}</Text>
+                            <Text style={styles.itemMeta}>
+                              {it.quantity} {it.unit || 'lần'} × {formatCurrencyVND(it.unitPrice)}
+                            </Text>
+                          </View>
+                          <View style={{ alignItems: 'flex-end' }}>
+                            <Text style={styles.itemAmount}>{formatCurrencyVND(it.totalPrice)}</Text>
+                            {!isReadOnly && (
+                              <View style={styles.itemActions}>
+                                <TouchableOpacity onPress={() => handleOpenItemModal(idx)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                                  <Ionicons name="pencil-outline" size={14} color="#475569" />
+                                </TouchableOpacity>
+                                <TouchableOpacity onPress={() => handleDeleteItem(idx)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                                  <Ionicons name="trash-outline" size={14} color="#EF4444" />
+                                </TouchableOpacity>
+                              </View>
+                            )}
+                          </View>
+                        </View>
+                      ))
+                    )}
+
+                    {items.length > 0 && (
+                      <>
+                        <Separator style={{ marginVertical: 12 }} />
+                        <View style={styles.totalRow}>
+                          <Text style={styles.totalLabel}>Tổng các dòng:</Text>
+                          <Text style={styles.totalValue}>{formatCurrencyVND(itemsSum)}</Text>
+                        </View>
+                        <View style={[styles.totalRow, { marginTop: 4 }]}>
+                          <Text style={[styles.totalLabel, { color: '#8B1E1E', fontWeight: '700' }]}>Thực tế thanh toán:</Text>
+                          <Text style={[styles.totalValue, { color: '#8B1E1E', fontSize: 16 }]}>{formatCurrencyVND(totalAmount)}</Text>
+                        </View>
+                        {itemsSum !== totalAmount && (
+                          <View style={styles.diffNotice}>
+                            <Ionicons name="information-circle-outline" size={14} color="#D97706" />
+                            <Text style={styles.diffNoticeText}>
+                              Chênh lệch do chiết khấu, bồi thường bảo hiểm hoặc điều chỉnh thực tế.
+                            </Text>
+                          </View>
+                        )}
+                      </>
+                    )}
+                  </Card>
+                )}
               </>
             )}
           </View>

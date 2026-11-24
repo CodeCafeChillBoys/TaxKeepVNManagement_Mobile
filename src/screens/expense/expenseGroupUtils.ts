@@ -26,15 +26,48 @@ export function isWithholdingDocType(code?: string | null, name?: string | null)
 }
 
 /**
+ * Kiểm tra xem loại hóa đơn / chứng từ có thuộc nhóm Từ thiện, nhân đạo, khuyến học hay không.
+ */
+export function isCharityDocType(code?: string | null, name?: string | null): boolean {
+  if (getGroupKeyFromDocTypeCode(code) === 'TO_TU_THIEN') return true;
+  if (name) {
+    const n = name.trim().toLowerCase();
+    if (
+      n.includes('từ thiện') ||
+      n.includes('nhân đạo') ||
+      n.includes('khuyến học') ||
+      n.includes('cứu trợ')
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Ô xác nhận "chưa được bồi hoàn từ bảo hiểm hoặc nguồn khác" chỉ áp dụng và hiển thị
- * cho các hóa đơn thuộc nhóm Y tế (TO_VIEN_PHI) và Giáo dục (TO_GIAO_DUC).
+ * cho các hóa đơn thuộc nhóm Y tế (TO_VIEN_PHI) và Giáo dục (TO_GIAO_DUC) từ năm tính thuế
+ * áp dụng luật mới (mặc định năm 2026 trở về sau; năm 2025 trở về trước không áp dụng).
  * Các loại hóa đơn / chứng từ còn lại (Từ thiện, Bảo hiểm, Khấu trừ thuế, Khác...) không áp dụng và ẩn trên FE.
  */
 export function requiresReimbursementConfirmation(
   code?: string | null,
-  name?: string | null
+  name?: string | null,
+  taxYear?: number | null,
+  systemConfigs?: Record<string, string>
 ): boolean {
   if (isWithholdingDocType(code, name)) return false;
+  if (taxYear != null) {
+    const parsedYear = Number(taxYear);
+    if (Number.isFinite(parsedYear) && parsedYear > 0) {
+      const newLawFromYear = parsePositiveConfigNumber(
+        systemConfigs,
+        'PIT_NEW_LAW_FROM_YEAR',
+        DEFAULT_NEW_LAW_FROM_YEAR
+      );
+      if (parsedYear < newLawFromYear) return false;
+    }
+  }
   const group = getGroupKeyFromDocTypeCode(code);
   if (group === 'TO_VIEN_PHI' || group === 'TO_GIAO_DUC') return true;
   if (name) {

@@ -648,6 +648,18 @@ function mapRuleForMode(
   return next;
 }
 
+const managedStyleRules = new WeakSet<object>();
+
+function isShallowStyleEqual(a: Record<string, any>, b: Record<string, any>): boolean {
+  const keysA = Object.keys(a);
+  const keysB = Object.keys(b);
+  if (keysA.length !== keysB.length) return false;
+  for (const key of keysA) {
+    if (a[key] !== b[key]) return false;
+  }
+  return true;
+}
+
 function normalizeStyleForDark(style: any, ruleHint?: string): any {
   if (!style) return style;
   if (Array.isArray(style)) {
@@ -660,6 +672,9 @@ function normalizeStyleForDark(style: any, ruleHint?: string): any {
     return changed ? mapped : style;
   }
   if (typeof style === 'object') {
+    // StyleSheet.create rules are already compiled & mapped per theme mode via applyGlobalThemeMode.
+    // Preserving the original object reference keeps react-native-web's staticStyleMap atomic CSS intact.
+    if (managedStyleRules.has(style)) return style;
     const hasColorKey =
       typeof style.backgroundColor === 'string' ||
       typeof style.color === 'string' ||
@@ -669,80 +684,121 @@ function normalizeStyleForDark(style: any, ruleHint?: string): any {
       typeof style.borderLeftColor === 'string' ||
       typeof style.borderRightColor === 'string';
     if (!hasColorKey) return style;
-    return mapRuleForMode(style, 'dark', ruleHint);
+    const mapped = mapRuleForMode(style, 'dark', ruleHint);
+    return isShallowStyleEqual(style, mapped) ? style : mapped;
   }
   return style;
 }
 
 function normalizePropsForDark(type: any, props: any): any {
-  if (currentThemeMode !== 'dark' || !props || typeof props !== 'object') {
+  if (
+    currentThemeMode !== 'dark' ||
+    !props ||
+    typeof props !== 'object' ||
+    typeof type === 'string' ||
+    typeof type === 'symbol'
+  ) {
     return props;
   }
 
-  const isTextInput =
-    typeof props.onChangeText === 'function' ||
-    props.placeholder !== undefined ||
-    type?.displayName === 'TextInput' ||
-    type?.name === 'TextInput';
-  const ruleHint = isTextInput ? 'inputField' : undefined;
+  try {
+    const isTextInput =
+      typeof props.onChangeText === 'function' ||
+      props.placeholder !== undefined ||
+      type?.displayName === 'TextInput' ||
+      type?.name === 'TextInput';
+    const ruleHint = isTextInput ? 'inputField' : undefined;
 
-  let nextProps: Record<string, any> | null = null;
+    let nextProps: Record<string, any> | null = null;
 
-  if (props.style) {
-    const mappedStyle = normalizeStyleForDark(props.style, ruleHint);
-    if (mappedStyle !== props.style) {
-      nextProps = { ...props, style: mappedStyle };
+    if (props.style) {
+      const mappedStyle = normalizeStyleForDark(props.style, ruleHint);
+      if (mappedStyle !== props.style) {
+        nextProps = { ...props, style: mappedStyle };
+      }
     }
-  }
 
-  if (typeof props.color === 'string') {
-    const mappedColor = mapTextColorForDark(props.color);
-    if (mappedColor !== props.color) {
-      nextProps = { ...(nextProps || props), color: mappedColor };
+    if (typeof props.color === 'string') {
+      const mappedColor = mapTextColorForDark(props.color);
+      if (mappedColor !== props.color) {
+        nextProps = { ...(nextProps || props), color: mappedColor };
+      }
     }
-  }
 
-  if (typeof props.placeholderTextColor === 'string') {
-    const mappedPlaceholder = mapTextColorForDark(props.placeholderTextColor);
-    const resolvedPlaceholder =
-      mappedPlaceholder === props.placeholderTextColor
-        ? DARK_THEME_COLORS.textPlaceholder
-        : mappedPlaceholder;
-    if (resolvedPlaceholder !== props.placeholderTextColor) {
-      nextProps = {
-        ...(nextProps || props),
-        placeholderTextColor: resolvedPlaceholder,
-      };
+    if (typeof props.placeholderTextColor === 'string') {
+      const mappedPlaceholder = mapTextColorForDark(props.placeholderTextColor);
+      const resolvedPlaceholder =
+        mappedPlaceholder === props.placeholderTextColor
+          ? DARK_THEME_COLORS.textPlaceholder
+          : mappedPlaceholder;
+      if (resolvedPlaceholder !== props.placeholderTextColor) {
+        nextProps = {
+          ...(nextProps || props),
+          placeholderTextColor: resolvedPlaceholder,
+        };
+      }
     }
-  }
 
-  return nextProps || props;
+    return nextProps || props;
+  } catch {
+    return props;
+  }
 }
 
-const originalCreate = StyleSheet.create.bind(StyleSheet);
-let isPatched = false;
+const THEME_PATCH_KEY = Symbol.for('taxkeep.theme.runtimePatch');
+const globalRef = globalThis as any;
 
-if (!isPatched) {
-  isPatched = true;
+type ThemePatchState = {
+  originalCreate: typeof StyleSheet.create;
+  normalizeProps: (type: any, props: any) => any;
+  createStyles: <T extends Record<string, any>>(styles: T) => T;
+};
+
+const existingPatchState: ThemePatchState | undefined = globalRef[THEME_PATCH_KEY];
+const originalCreate: typeof StyleSheet.create =
+  existingPatchState?.originalCreate || StyleSheet.create.bind(StyleSheet);
+
+function createManagedStyleSheet<T extends Record<string, any>>(styles: T): T {
+  const originalSnapshot: Record<string, any> = {};
+  const normalizedStyles: Record<string, any> = {};
+  for (const key of Object.keys(styles)) {
+    const val = (styles as Record<string, any>)[key];
+    originalSnapshot[key] = val && typeof val === 'object' ? { ...val } : val;
+    normalizedStyles[key] =
+      val && typeof val === 'object' ? mapRuleForMode(val, currentThemeMode, key) : val;
+  }
+
+  const created = originalCreate(normalizedStyles) as Record<string, any>;
+  const target: Record<string, any> = Object.isFrozen(created) ? { ...created } : created;
+  for (const key of Object.keys(target)) {
+    const rule = target[key];
+    if (rule && typeof rule === 'object') {
+      managedStyleRules.add(rule);
+    }
+  }
+  registeredStyleSheets.push({
+    target,
+    original: originalSnapshot,
+  });
+
+  return target as T;
+}
+
+if (existingPatchState) {
+  existingPatchState.normalizeProps = normalizePropsForDark;
+  existingPatchState.createStyles = createManagedStyleSheet;
+} else {
+  const patchState: ThemePatchState = {
+    originalCreate,
+    normalizeProps: normalizePropsForDark,
+    createStyles: createManagedStyleSheet,
+  };
+  globalRef[THEME_PATCH_KEY] = patchState;
+
   (StyleSheet as any).create = function patchedStyleSheetCreate<
     T extends Record<string, any>,
   >(styles: T): T {
-    const originalSnapshot: Record<string, any> = {};
-    const normalizedStyles: Record<string, any> = {};
-    for (const key of Object.keys(styles)) {
-      const val = (styles as Record<string, any>)[key];
-      originalSnapshot[key] = val && typeof val === 'object' ? { ...val } : val;
-      normalizedStyles[key] =
-        val && typeof val === 'object' ? mapRuleForMode(val, currentThemeMode, key) : val;
-    }
-
-    const created = originalCreate(normalizedStyles) as Record<string, any>;
-    registeredStyleSheets.push({
-      target: created,
-      original: originalSnapshot,
-    });
-
-    return created as T;
+    return patchState.createStyles(styles);
   };
 
   try {
@@ -750,12 +806,17 @@ if (!isPatched) {
     const React = require('react');
     if (React && typeof React.createElement === 'function') {
       const origCreateElement = React.createElement;
-      React.createElement = function themedCreateElement(
-        type: any,
-        props: any,
-        ...children: any[]
-      ) {
-        return origCreateElement(type, normalizePropsForDark(type, props), ...children);
+      React.createElement = function themedCreateElement(type: any, props: any) {
+        if (typeof type === 'string' || typeof type === 'symbol') {
+          return origCreateElement.apply(React, arguments as any);
+        }
+        const normalized = patchState.normalizeProps(type, props);
+        if (normalized === props) {
+          return origCreateElement.apply(React, arguments as any);
+        }
+        const args = Array.prototype.slice.call(arguments);
+        args[1] = normalized;
+        return origCreateElement.apply(React, args);
       };
     }
   } catch {}
@@ -766,13 +827,13 @@ if (!isPatched) {
     if (jsxRuntime && typeof jsxRuntime.jsx === 'function') {
       const origJsx = jsxRuntime.jsx;
       jsxRuntime.jsx = function themedJsx(type: any, props: any, key: any) {
-        return origJsx(type, normalizePropsForDark(type, props), key);
+        return origJsx(type, patchState.normalizeProps(type, props), key);
       };
     }
     if (jsxRuntime && typeof jsxRuntime.jsxs === 'function') {
       const origJsxs = jsxRuntime.jsxs;
       jsxRuntime.jsxs = function themedJsxs(type: any, props: any, key: any) {
-        return origJsxs(type, normalizePropsForDark(type, props), key);
+        return origJsxs(type, patchState.normalizeProps(type, props), key);
       };
     }
   } catch {}
@@ -792,7 +853,7 @@ if (!isPatched) {
       ) {
         return origJsxDEV(
           type,
-          normalizePropsForDark(type, props),
+          patchState.normalizeProps(type, props),
           key,
           isStaticChildren,
           source,
@@ -809,8 +870,18 @@ export function applyGlobalThemeMode(mode: 'light' | 'dark'): void {
   Object.assign(theme.colors, palette);
 
   for (const sheet of registeredStyleSheets) {
+    const nextRaw: Record<string, any> = {};
     for (const key of Object.keys(sheet.original)) {
-      sheet.target[key] = mapRuleForMode(sheet.original[key], mode, key);
+      const val = sheet.original[key];
+      nextRaw[key] = val && typeof val === 'object' ? mapRuleForMode(val, mode, key) : val;
+    }
+    const compiled = originalCreate(nextRaw) as Record<string, any>;
+    for (const key of Object.keys(compiled)) {
+      const rule = compiled[key];
+      if (rule && typeof rule === 'object') {
+        managedStyleRules.add(rule);
+      }
+      sheet.target[key] = rule;
     }
   }
 }

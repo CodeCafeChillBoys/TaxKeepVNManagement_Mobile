@@ -1,33 +1,52 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ViewStyle } from 'react-native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { useThemeStore } from '../../stores/useThemeStore';
-import { HomeHeaderButton } from '../navigation/HomeHeaderButton';
+import { useAuthStore } from '../../stores/useAuthStore';
+import { RootNavigationProp } from '../../navigation/types';
+
+const HIDDEN_HOME_ROUTES = new Set([
+  'Home',
+  'Login',
+  'Register',
+  'VerifyEmail',
+  'VerifyPending',
+  'ForgotPassword',
+  'ResetPassword',
+]);
 
 interface HeaderMotifProps {
   title: string;
   onBack?: () => void;
-  showFlag?: boolean;
+  showHome?: boolean;
   style?: ViewStyle;
 }
 
 export const HeaderMotif: React.FC<HeaderMotifProps> = ({
   title,
   onBack,
-  showFlag = true,
+  showHome = true,
   style,
 }) => {
+  const navigation = useNavigation<RootNavigationProp>();
+  const route = useRoute();
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   useThemeStore((s) => s.mode);
+
+  const canShowHome = showHome && isAuthenticated && !HIDDEN_HOME_ROUTES.has(route.name);
+
   return (
     <View style={[styles.container, style]}>
       <View style={styles.topRow}>
         {onBack ? (
           <TouchableOpacity
-            style={styles.backButton}
+            style={styles.iconButton}
             onPress={onBack}
             accessibilityRole="button"
             accessibilityLabel="Quay lại"
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
           >
             <Ionicons name="arrow-back" size={24} color={theme.colors.textPrimary} />
           </TouchableOpacity>
@@ -35,18 +54,19 @@ export const HeaderMotif: React.FC<HeaderMotifProps> = ({
           <View style={styles.placeholder} />
         )}
 
-        <Text style={styles.title}>{title}</Text>
+        <Text style={styles.title} numberOfLines={1}>{title}</Text>
 
-        {/* Nút về Trang chủ bên phải, cạnh cờ */}
-        <HomeHeaderButton style={styles.homeBtn} />
-
-        {showFlag ? (
-          <View style={styles.flagBadge}>
-            <View style={styles.flagRed}>
-              <Text style={styles.flagStar}>★</Text>
-            </View>
-            <Ionicons name="chevron-down" size={14} color={theme.colors.textSecondary} />
-          </View>
+        {canShowHome ? (
+          <TouchableOpacity
+            style={styles.iconButton}
+            onPress={() => navigation.reset({ index: 0, routes: [{ name: 'Home' }] })}
+            accessibilityRole="button"
+            accessibilityLabel="Về trang chủ"
+            testID="headerHomeBtn"
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+          >
+            <Ionicons name="home-outline" size={22} color={theme.colors.textPrimary} />
+          </TouchableOpacity>
         ) : (
           <View style={styles.placeholder} />
         )}
@@ -71,13 +91,16 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     minHeight: 44,
   },
-  homeBtn: { width: 36, height: 36 },
-  backButton: {
-    padding: 6,
+  iconButton: {
+    width: 36,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
     borderRadius: theme.borderRadius.full,
   },
   placeholder: {
     width: 36,
+    height: 36,
   },
   title: {
     ...theme.typography.titleMedium,
@@ -85,28 +108,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontWeight: '700',
     flex: 1,
-  },
-  flagBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 4,
-    borderRadius: theme.borderRadius.sm,
-    backgroundColor: theme.colors.surfaceSecondary,
-    gap: 2,
-  },
-  flagRed: {
-    width: 22,
-    height: 15,
-    backgroundColor: '#DA251D',
-    borderRadius: 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  flagStar: {
-    color: '#FFFF00',
-    fontSize: 10,
-    fontWeight: 'bold',
-    marginTop: -1,
+    paddingHorizontal: 8,
   },
   decorLine: {
     height: 2,

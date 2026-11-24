@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
   Platform,
   Modal,
   Image,
+  Linking,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
@@ -27,6 +28,7 @@ import {
   getDocTypeLabel,
   getFullFileUrl,
 } from '../../api/dependentDocumentApi';
+import { taxRuleApi, type TaxRuleSetDetailData } from '../../api/taxRuleApi';
 import {
   DocumentViewerModal,
   DocumentViewerItem,
@@ -34,6 +36,13 @@ import {
 import { isImageDocumentUri } from '../../components/common/imageZoomUtils';
 import { RootStackParamList, RootNavigationProp } from '../../navigation/types';
 import { resolveProofDocumentsChecklist, selectRulesForTab } from './proofDocumentsParams';
+import {
+  buildProofDocLawExplanation,
+  extractYearFromEffectiveMonth,
+  isSameProofDocType,
+  selectActiveRuleSetForYear,
+  type ProofDocLawModalData,
+} from './proofDocumentLawExplanation';
 import {
   areAllMandatoryStepsUploaded,
   canNavigateToProofStep,
@@ -51,7 +60,8 @@ interface LawDocItem {
   title: string;
   shortLabel: string;
   isMandatory: boolean;
-  lawExplanation?: string;
+  targetGroup?: string;
+  ruleDescription?: string;
 }
 
 interface LawGroupRequirement {
@@ -190,8 +200,6 @@ const LAW_GROUP_SPECS: LawGroupRequirement[] = [
         title: 'Giấy tờ chứng minh quan hệ',
         shortLabel: 'Chứng minh quan hệ',
         isMandatory: true,
-        lawExplanation:
-          '- Nếu là Vợ/Chồng: Giấy chứng nhận kết hôn.\n- Nếu là Cha mẹ đẻ: Giấy khai sinh của người nộp thuế.\n- Nếu là Cha mẹ vợ/chồng: Giấy kết hôn của NNT + Giấy khai sinh của vợ/chồng.\n- Nếu là Cha mẹ nuôi: Quyết định công nhận việc nuôi con nuôi.',
       },
       {
         key: 'g4_condition',
@@ -200,8 +208,6 @@ const LAW_GROUP_SPECS: LawGroupRequirement[] = [
         title: 'Giấy tờ chứng minh điều kiện giảm trừ',
         shortLabel: 'Điều kiện giảm trừ',
         isMandatory: false,
-        lawExplanation:
-          '- Nếu ngoài độ tuổi lao động: Bản cam kết không có thu nhập (hoặc thu nhập dưới ngưỡng luật định).\n- Nếu trong độ tuổi lao động: Giấy xác nhận khuyết tật hoặc Kết luận giám định mất khả năng lao động.',
       },
     ],
   },
@@ -243,8 +249,6 @@ const LAW_GROUP_SPECS: LawGroupRequirement[] = [
         title: 'Giấy tờ điều kiện lao động',
         shortLabel: 'Điều kiện lao động',
         isMandatory: false,
-        lawExplanation:
-          '- Nếu trong độ tuổi lao động: Giấy xác nhận khuyết tật / mất khả năng lao động.\n- Nếu ngoài độ tuổi lao động: Bản cam kết không có thu nhập hợp lệ.',
       },
     ],
   },
@@ -311,10 +315,9 @@ export const ProofDocumentsScreen: React.FC = () => {
     docType: string;
   } | null>(null);
   const [lawModalVisible, setLawModalVisible] = useState<boolean>(false);
-  const [lawModalData, setLawModalData] = useState<{
-    title: string;
-    content: string;
-  } | null>(null);
+  const [lawModalDoc, setLawModalDoc] = useState<LawDocItem | null>(null);
+  const [activeTaxRuleDetail, setActiveTaxRuleDetail] = useState<TaxRuleSetDetailData | null>(null);
+  const [loadingTaxRules, setLoadingTaxRules] = useState<boolean>(false);
 
   const [allRules, setAllRules] = useState<DependentDocumentRuleItem[]>([]);
   const [dynamicDocs, setDynamicDocs] = useState<LawDocItem[] | null>(null);
@@ -340,6 +343,7 @@ export const ProofDocumentsScreen: React.FC = () => {
   useEffect(() => {
     void loadInitialData();
     void loadRules();
+    void loadActiveTaxRules();
   }, []);
 
   const loadRules = async () => {
@@ -353,8 +357,37 @@ export const ProofDocumentsScreen: React.FC = () => {
     }
   };
 
+  // Tải bộ Quy tắc thuế đang hiệu lực do Admin cấu hình để giải thích lý do & căn cứ pháp lý động (không hard code)
+  const loadActiveTaxRules = async () => {
+    try {
+      setLoadingTaxRules(true);
+      const preferredYear = extractYearFromEffectiveMonth(
+        (route.params?.dependentData as any)?.effectiveFromMonth
+      );
+      const ruleSets = await taxRuleApi.getAllRuleSets();
+      const chosen = selectActiveRuleSetForYear(ruleSets, preferredYear);
+      if (!chosen?.ruleSetId) return;
+      const detail = await taxRuleApi.getRuleSetDetail(chosen.ruleSetId);
+      if (isMountedRef.current) {
+        setActiveTaxRuleDetail(detail);
+      }
+    } catch (err) {
+      if (__DEV__) console.warn('loadActiveTaxRules err:', err);
+    } finally {
+      if (isMountedRef.current) {
+        setLoadingTaxRules(false);
+      }
+    }
+  };
+
   // Cập nhật danh sách tài liệu động theo quy tắc từ Backend API
   useEffect(() => {
+    const depGroupCode =
+      (route.params?.dependentData as any)?.groupCode ??
+      (route.params?.dependentData as any)?.currentGroup ??
+      currentGroupSpec.code;
+    const filteredForLookup = selectRulesForTab(allRules, selectedGroupIdx, depGroupCode);
+
     const fromPatch = resolveProofDocumentsChecklist({
       requiredDocuments: route.params?.requiredDocuments,
       fallbackDocTypes: [],
@@ -362,14 +395,19 @@ export const ProofDocumentsScreen: React.FC = () => {
     if (fromPatch.length > 0) {
       const docs: LawDocItem[] = fromPatch.map((docType, idx) => {
         const letter = String.fromCharCode(97 + idx);
-        const label = getDocTypeLabel(docType);
+        const matchedRule =
+          filteredForLookup.find((r) => isSameProofDocType(r.docType, docType)) ||
+          allRules.find((r) => isSameProofDocType(r.docType, docType));
+        const label = getDocTypeLabel(docType, matchedRule?.docName);
         return {
           key: `patch_${docType.toLowerCase()}_${idx}`,
           code: letter,
           docType,
           title: label,
           shortLabel: label,
-          isMandatory: true,
+          isMandatory: matchedRule ? Boolean(matchedRule.isMandatory) : true,
+          targetGroup: matchedRule?.targetGroup || depGroupCode,
+          ruleDescription: matchedRule?.description || undefined,
         };
       });
       setDynamicDocs(docs);
@@ -379,11 +417,7 @@ export const ProofDocumentsScreen: React.FC = () => {
     if (allRules.length === 0) return;
 
     // Ô upload lấy hoàn toàn từ rule DB theo nhóm thật của NPT (vd PARENT_RETIRED)
-    const filteredRules = selectRulesForTab(
-      allRules,
-      selectedGroupIdx,
-      (route.params?.dependentData as any)?.groupCode ?? (route.params?.dependentData as any)?.currentGroup
-    );
+    const filteredRules = filteredForLookup;
 
     if (filteredRules.length === 0) {
       setDynamicDocs(null);
@@ -400,12 +434,13 @@ export const ProofDocumentsScreen: React.FC = () => {
           title: label,
           shortLabel: label,
           isMandatory: Boolean(rule.isMandatory),
-          lawExplanation: rule.description || undefined,
+          targetGroup: rule.targetGroup || depGroupCode,
+          ruleDescription: rule.description || undefined,
         };
       });
       setDynamicDocs(docs);
     }
-  }, [allRules, selectedGroupIdx, route.params?.dependentData, route.params?.requiredDocuments]);
+  }, [allRules, selectedGroupIdx, route.params?.dependentData, route.params?.requiredDocuments, currentGroupSpec.code]);
 
   // Tự động đồng bộ hóa tài liệu từ máy chủ (serverDocs) vào các bước
   useEffect(() => {
@@ -499,10 +534,30 @@ export const ProofDocumentsScreen: React.FC = () => {
     serverProfileComplete
   );
 
-  const handleOpenLawModal = (title: string, content: string) => {
-    setLawModalData({ title, content });
+  const handleOpenLawModal = (doc: LawDocItem) => {
+    setLawModalDoc(doc);
     setLawModalVisible(true);
+    if (!activeTaxRuleDetail && !loadingTaxRules) {
+      void loadActiveTaxRules();
+    }
   };
+
+  const resolvedLawModalData: ProofDocLawModalData | null = lawModalDoc
+    ? buildProofDocLawExplanation({
+        docType: lawModalDoc.docType,
+        docTitle: lawModalDoc.title,
+        isMandatory: lawModalDoc.isMandatory,
+        targetGroup:
+          lawModalDoc.targetGroup ||
+          (route.params?.dependentData as any)?.groupCode ||
+          (route.params?.dependentData as any)?.currentGroup ||
+          selectedDependent?.currentGroup ||
+          currentGroupSpec.code,
+        groupIndex: selectedGroupIdx,
+        ruleDescription: lawModalDoc.ruleDescription,
+        taxRuleDetail: activeTaxRuleDetail,
+      })
+    : null;
 
   const assignPickedFile = (docKey: string, file: SelectedDocFile) => {
     setSelectedFiles((prev) => ({
@@ -1004,17 +1059,15 @@ export const ProofDocumentsScreen: React.FC = () => {
                 <Text style={styles.docFieldLabel}>{currentDoc.title}</Text>
               </View>
 
-              {currentDoc.lawExplanation ? (
-                <TouchableOpacity
-                  style={styles.exclamationIconBtn}
-                  onPress={() => handleOpenLawModal(currentDoc.title, currentDoc.lawExplanation!)}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Xem quy định cho ${currentDoc.title}`}
-                  testID={`btnLawExclamation_${currentDoc.key}`}
-                >
-                  <Ionicons name="alert-circle-outline" size={22} color="#007AFF" />
-                </TouchableOpacity>
-              ) : null}
+              <TouchableOpacity
+                style={styles.exclamationIconBtn}
+                onPress={() => handleOpenLawModal(currentDoc)}
+                accessibilityRole="button"
+                accessibilityLabel={`Xem lý do và quy định pháp luật cho ${currentDoc.title}`}
+                testID={`btnLawExclamation_${currentDoc.key}`}
+              >
+                <Ionicons name="alert-circle-outline" size={22} color="#007AFF" />
+              </TouchableOpacity>
             </View>
 
             {/* Banner lỗi cụ thể từ BE cho chứng từ này */}
@@ -1341,7 +1394,7 @@ export const ProofDocumentsScreen: React.FC = () => {
         </TouchableOpacity>
       </Modal>
 
-      {/* Modal hiển thị quy định chi tiết của luật */}
+      {/* Modal hiển thị lý do cần nộp chứng từ & căn cứ Quy tắc thuế động từ Admin */}
       <Modal
         visible={lawModalVisible}
         transparent
@@ -1358,9 +1411,16 @@ export const ProofDocumentsScreen: React.FC = () => {
               <View style={styles.lawModalIconCircle}>
                 <Ionicons name="alert-circle" size={24} color="#007AFF" />
               </View>
-              <Text style={styles.lawModalTitle} numberOfLines={2}>
-                {lawModalData?.title || 'Quy định pháp luật'}
-              </Text>
+              <View style={styles.lawModalTitleWrap}>
+                <Text style={styles.lawModalTitle} numberOfLines={2}>
+                  {resolvedLawModalData?.title || 'Quy định chứng từ minh chứng'}
+                </Text>
+                {resolvedLawModalData ? (
+                  <Text style={styles.lawModalStatusSub}>
+                    {resolvedLawModalData.isMandatory ? 'Chứng từ bắt buộc' : 'Chứng từ tùy chọn'}
+                  </Text>
+                ) : null}
+              </View>
               <TouchableOpacity
                 onPress={() => setLawModalVisible(false)}
                 style={styles.lawModalCloseBtn}
@@ -1374,11 +1434,87 @@ export const ProofDocumentsScreen: React.FC = () => {
             <View style={styles.lawModalDivider} />
 
             <ScrollView style={styles.lawModalBody} showsVerticalScrollIndicator={false}>
-              {lawModalData?.content.split('\n').map((line, idx) => (
-                <View key={idx} style={styles.lawBulletRow}>
-                  <Text style={styles.lawBulletText}>{line.trim()}</Text>
+              {loadingTaxRules && !resolvedLawModalData?.hasDynamicData ? (
+                <View style={styles.lawLoadingBox}>
+                  <ActivityIndicator size="small" color={theme.colors.primary} />
+                  <Text style={styles.lawLoadingText}>
+                    Đang tải quy tắc thuế hiện hành từ hệ thống...
+                  </Text>
                 </View>
-              ))}
+              ) : resolvedLawModalData?.hasDynamicData ? (
+                <>
+                  {resolvedLawModalData.reasonText ? (
+                    <View style={styles.lawSectionBox}>
+                      <Text style={styles.lawSectionLabel}>Lý do cần nộp chứng từ</Text>
+                      {resolvedLawModalData.reasonText.split('\n').map((line, idx) => (
+                        <Text key={idx} style={styles.lawReasonText}>
+                          {line.trim()}
+                        </Text>
+                      ))}
+                    </View>
+                  ) : null}
+
+                  {resolvedLawModalData.groupConditions.length > 0 ? (
+                    <View style={styles.lawSectionBlock}>
+                      <Text style={styles.lawSectionLabel}>
+                        {resolvedLawModalData.dependentGroupName
+                          ? `Điều kiện nhóm: ${resolvedLawModalData.dependentGroupName}`
+                          : 'Điều kiện áp dụng theo Quy tắc thuế'}
+                      </Text>
+                      {resolvedLawModalData.groupConditions.map((cond, idx) => (
+                        <View key={idx} style={styles.lawBulletRow}>
+                          <Text style={styles.lawBulletDot}>•</Text>
+                          <Text style={styles.lawBulletText}>{cond}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  ) : null}
+
+                  {resolvedLawModalData.ruleSetLabel ||
+                  resolvedLawModalData.legalBasis ||
+                  resolvedLawModalData.deductionAmountLabel ? (
+                    <View style={styles.lawLegalFooterBox}>
+                      <Text style={styles.lawSectionLabel}>Căn cứ Quy tắc thuế đang áp dụng</Text>
+                      {resolvedLawModalData.ruleSetLabel ? (
+                        <Text style={styles.lawMetaText}>{resolvedLawModalData.ruleSetLabel}</Text>
+                      ) : null}
+                      {resolvedLawModalData.effectiveRangeLabel ? (
+                        <Text style={styles.lawMetaSubText}>
+                          {resolvedLawModalData.effectiveRangeLabel}
+                        </Text>
+                      ) : null}
+                      {resolvedLawModalData.legalBasis ? (
+                        <Text style={styles.lawMetaText}>
+                          Văn bản: {resolvedLawModalData.legalBasis}
+                        </Text>
+                      ) : null}
+                      {resolvedLawModalData.deductionAmountLabel ? (
+                        <Text style={styles.lawMetaHighlight}>
+                          Mức giảm trừ NPT: {resolvedLawModalData.deductionAmountLabel}
+                        </Text>
+                      ) : null}
+                      {resolvedLawModalData.sourceUrl ? (
+                        <TouchableOpacity
+                          style={styles.lawSourceLinkBtn}
+                          onPress={() => {
+                            if (resolvedLawModalData.sourceUrl) {
+                              void Linking.openURL(resolvedLawModalData.sourceUrl);
+                            }
+                          }}
+                          activeOpacity={0.75}
+                        >
+                          <Ionicons name="open-outline" size={14} color="#007AFF" />
+                          <Text style={styles.lawSourceLinkText}>Xem văn bản pháp luật gốc</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+                  ) : null}
+                </>
+              ) : (
+                <Text style={styles.lawEmptyText}>
+                  Chưa có mô tả chi tiết cho chứng từ này trong bộ Quy tắc thuế đang áp dụng của hệ thống.
+                </Text>
+              )}
             </ScrollView>
 
             <TouchableOpacity
@@ -1953,11 +2089,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  lawModalTitle: {
+  lawModalTitleWrap: {
     flex: 1,
+  },
+  lawModalTitle: {
     fontSize: 14,
     fontWeight: '700',
     color: '#1A1A1A',
+  },
+  lawModalStatusSub: {
+    fontSize: 11.5,
+    color: '#64748B',
+    marginTop: 2,
   },
   lawModalCloseBtn: {
     padding: 4,
@@ -1968,15 +2111,99 @@ const styles = StyleSheet.create({
     marginVertical: 12,
   },
   lawModalBody: {
-    maxHeight: 260,
+    maxHeight: 320,
     marginBottom: 16,
   },
+  lawLoadingBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 12,
+  },
+  lawLoadingText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#475569',
+  },
+  lawSectionBox: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 12,
+    marginBottom: 12,
+  },
+  lawSectionBlock: {
+    marginBottom: 12,
+  },
+  lawLegalFooterBox: {
+    backgroundColor: '#FAF5EC',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E6D5B8',
+    padding: 12,
+    marginBottom: 4,
+  },
+  lawSectionLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#8B1E1E',
+    marginBottom: 6,
+  },
+  lawReasonText: {
+    fontSize: 13.5,
+    color: '#1E293B',
+    lineHeight: 20,
+  },
   lawBulletRow: {
-    marginBottom: 8,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 6,
+  },
+  lawBulletDot: {
+    fontSize: 13,
+    color: '#8B1E1E',
+    fontWeight: '700',
+    marginRight: 6,
+    lineHeight: 19,
   },
   lawBulletText: {
+    flex: 1,
     fontSize: 13,
     color: '#2C3E50',
+    lineHeight: 19,
+  },
+  lawMetaText: {
+    fontSize: 12.5,
+    color: '#334155',
+    lineHeight: 18,
+    marginBottom: 3,
+  },
+  lawMetaSubText: {
+    fontSize: 11.5,
+    color: '#64748B',
+    marginBottom: 4,
+  },
+  lawMetaHighlight: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#8B1E1E',
+    marginTop: 2,
+  },
+  lawSourceLinkBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginTop: 8,
+  },
+  lawSourceLinkText: {
+    fontSize: 12.5,
+    fontWeight: '600',
+    color: '#007AFF',
+  },
+  lawEmptyText: {
+    fontSize: 13,
+    color: '#64748B',
     lineHeight: 19,
   },
   lawModalConfirmBtn: {

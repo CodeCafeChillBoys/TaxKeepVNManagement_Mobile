@@ -95,7 +95,11 @@ export const DependentDetailScreen: React.FC = () => {
     if (!isRefresh) setLoading(true);
     setLoadError(null);
     try {
-      const data = await dependentDocumentApi.getDependentById(dependentId);
+      // getRules nạp tên giấy tờ (docName) từ DB để nhãn tài liệu đã nộp không hiện mã thô
+      const [data] = await Promise.all([
+        dependentDocumentApi.getDependentById(dependentId),
+        dependentDocumentApi.getRules(),
+      ]);
       if (!isMountedRef.current) return;
       setDetail(data);
     } catch (err: unknown) {

@@ -1,7 +1,12 @@
-import { Platform } from 'react-native';
 import { apiClient, storageHelper } from './apiClient';
 import { config } from '../constants/config';
 import { groupCodeToTitle } from '../screens/dependent/dependentGroupUtils';
+import {
+  getDocTypeLabel,
+  registerDocNames,
+  extractUploadErrorMessage,
+  resolveUploadFileName,
+} from './dependentDocHelpers';
 
 export interface DependentItem {
   id: string;
@@ -55,33 +60,14 @@ export interface DependentDocumentRuleItem {
   targetGroup: string;
   docType: string;
   isMandatory: boolean;
+  docName?: string | null;
   description?: string;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
 }
 
-export const DOC_TYPE_OPTIONS = [
-  { value: 'BIRTH_CERTIFICATE', label: 'Giấy khai sinh (Bản sao)' },
-  { value: 'CITIZEN_CARD', label: 'Thẻ Căn cước / CCCD' },
-  { value: 'CITIZEN_ID', label: 'Căn cước công dân (Bản sao)' },
-  { value: 'STUDENT_DOCUMENT', label: 'Thẻ sinh viên / Giấy xác nhận trường' },
-  { value: 'STUDENT_CARD', label: 'Thẻ HSSV / Giấy xác nhận trường' },
-  { value: 'DISABILITY_OR_INCAPACITY_CERT', label: 'Giấy xác nhận khuyết tật / mất NLHV dân sự' },
-  { value: 'DISABILITY_CERTIFICATE', label: 'Giấy xác nhận khuyết tật' },
-  { value: 'MARRIAGE_CERTIFICATE', label: 'Giấy chứng nhận kết hôn' },
-  { value: 'LABOR_INCAPACITY_DOC', label: 'Giấy tờ chứng minh suy giảm khả năng LĐ (≥81%)' },
-  { value: 'TAXPAYER_BIRTH_CERT', label: 'Giấy khai sinh của NNT (chứng minh quan hệ)' },
-  { value: 'SPOUSE_BIRTH_CERT', label: 'Giấy khai sinh của vợ/chồng (chứng minh quan hệ)' },
-  { value: 'RELATIONSHIP_CERTIFICATE', label: 'Giấy tờ chứng minh quan hệ (Hộ khẩu)' },
-  { value: 'SUPPORT_COMMITMENT_FORM', label: 'Bản cam kết nuôi dưỡng trực tiếp' },
-  { value: 'OTHER', label: 'Giấy tờ minh chứng hợp pháp khác' },
-];
-
-export const getDocTypeLabel = (docType: string): string => {
-  const found = DOC_TYPE_OPTIONS.find((opt) => opt.value === docType.toUpperCase());
-  return found ? found.label : docType;
-};
+export { DOC_TYPE_OPTIONS, getDocTypeLabel } from './dependentDocHelpers';
 
 export const getGroupTitle = (currentGroup?: string): string =>
   groupCodeToTitle(currentGroup);
@@ -229,23 +215,18 @@ export const dependentDocumentApi = {
     if (docType === 'STUDENT_DOCUMENT') normalizedDocType = 'STUDENT_CARD';
     formData.append('DocType', normalizedDocType);
 
-    const isRealFileUri =
-      fileObj.uri &&
-      (Platform.OS === 'web' ||
-        fileObj.uri.startsWith('content://') ||
-        fileObj.uri.startsWith('file:///data') ||
-        fileObj.uri.startsWith('file:///storage') ||
-        fileObj.uri.startsWith('file:///var') ||
-        fileObj.uri.startsWith('http'));
-
+    const fileName = resolveUploadFileName(fileObj.name, fileObj.uri, fileObj.type);
     if (fileObj.blob) {
-      formData.append('File', fileObj.blob, fileObj.name);
-    } else if (isRealFileUri) {
+      formData.append('File', fileObj.blob, fileName);
+    } else if (fileObj.uri) {
       formData.append('File', {
         uri: fileObj.uri,
-        name: fileObj.name,
+        name: fileName,
         type: fileObj.type || 'image/jpeg',
       } as any);
+    } else {
+      // Trước đây gửi request không có file rồi nhận lỗi chung từ BE
+      throw new Error('Không đọc được tệp đã chọn. Vui lòng chụp hoặc chọn lại tệp minh chứng.');
     }
 
     let result: UploadDocumentResponse;
@@ -272,12 +253,10 @@ export const dependentDocumentApi = {
         data?.errorCode ||
         data?.errors?.errorCode ||
         (isTimeout ? 'TIMEOUT' : undefined);
-      const rawMessage =
-        data?.message ||
-        data?.errors?.File?.[0] ||
-        data?.errors?.DocType?.[0] ||
-        err?.message ||
-        'Không thể tải lên giấy tờ minh chứng.';
+      const rawMessage = extractUploadErrorMessage(
+        data,
+        err?.message || 'Không thể tải lên giấy tờ minh chứng.'
+      );
       const wrappedError: any = new Error(
         isTimeout
           ? 'Quá thời gian đọc thông tin giấy tờ. Vui lòng chụp lại ảnh rõ nét, đủ sáng và thử tải lên lại.'
@@ -317,6 +296,22 @@ export const dependentDocumentApi = {
     };
   },
 
+  // Nhóm NPT đang có rule active trong DB: GET /api/v1/dependents/groups?relationship=PARENT
+  getGroups: async (relationship?: string): Promise<string[]> => {
+    try {
+      const res = await apiClient.get<any>('/api/v1/dependents/groups', {
+        params: relationship ? { relationship } : undefined,
+      });
+      const items = res.data?.data ?? res.data;
+      return Array.isArray(items) ? items.filter((g: unknown) => typeof g === 'string') : [];
+    } catch (err: any) {
+      if (__DEV__) {
+        console.warn('getGroups API error:', err?.response?.data || err?.message);
+      }
+      return [];
+    }
+  },
+
   // Lấy danh sách quy tắc giấy tờ từ Backend API: GET /api/v1/dependent-rules
   getRules: async (targetGroup?: string): Promise<DependentDocumentRuleItem[]> => {
     try {
@@ -326,6 +321,7 @@ export const dependentDocumentApi = {
       const res = await apiClient.get<any>(`/api/v1/dependent-rules${query}`);
       const items = res.data?.data?.items || res.data?.data || res.data;
       if (Array.isArray(items)) {
+        registerDocNames(items);
         return items;
       }
       return [];

@@ -173,7 +173,7 @@ export const LawConditionsScreen: React.FC = () => {
               ...sec,
               docs: matchedRules.map((r, i) => ({
                 code: String.fromCharCode(97 + i),
-                text: `${r.description || getDocTypeLabel(r.docType)}${
+                text: `${r.description || getDocTypeLabel(r.docType, r.docName)}${
                   r.isMandatory ? ' (Bắt buộc)' : ' (Tùy chọn)'
                 }`,
               })),

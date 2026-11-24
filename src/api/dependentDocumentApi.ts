@@ -2,7 +2,8 @@ import { Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import { apiClient, storageHelper } from './apiClient';
 import { config } from '../constants/config';
-import { groupCodeToTitle } from '../screens/dependent/dependentGroupUtils';
+import { groupName } from '../screens/dependent/dependentGroupUtils';
+import { getCachedCatalog } from './dependentCatalogStore';
 import {
   getDocTypeLabel,
   registerDocNames,
@@ -64,15 +65,43 @@ export interface DependentDocumentRuleItem {
   isMandatory: boolean;
   docName?: string | null;
   description?: string;
+  /** Các rule cùng targetGroup và cùng alternativeGroup: chỉ cần nộp 1. */
+  alternativeGroup?: string | null;
+  source?: string;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
 }
 
+/** Danh mục quan hệ / nhóm NPT đang active (GET /api/v1/dependents/catalog). */
+export interface CatalogRelationship {
+  code: string;
+  name: string;
+  displayOrder: number;
+}
+
+export interface CatalogGroup {
+  code: string;
+  name: string;
+  relationshipCode?: string | null;
+  minAge?: number | null;
+  maxAge?: number | null;
+  requireDisabled: boolean;
+  requireStudying: boolean;
+  level: number;
+  displayOrder: number;
+}
+
+export interface DependentCatalog {
+  relationships: CatalogRelationship[];
+  groups: CatalogGroup[];
+}
+
 export { DOC_TYPE_OPTIONS, getDocTypeLabel } from './dependentDocHelpers';
 
+/** Nhãn nhóm theo catalog đã cache (màn NPT nạp catalog qua useDependentCatalog). */
 export const getGroupTitle = (currentGroup?: string): string =>
-  groupCodeToTitle(currentGroup);
+  groupName(getCachedCatalog(), currentGroup);
 
 export const getFullFileUrl = (fileUrl?: string): string => {
   if (!fileUrl) return '';
@@ -231,7 +260,7 @@ export const dependentDocumentApi = {
           id: item.dependentId || item.id,
           fullName: item.fullName || item.name || 'Người phụ thuộc',
           birthDate: (item.birthDate || '').split('T')[0],
-          currentGroup: item.currentGroup || 'CHILD_UNDER_18',
+          currentGroup: item.currentGroup || '',
           groupTitle: item.groupTitle || getGroupTitle(item.currentGroup),
           isProfileComplete: Boolean(item.isProfileComplete),
           requiredDocs: item.requiredDocuments || item.requiredDocs || ['BIRTH_CERTIFICATE'],
@@ -419,6 +448,17 @@ export const dependentDocumentApi = {
     return {
       ...result,
       fileUrl: getFullFileUrl(result.fileUrl),
+    };
+  },
+
+  // Danh mục quan hệ + nhóm NPT đang active: GET /api/v1/dependents/catalog.
+  // Lỗi mạng thì ném lỗi để màn hình báo và cho thử lại (không có danh sách dự phòng).
+  getCatalog: async (): Promise<DependentCatalog> => {
+    const res = await apiClient.get<any>('/api/v1/dependents/catalog');
+    const data = res.data?.data ?? res.data;
+    return {
+      relationships: Array.isArray(data?.relationships) ? data.relationships : [],
+      groups: Array.isArray(data?.groups) ? data.groups : [],
     };
   },
 

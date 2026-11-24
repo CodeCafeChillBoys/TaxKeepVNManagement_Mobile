@@ -5,6 +5,7 @@ describe('apiErrorCatalog', () => {
   it('đổi mã tiếng Anh sang câu tiếng Việt', () => {
     expect(messageForErrorCode('SLUG_ALREADY_EXISTS')).toContain('Mã gói');
     expect(messageForErrorCode('InvalidTaxYear')).toContain('Năm tính thuế');
+    expect(messageForErrorCode('RULES_NOT_CONFIGURED')).toContain('chưa được cấu hình danh mục giấy tờ');
   });
 
   it('giữ câu tiếng Việt của BE khi có số liệu cụ thể', () => {

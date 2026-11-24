@@ -1,54 +1,56 @@
 /**
  * Eligibility: tuổi tại ngày bắt đầu hiệu lực → lọc quan hệ / nhóm NPT.
- * Grill Q1–Q12 (2026-09-20).
+ * Grill Q1–Q12 (2026-09-20). Quan hệ và nhóm lấy từ catalog BE, tab "Nhóm 1–5" tính qua uiTabForGroup.
  */
 
-import { groupCodeToIndex, humanizeGroupCodes } from './dependentGroupUtils';
+import type { CatalogGroup, DependentCatalog } from '../../api/dependentDocumentApi';
+import { groupsForRelationship, uiTabForCatalogGroup } from './dependentGroupUtils';
 
-export type RelationshipCode = 'CHILD' | 'SPOUSE' | 'PARENT' | 'OTHER_DEPENDENT';
+export type RelationshipCode = string;
+
+type MaybeCatalog = DependentCatalog | null | undefined;
 
 /** UI group index 0..4 (Nhóm 1..5). */
 export type ConditionGroupIndex = 0 | 1 | 2 | 3 | 4;
 
-export const RELATIONSHIP_OPTIONS = [
-  { value: 'CHILD' as const, label: 'Con đẻ, con nuôi, con riêng' },
-  { value: 'SPOUSE' as const, label: 'Vợ hoặc Chồng' },
-  { value: 'PARENT' as const, label: 'Cha mẹ đẻ, cha mẹ vợ/chồng, cha mẹ nuôi' },
-  { value: 'OTHER_DEPENDENT' as const, label: 'Cá nhân khác không nơi nương tựa' },
-];
-
+/** Tiêu đề / mô tả 5 tab theo luật (nội dung luật, không phải mã nhóm). */
 export const CONDITION_GROUP_OPTIONS = [
   {
     index: 0 as ConditionGroupIndex,
-    code: 'CHILD_UNDER_18',
     title: 'Nhóm 1: Con dưới 18 tuổi',
     subtitle: 'Độ tuổi tại ngày hiệu lực < 18 tuổi.',
   },
   {
     index: 1 as ConditionGroupIndex,
-    code: 'CHILD_OVER_18_STUDYING',
     title: 'Nhóm 2: Con từ 18 tuổi trở lên đang đi học',
     subtitle: 'Đủ 18 tuổi trở lên tại ngày hiệu lực và còn đang theo học.',
   },
   {
     index: 2 as ConditionGroupIndex,
-    code: 'DISABLED_DEPENDENT',
     title: 'Nhóm 3: Con bị khuyết tật / Mất khả năng lao động',
     subtitle: 'Quan hệ Con — mọi độ tuổi (khuyết tật / mất khả năng lao động).',
   },
   {
     index: 3 as ConditionGroupIndex,
-    code: 'SPOUSE_OR_PARENTS',
     title: 'Nhóm 4: Vợ / Chồng hoặc Cha / Mẹ',
     subtitle: 'Vợ, chồng, cha mẹ — đủ 18 tuổi trở lên tại ngày hiệu lực.',
   },
   {
     index: 4 as ConditionGroupIndex,
-    code: 'OTHER_DEPENDENT',
     title: 'Nhóm 5: Cá nhân không nơi nương tựa khác',
     subtitle: 'Anh, chị, em ruột, ông bà, cô dì chú bác, cháu ruột.',
   },
 ];
+
+export type RelationshipOption = { value: string; label: string };
+
+/** Danh sách quan hệ từ catalog, sắp theo displayOrder. */
+export function relationshipOptions(catalog: MaybeCatalog): RelationshipOption[] {
+  if (!catalog) return [];
+  return [...catalog.relationships]
+    .sort((a, b) => a.displayOrder - b.displayOrder)
+    .map((r) => ({ value: r.code, label: r.name || r.code }));
+}
 
 /** Tuổi tại `asOf` (thường = ngày 01 của tháng hiệu lực). Q8: đủ N trong ngày sinh nhật → age >= N. */
 export function ageYearsAt(
@@ -96,42 +98,47 @@ export function isAge14OrOlderAtEffective(ageAtEffective: number): boolean {
   return ageAtEffective >= 14;
 }
 
+/** Nhóm catalog của quan hệ thuộc tab UI đang chọn (1 nhóm thì chọn luôn, nhiều nhóm thì mở picker). */
+export function selectGroupsForTab(
+  catalog: MaybeCatalog,
+  groupIndex: number,
+  relationship: string
+): CatalogGroup[] {
+  if (groupIndex < 0 || !relationship) return [];
+  return groupsForRelationship(catalog, relationship).filter(
+    (g) => uiTabForCatalogGroup(g) === groupIndex
+  );
+}
+
 /**
- * Nhóm UI index hợp lệ với quan hệ.
+ * Tab UI hợp lệ với quan hệ khi quan hệ có ít nhất 1 nhóm thuộc tab đó.
  * Demo: bỏ ràng buộc tuổi tại hiệu lực (BE vẫn validate nếu bật).
  */
 export function isGroupEligibleFor(
+  catalog: MaybeCatalog,
   groupIndex: number,
   relationship: string,
   _ageAtEffective: number
 ): boolean {
-  const rel = relationship as RelationshipCode;
-  switch (groupIndex) {
-    case 0:
-    case 1:
-    case 2:
-      return rel === 'CHILD';
-    case 3:
-      return rel === 'SPOUSE' || rel === 'PARENT';
-    case 4:
-      return rel === 'OTHER_DEPENDENT';
-    default:
-      return false;
-  }
+  return selectGroupsForTab(catalog, groupIndex, relationship).length > 0;
 }
 
 export function filterEligibleGroups(
+  catalog: MaybeCatalog,
   relationship: string,
   ageAtEffective: number
 ): typeof CONDITION_GROUP_OPTIONS {
   return CONDITION_GROUP_OPTIONS.filter((g) =>
-    isGroupEligibleFor(g.index, relationship, ageAtEffective)
+    isGroupEligibleFor(catalog, g.index, relationship, ageAtEffective)
   );
 }
 
-export function filterEligibleRelationships(ageAtEffective: number): typeof RELATIONSHIP_OPTIONS {
-  return RELATIONSHIP_OPTIONS.filter((r) =>
-    filterEligibleGroups(r.value, ageAtEffective).length > 0
+export function filterEligibleRelationships(
+  catalog: MaybeCatalog,
+  ageAtEffective: number
+): RelationshipOption[] {
+  return relationshipOptions(catalog).filter(
+    (r) => filterEligibleGroups(catalog, r.value, ageAtEffective).length > 0
   );
 }
 
@@ -145,6 +152,7 @@ export type EligibilitySelection = {
  * Q6: xóa nhóm (và quan hệ nếu quan hệ cũng không còn hợp lệ).
  */
 export function reconcileEligibilitySelection(
+  catalog: MaybeCatalog,
   current: EligibilitySelection,
   ageAtEffective: number
 ): { next: EligibilitySelection; clearedGroup: boolean; clearedRelationship: boolean } {
@@ -153,11 +161,13 @@ export function reconcileEligibilitySelection(
   let clearedRelationship = false;
   let clearedGroup = false;
 
-  const relOk = filterEligibleRelationships(ageAtEffective).some((r) => r.value === relationship);
+  const relOk = filterEligibleRelationships(catalog, ageAtEffective).some(
+    (r) => r.value === relationship
+  );
   if (!relOk) {
     relationship = '';
     selectedGroupIdx = -1;
-    clearedRelationship = true;
+    clearedRelationship = Boolean(current.relationship);
     clearedGroup = current.selectedGroupIdx >= 0;
     return {
       next: { relationship, selectedGroupIdx },
@@ -166,9 +176,9 @@ export function reconcileEligibilitySelection(
     };
   }
 
-  if (!isGroupEligibleFor(selectedGroupIdx, relationship, ageAtEffective)) {
+  if (!isGroupEligibleFor(catalog, selectedGroupIdx, relationship, ageAtEffective)) {
     selectedGroupIdx = -1;
-    clearedGroup = true;
+    clearedGroup = current.selectedGroupIdx >= 0;
   }
 
   return {
@@ -180,15 +190,19 @@ export function reconcileEligibilitySelection(
 
 /** OCR: giữ field khác; bỏ nhóm/quan hệ nếu không hợp lệ với tuổi tại hiệu lực. */
 export function sanitizeOcrEligibility(
+  catalog: MaybeCatalog,
   patch: { relationship?: string; selectedGroupIdx?: number },
-  ageAtEffective: number
+  ageAtEffective: number,
+  fallbackRelationship = ''
 ): { relationship?: string; selectedGroupIdx?: number; dropped: boolean } {
   let relationship = patch.relationship;
   let selectedGroupIdx = patch.selectedGroupIdx;
   let dropped = false;
 
   if (relationship) {
-    const relOk = filterEligibleRelationships(ageAtEffective).some((r) => r.value === relationship);
+    const relOk = filterEligibleRelationships(catalog, ageAtEffective).some(
+      (r) => r.value === relationship
+    );
     if (!relOk) {
       relationship = undefined;
       selectedGroupIdx = undefined;
@@ -198,8 +212,8 @@ export function sanitizeOcrEligibility(
   }
 
   if (typeof selectedGroupIdx === 'number') {
-    const rel = relationship || 'CHILD';
-    if (!isGroupEligibleFor(selectedGroupIdx, rel, ageAtEffective)) {
+    const rel = relationship || fallbackRelationship;
+    if (!isGroupEligibleFor(catalog, selectedGroupIdx, rel, ageAtEffective)) {
       selectedGroupIdx = undefined;
       dropped = true;
     }
@@ -208,52 +222,16 @@ export function sanitizeOcrEligibility(
   return { relationship, selectedGroupIdx, dropped };
 }
 
-/** Map UI group index + relationship → BE CurrentGroup enum (không silent override quan hệ). */
-export function mapUiGroupToBackendEnum(
-  selectedGroupIdx: number,
-  relationship: string
-): { relationship: string; currentGroup: string } | null {
-  if (selectedGroupIdx < 0 || !relationship) return null;
-
-  switch (selectedGroupIdx) {
-    case 0:
-      return relationship === 'CHILD'
-        ? { relationship: 'CHILD', currentGroup: 'CHILD_UNDER_18' }
-        : null;
-    case 1:
-      return relationship === 'CHILD'
-        ? { relationship: 'CHILD', currentGroup: 'CHILD_OVER_18_STUDYING' }
-        : null;
-    case 2:
-      return relationship === 'CHILD'
-        ? { relationship: 'CHILD', currentGroup: 'CHILD_OVER_18_DISABLED' }
-        : null;
-    case 3:
-      // Nhóm 4 gồm nhiều nhóm BE (vd PARENT_DISABLED): currentGroup rỗng = lấy từ DB qua selectDbGroupsForUi
-      return relationship === 'SPOUSE' || relationship === 'PARENT'
-        ? { relationship, currentGroup: '' }
-        : null;
-    case 4:
-      return relationship === 'OTHER_DEPENDENT'
-        ? { relationship: 'OTHER_DEPENDENT', currentGroup: 'OTHER_HELPLESS' }
-        : null;
-    default:
-      return null;
-  }
-}
-
 export const ELIGIBILITY_CLEARED_TOAST =
   'Lựa chọn quan hệ/nhóm không còn phù hợp với tuổi tại ngày hiệu lực. Vui lòng chọn lại.';
 
-/** Nhóm BE (từ GET /dependents/groups, đọc rule active trong DB) thuộc tab UI đang chọn. */
-export function selectDbGroupsForUi(groupIdx: number, dbGroups: string[]): string[] {
-  return dbGroups.filter((g) => groupCodeToIndex(g?.toUpperCase()) === groupIdx);
-}
+export const GROUP_NOT_CONFIGURED_MESSAGE = 'Nhóm này chưa được cấu hình giấy tờ.';
 
-/** Nhãn khi DB có nhiều nhóm con cho cùng quan hệ (vd PARENT_DISABLED và PARENT_RETIRED). */
-export function subGroupConditionLabel(code: string): string {
-  const c = code.toUpperCase();
-  if (c.endsWith('_DISABLED')) return 'Trong độ tuổi lao động nhưng khuyết tật / mất khả năng lao động';
-  if (c.endsWith('_RETIRED')) return 'Đã hết tuổi lao động';
-  return humanizeGroupCodes(c);
+/** Giao nhóm của tab với danh sách nhóm đã có rule active (GET /dependents/groups). */
+export function intersectConfiguredGroups(
+  candidates: CatalogGroup[],
+  configuredCodes: string[]
+): CatalogGroup[] {
+  const configured = new Set(configuredCodes.map((c) => String(c || '').toUpperCase()));
+  return candidates.filter((g) => configured.has(g.code.toUpperCase()));
 }

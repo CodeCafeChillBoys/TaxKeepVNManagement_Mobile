@@ -30,7 +30,12 @@ import {
   getDocTypeLabel,
   getFullFileUrl,
   getGroupTitle,
+  type DependentCatalog,
 } from '../../api/dependentDocumentApi';
+import { getCachedCatalog } from '../../api/dependentCatalogStore';
+import { useDependentCatalog } from '../../hooks/useDependentCatalog';
+import { CatalogErrorBanner } from '../../components/common/CatalogErrorBanner';
+import { groupName, relationshipName } from './dependentGroupUtils';
 import { dependentLifecycleApi } from '../../api/dependentLifecycleApi';
 import {
   DocumentViewerModal,
@@ -53,20 +58,8 @@ import { EditEffectivePeriodSheet } from '../../components/dependent/EditEffecti
 
 const DEDUCTION_PER_DEPENDENT = 6200000;
 
-const getRelationshipLabel = (rel?: string) => {
-  switch (rel) {
-    case 'CHILD':
-      return 'Con';
-    case 'SPOUSE':
-      return 'Vợ / Chồng';
-    case 'PARENT':
-      return 'Cha / Mẹ';
-    case 'OTHER_DEPENDENT':
-      return 'Cá nhân khác';
-    default:
-      return 'Người phụ thuộc';
-  }
-};
+const getRelationshipLabel = (rel?: string, catalog: DependentCatalog | null = getCachedCatalog()) =>
+  relationshipName(catalog, rel) || 'Người phụ thuộc';
 
 const calculateAge = (birthDateStr?: string): number => {
   if (!birthDateStr) return 0;
@@ -101,10 +94,11 @@ interface DependentRowProps {
   onPressDetail: (depId: string) => void;
   onPressMenu: (dep: DependentItem) => void;
   onPressProof: (dep: DependentItem) => void;
+  catalog: DependentCatalog | null;
 }
 
 const DependentLedgerRow = React.memo<DependentRowProps>(
-  ({ dep, index, onPressDetail, onPressMenu, onPressProof }) => {
+  ({ dep, index, onPressDetail, onPressMenu, onPressProof, catalog }) => {
     const age = calculateAge(dep.birthDate);
     const isAdult = age >= 14;
     const hasCitizenId = Boolean(dep.citizenId);
@@ -126,7 +120,7 @@ const DependentLedgerRow = React.memo<DependentRowProps>(
             <View style={styles.ledgerMain}>
               <Text style={styles.cardName}>{displayName}</Text>
               <Text style={styles.ledgerMeta}>
-                {getRelationshipLabel(dep.relationship)} · {age} tuổi ·{' '}
+                {getRelationshipLabel(dep.relationship, catalog)} · {age} tuổi ·{' '}
                 <Text style={dep.isProfileComplete ? styles.statusCompleteText : styles.statusPendingText}>
                   {dep.isProfileComplete ? 'Đủ hồ sơ' : 'Chờ minh chứng'}
                 </Text>
@@ -150,7 +144,7 @@ const DependentLedgerRow = React.memo<DependentRowProps>(
             {idLabel} {idValue}
           </Text>
           <Text style={styles.ledgerLine} numberOfLines={2}>
-            {dep.groupTitle}
+            {groupName(catalog, dep.currentGroup) || dep.groupTitle}
             {dep.effectiveFromMonth || dep.effectiveToMonth
               ? ` · ${formatPeriodShort(dep.effectiveFromMonth)} → ${formatPeriodShort(dep.effectiveToMonth)}`
               : ''}
@@ -185,6 +179,12 @@ export const DependentListScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
   const insets = useSafeAreaInsets();
   const { toast } = useToast();
+  const {
+    catalog,
+    error: catalogError,
+    loading: catalogLoading,
+    reload: reloadCatalog,
+  } = useDependentCatalog();
 
   const isMountedRef = useRef(true);
   useEffect(() => {
@@ -256,9 +256,9 @@ export const DependentListScreen: React.FC = () => {
 
   const handleGoToProofDocuments = useCallback(
     (dep: DependentItem) => {
-      navigation.navigate('ProofDocuments', buildProofDocumentsParams(dep));
+      navigation.navigate('ProofDocuments', buildProofDocumentsParams(dep, catalog));
     },
-    [navigation]
+    [catalog, navigation]
   );
 
   const handleChangeGroup = (detail: {
@@ -282,9 +282,10 @@ export const DependentListScreen: React.FC = () => {
     const plan = buildManualChangeGroupPlan({
       dependentId: detail.dependentId,
       fullName: detail.fullName,
-      relationship: detail.relationship || 'CHILD',
+      relationship: detail.relationship || '',
       currentGroup: detail.currentGroup,
       ageAtEffective,
+      catalog,
     });
     if (!plan.canChange) {
       toast.warning(
@@ -308,6 +309,7 @@ export const DependentListScreen: React.FC = () => {
         newGroup,
         note,
         updateDependentGroup: dependentLifecycleApi.updateDependentGroup,
+        catalog,
       });
       if (!isMountedRef.current) return;
       if (!result.ok) {
@@ -390,14 +392,22 @@ export const DependentListScreen: React.FC = () => {
         onPressDetail={handleViewDetail}
         onPressMenu={handleRowMenu}
         onPressProof={handleGoToProofDocuments}
+        catalog={catalog}
       />
     ),
-    [handleViewDetail, handleRowMenu, handleGoToProofDocuments]
+    [catalog, handleViewDetail, handleRowMenu, handleGoToProofDocuments]
   );
 
   const listHeader = useMemo(
     () => (
       <View>
+        {catalogError ? (
+          <CatalogErrorBanner
+            message={catalogError}
+            loading={catalogLoading}
+            onRetry={() => void reloadCatalog()}
+          />
+        ) : null}
         <View style={styles.hero}>
           <Text style={styles.heroLabel}>Giảm trừ mỗi tháng</Text>
           <Text
@@ -426,7 +436,7 @@ export const DependentListScreen: React.FC = () => {
         </View>
       </View>
     ),
-    [dependents.length, navigation]
+    [catalogError, catalogLoading, dependents.length, navigation, reloadCatalog]
   );
 
   const listEmpty = useMemo(
@@ -531,7 +541,7 @@ export const DependentListScreen: React.FC = () => {
                   <View style={styles.detailHeaderMain}>
                     <Text style={styles.detailModalTitle}>{formatPersonName(selectedDetail.fullName)}</Text>
                     <Text style={styles.detailModalSubtitle}>
-                      {getRelationshipLabel(selectedDetail.relationship)} • {getGroupTitle(selectedDetail.currentGroup)}
+                      {getRelationshipLabel(selectedDetail.relationship, catalog)} • {getGroupTitle(selectedDetail.currentGroup)}
                     </Text>
                   </View>
                   <TouchableOpacity

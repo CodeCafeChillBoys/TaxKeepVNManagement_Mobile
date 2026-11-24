@@ -19,6 +19,9 @@ export const DOC_TYPE_OPTIONS = [
 
 export const UNKNOWN_DOC_TYPE_LABEL = 'Giấy tờ minh chứng khác';
 
+export const RULES_NOT_CONFIGURED_LABEL =
+  'Nhóm này chưa được cấu hình danh mục giấy tờ, vui lòng liên hệ hỗ trợ';
+
 // Tên giấy tờ lấy từ rule trong DB (docName do admin nhập) — ưu tiên hơn nhãn dựng sẵn trong app
 const dbDocNames = new Map<string, string>();
 
@@ -35,6 +38,8 @@ export const getDocTypeLabel = (docType?: string | null, docName?: string | null
   if (docName?.trim()) return docName.trim();
   if (!docType) return UNKNOWN_DOC_TYPE_LABEL;
   const code = docType.toUpperCase();
+  // BE trả mã này trong missingDocuments khi nhóm chưa có rule giấy tờ
+  if (code === 'RULES_NOT_CONFIGURED') return RULES_NOT_CONFIGURED_LABEL;
   const fromDb = dbDocNames.get(code);
   if (fromDb) return fromDb;
   const found = DOC_TYPE_OPTIONS.find((opt) => opt.value === code);

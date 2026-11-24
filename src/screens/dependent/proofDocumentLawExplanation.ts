@@ -5,7 +5,8 @@ import type {
   TaxRuleSetDetailData,
   TaxRuleSetSummary,
 } from '../../api/taxRuleApi';
-import { groupCodeToIndex } from './dependentGroupUtils';
+import type { DependentCatalog } from '../../api/dependentDocumentApi';
+import { uiTabForGroup } from './dependentGroupUtils';
 
 export interface ProofDocLawModalData {
   title: string;
@@ -168,7 +169,8 @@ function findDependentDeductionTaxRule(taxRules: TaxRuleItem[]): TaxRuleItem | u
 function extractEligibilityEntryFromTaxRule(
   depTaxRule: TaxRuleItem | undefined,
   targetGroup?: string | null,
-  groupIndex?: number
+  groupIndex?: number,
+  catalog?: DependentCatalog | null
 ): any | null {
   if (!depTaxRule?.condition) return null;
   let condObj: any = depTaxRule.condition;
@@ -192,7 +194,7 @@ function extractEligibilityEntryFromTaxRule(
   if (typeof groupIndex === 'number') {
     const byIdx = condObj.eligibility.find((e: any) => {
       const code = String(e?.type || e?.dependentType || '').trim().toUpperCase();
-      return code && groupCodeToIndex(code) === groupIndex;
+      return code && uiTabForGroup(catalog, code) === groupIndex;
     });
     if (byIdx) return byIdx;
   }
@@ -204,7 +206,8 @@ function findMatchingDependentRule(
   dependentRules: DependentRuleItem[],
   targetGroup?: string | null,
   groupIndex?: number,
-  docType?: string | null
+  docType?: string | null,
+  catalog?: DependentCatalog | null
 ): DependentRuleItem | undefined {
   if (!Array.isArray(dependentRules) || dependentRules.length === 0) return undefined;
 
@@ -219,7 +222,7 @@ function findMatchingDependentRule(
   if (typeof groupIndex === 'number') {
     const sameTab = dependentRules.filter((dr) => {
       const code = String(dr.dependentType || '').trim().toUpperCase();
-      return code && groupCodeToIndex(code) === groupIndex;
+      return code && uiTabForGroup(catalog, code) === groupIndex;
     });
     if (sameTab.length > 0) {
       if (docType) {
@@ -276,6 +279,8 @@ export interface BuildProofDocLawParams {
   groupIndex?: number;
   ruleDescription?: string | null;
   taxRuleDetail?: TaxRuleSetDetailData | null;
+  /** Catalog nhóm NPT để tìm rule cùng tab khi không khớp đúng mã nhóm. */
+  catalog?: DependentCatalog | null;
 }
 
 /**
@@ -294,6 +299,7 @@ export function buildProofDocLawExplanation(
     groupIndex,
     ruleDescription,
     taxRuleDetail,
+    catalog,
   } = params;
 
   const taxRules = taxRuleDetail?.taxRules || [];
@@ -305,7 +311,8 @@ export function buildProofDocLawExplanation(
     dependentRules,
     targetGroup,
     groupIndex,
-    docType
+    docType,
+    catalog
   );
   const matchedReqDoc = findMatchingRequiredDocument(
     matchedDepRule,
@@ -315,7 +322,8 @@ export function buildProofDocLawExplanation(
   const eligibilityEntry = extractEligibilityEntryFromTaxRule(
     depTaxRule,
     targetGroup,
-    groupIndex
+    groupIndex,
+    catalog
   );
 
   // 1. Lý do cần nộp giấy tờ: lấy từ mô tả chứng từ Admin cấu hình trong Quy tắc thuế / Dependent Rules

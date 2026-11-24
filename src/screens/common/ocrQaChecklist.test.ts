@@ -10,6 +10,7 @@ import {
   isTaxRegistrationFormDirty,
 } from '../dependent/applyTaxRegistrationOcrFill';
 import { aliasSuggestedGroup, mapToDependentFill } from '../common/ocrUtils';
+import { SEED_CATALOG } from '../dependent/seedCatalog.test.fixture';
 import {
   WEB_CAMERA_UNAVAILABLE_MESSAGE,
   canConfirmOcrReview,
@@ -204,7 +205,7 @@ describe('OCR-11 QA checklist (automated seams)', () => {
             citizenId: '079301001111',
             birthDate: '2005-01-01',
             gender: 'MALE',
-            suggestedGroup: 'CHILD_OVER_18_STUDENT',
+            suggestedGroup: 'CHILD_OVER_18_STUDYING',
           },
         },
       });
@@ -216,13 +217,14 @@ describe('OCR-11 QA checklist (automated seams)', () => {
       expect(extracted.ok).toBe(true);
       if (!extracted.ok) return;
 
-      expect(aliasSuggestedGroup(extracted.fields.suggestedGroup)).toEqual({
+      expect(aliasSuggestedGroup(SEED_CATALOG, extracted.fields.suggestedGroup)).toEqual({
         selectedGroupIdx: 1,
         relationship: 'CHILD',
       });
       const fill = mapToDependentFill(
         extracted.fields,
         extracted.fields.suggestedGroup,
+        SEED_CATALOG,
         new Date('2026-09-17T00:00:00Z')
       );
       const plan = applyTaxRegistrationOcrFill(fill);
@@ -261,6 +263,7 @@ describe('OCR-11 QA checklist (automated seams)', () => {
       const fill = mapToDependentFill(
         extracted.fields,
         extracted.fields.suggestedGroup,
+        SEED_CATALOG,
         new Date('2026-09-17T00:00:00Z')
       );
       const plan = applyTaxRegistrationOcrFill(fill);

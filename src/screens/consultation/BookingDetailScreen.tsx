@@ -25,6 +25,8 @@ import { useToast } from '../../components/ui/Toast';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { consultationApi } from '../../api/consultationApi';
+import { useDependentCatalog } from '../../hooks/useDependentCatalog';
+import { groupName, relationshipName } from '../dependent/dependentGroupUtils';
 import { walletApi, WalletResponse, WalletTopUpResponse } from '../../api/walletApi';
 import { toFriendlyConsultationError, formatRefundStatus } from '../../utils/consultationFriendlyErrors';
 import { config } from '../../constants/config';
@@ -92,6 +94,7 @@ const DISPUTE_REASONS: { code: DisputeReasonCode; label: string; desc: string }[
 ];
 
 export const BookingDetailScreen: React.FC = () => {
+  const { catalog: dependentCatalog } = useDependentCatalog({ refreshOnMount: false });
   const navigation = useNavigation<RootNavigationProp>();
   const route = useRoute<RouteProp<RootStackParamList, 'BookingDetail'>>();
   const { bookingId, isExpertView: isExpertViewParam, autoPay } = route.params;
@@ -862,55 +865,12 @@ export const BookingDetailScreen: React.FC = () => {
 
   const formatDossierRelationship = (rel?: string): string => {
     if (!rel) return '—';
-    switch (rel.trim().toUpperCase()) {
-      case 'CHILD':
-        return 'Con';
-      case 'SPOUSE':
-        return 'Vợ / Chồng';
-      case 'PARENT':
-        return 'Cha / Mẹ';
-      case 'PARENT_IN_LAW':
-        return 'Cha / Mẹ kế (vợ/chồng)';
-      case 'OTHER_DEPENDENT':
-      case 'OTHER':
-      case 'OTHER_HELPLESS':
-        return 'Cá nhân khác';
-      default:
-        return rel;
-    }
+    return relationshipName(dependentCatalog, rel.trim());
   };
 
   const formatDossierGroup = (group?: string): string => {
     if (!group) return '—';
-    switch (group.trim().toUpperCase()) {
-      case 'CHILD_UNDER_18':
-        return 'Con dưới 18 tuổi';
-      case 'CHILD_OVER_18_STUDYING':
-      case 'CHILD_OVER_18_STUDENT':
-      case 'CHILD_STUDYING':
-        return 'Con ≥ 18 tuổi đang đi học';
-      case 'CHILD_OVER_18_DISABLED':
-      case 'CHILD_DISABLED':
-      case 'DISABLED_DEPENDENT':
-        return 'Con khuyết tật / mất khả năng lao động';
-      case 'SPOUSE_RETIRED':
-        return 'Vợ / Chồng hết tuổi lao động';
-      case 'SPOUSE_DISABLED':
-        return 'Vợ / Chồng khuyết tật';
-      case 'PARENT_RETIRED':
-        return 'Cha / Mẹ hết tuổi lao động';
-      case 'PARENT_DISABLED':
-        return 'Cha / Mẹ khuyết tật';
-      case 'SPOUSE_OR_PARENTS':
-      case 'PARENT':
-      case 'SPOUSE':
-        return 'Vợ / Chồng hoặc Cha / Mẹ';
-      case 'OTHER_HELPLESS':
-      case 'OTHER_DEPENDENT':
-        return 'Cá nhân không nơi nương tựa';
-      default:
-        return group;
-    }
+    return groupName(dependentCatalog, group.trim());
   };
 
   // Handle Open Shared Dossier

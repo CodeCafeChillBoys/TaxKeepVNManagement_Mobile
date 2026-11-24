@@ -4,6 +4,7 @@ import {
   getDocTypeLabel,
   registerDocNames,
   resolveUploadFileName,
+  RULES_NOT_CONFIGURED_LABEL,
   UNKNOWN_DOC_TYPE_LABEL,
 } from './dependentDocHelpers';
 
@@ -22,6 +23,11 @@ describe('getDocTypeLabel', () => {
     expect(getDocTypeLabel(undefined)).toBe(UNKNOWN_DOC_TYPE_LABEL);
     registerDocNames([{ docType: 'NEW_CODE', docName: '  ' }]);
     expect(getDocTypeLabel('NEW_CODE')).toBe(UNKNOWN_DOC_TYPE_LABEL);
+  });
+
+  it('RULES_NOT_CONFIGURED hiện câu báo chưa cấu hình', () => {
+    expect(getDocTypeLabel('RULES_NOT_CONFIGURED')).toBe(RULES_NOT_CONFIGURED_LABEL);
+    expect(RULES_NOT_CONFIGURED_LABEL).toMatch(/chưa được cấu hình danh mục giấy tờ/);
   });
 });
 

@@ -5,7 +5,8 @@ import {
   dependentDocumentApi,
   getDocTypeLabel,
 } from './dependentDocumentApi';
-import { groupCodeToTitle } from '../screens/dependent/dependentGroupUtils';
+import { findCatalogGroup, groupName } from '../screens/dependent/dependentGroupUtils';
+import { getCachedCatalog } from './dependentCatalogStore';
 
 export interface TaxRuleSetSummary {
   ruleSetId: string;
@@ -212,7 +213,7 @@ function normalizeDependentRuleItem(
     ruleId: raw?.ruleId ?? raw?.rule_id ?? null,
     ruleSetId: raw?.ruleSetId ?? raw?.rule_set_id ?? null,
     dependentType,
-    name: String(raw?.name || groupCodeToTitle(dependentType) || dependentType),
+    name: String(raw?.name || groupName(getCachedCatalog(), dependentType) || dependentType),
     maxAge:
       raw?.maxAge !== undefined && raw?.maxAge !== null
         ? Number(raw.maxAge)
@@ -297,15 +298,19 @@ export const taxRuleApi = {
           });
           grouped.set(group, list);
         }
-        dependentRules = Array.from(grouped.entries()).map(([group, docs]) => ({
-          id: group,
-          dependentType: group,
-          name: groupCodeToTitle(group),
-          isStudying: group.includes('STUDYING'),
-          isDisabled: group.includes('DISABLED'),
-          requiredDocuments: docs,
-          status: 'Active',
-        }));
+        const catalog = getCachedCatalog();
+        dependentRules = Array.from(grouped.entries()).map(([group, docs]) => {
+          const catalogGroup = findCatalogGroup(catalog, group);
+          return {
+            id: group,
+            dependentType: group,
+            name: groupName(catalog, group),
+            isStudying: Boolean(catalogGroup?.requireStudying),
+            isDisabled: Boolean(catalogGroup?.requireDisabled),
+            requiredDocuments: docs,
+            status: 'Active',
+          };
+        });
       }
     }
 

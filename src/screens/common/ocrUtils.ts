@@ -8,6 +8,8 @@ import {
   OcrFieldKey,
   OcrFormFill,
 } from '../../types/ocr';
+import type { DependentCatalog } from '../../api/dependentDocumentApi';
+import { findCatalogGroup, uiTabForCatalogGroup } from '../dependent/dependentGroupUtils';
 
 export const OCR_MAX_BYTES = 10 * 1024 * 1024;
 export const OCR_MIN_PX = 600;
@@ -78,44 +80,19 @@ export type SuggestedGroupAlias = {
 };
 
 /**
- * Alias suggestedGroup AI/BE → idx form TaxRegistration (PRD §8.4).
- *
- * | Input | Idx | relationship |
- * | CHILD_UNDER_18 | 0 | CHILD |
- * | CHILD_OVER_18_STUDYING \| CHILD_OVER_18_STUDENT | 1 | CHILD |
- * | DISABLED_DEPENDENT \| CHILD_OVER_18_DISABLED | 2 | CHILD |
- * | SPOUSE | 3 | SPOUSE |
- * | ELDERLY_PARENT \| PARENT_RETIRED | 3 | PARENT |
- * | SPOUSE_OR_PARENTS | 3 | (không set) |
- * | OTHER \| OTHER_DEPENDENT \| OTHER_HELPLESS | 4 | OTHER_DEPENDENT |
+ * suggestedGroup AI/BE → tab form TaxRegistration + quan hệ, tra theo catalog nhóm NPT (PRD §8.4).
+ * Mã không có trong catalog thì không tự chọn nhóm.
  */
 export function aliasSuggestedGroup(
+  catalog: DependentCatalog | null | undefined,
   code?: string | null
 ): SuggestedGroupAlias | null {
   if (!code || !code.trim()) return null;
-  switch (code.trim()) {
-    case 'CHILD_UNDER_18':
-      return { selectedGroupIdx: 0, relationship: 'CHILD' };
-    case 'CHILD_OVER_18_STUDYING':
-    case 'CHILD_OVER_18_STUDENT':
-      return { selectedGroupIdx: 1, relationship: 'CHILD' };
-    case 'DISABLED_DEPENDENT':
-    case 'CHILD_OVER_18_DISABLED':
-      return { selectedGroupIdx: 2, relationship: 'CHILD' };
-    case 'SPOUSE':
-      return { selectedGroupIdx: 3, relationship: 'SPOUSE' };
-    case 'ELDERLY_PARENT':
-    case 'PARENT_RETIRED':
-      return { selectedGroupIdx: 3, relationship: 'PARENT' };
-    case 'SPOUSE_OR_PARENTS':
-      return { selectedGroupIdx: 3 };
-    case 'OTHER':
-    case 'OTHER_DEPENDENT':
-    case 'OTHER_HELPLESS':
-      return { selectedGroupIdx: 4, relationship: 'OTHER_DEPENDENT' };
-    default:
-      return null;
-  }
+  const group = findCatalogGroup(catalog, code);
+  if (!group) return null;
+  const alias: SuggestedGroupAlias = { selectedGroupIdx: uiTabForCatalogGroup(group) };
+  if (group.relationshipCode) alias.relationship = group.relationshipCode;
+  return alias;
 }
 
 export function normalizeOcrForForm(fields: OcrExtractedFields): OcrFormFill {
@@ -183,7 +160,8 @@ function calculateAgeYears(isoOrDisplayDate: string, asOf: Date): number | null 
  */
 export function mapToDependentFill(
   fields: OcrExtractedFields,
-  suggestedGroup?: string | null,
+  suggestedGroup: string | null | undefined,
+  catalog: DependentCatalog | null | undefined,
   asOf: Date = new Date()
 ): OcrDependentFill {
   const birthDate = toIsoDate(fields.dateOfBirth);
@@ -193,7 +171,7 @@ export function mapToDependentFill(
   const useCitizenId = hasValidCccd && age !== null && age >= 14;
 
   const groupCode = suggestedGroup ?? fields.suggestedGroup;
-  const alias = aliasSuggestedGroup(groupCode);
+  const alias = aliasSuggestedGroup(catalog, groupCode);
 
   const fill: OcrDependentFill = {
     fullName: toTitleCaseVi(fields.fullName),

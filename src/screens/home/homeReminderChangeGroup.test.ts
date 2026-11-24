@@ -2,6 +2,7 @@ import {
   buildHomeReminderChangeGroupPlan,
   runHomeReminderChangeGroup,
 } from './homeReminderChangeGroup';
+import { SEED_CATALOG } from '../dependent/seedCatalog.test.fixture';
 
 describe('homeReminderChangeGroup', () => {
   const reminder = {
@@ -12,11 +13,11 @@ describe('homeReminderChangeGroup', () => {
 
   describe('buildHomeReminderChangeGroupPlan', () => {
     it('builds confirm copy from reminder recommendedGroup', () => {
-      const plan = buildHomeReminderChangeGroupPlan(reminder);
+      const plan = buildHomeReminderChangeGroupPlan(reminder, SEED_CATALOG);
       expect(plan.dependentId).toBe('dep-1');
       expect(plan.newGroup).toBe('CHILD_OVER_18_STUDYING');
       expect(plan.confirmTitle).toMatch(/chuyển nhóm/i);
-      expect(plan.newGroupLabel).toMatch(/Nhóm 2/i);
+      expect(plan.newGroupLabel).toBe('Con từ 18 tuổi trở lên đang đi học');
       expect(plan.confirmMessage).toContain('Nguyen Van B');
       expect(plan.confirmMessage).not.toContain('CHILD_OVER_18_STUDYING');
     });
@@ -42,6 +43,7 @@ describe('homeReminderChangeGroup', () => {
         dependentId: 'dep-1',
         newGroup: 'CHILD_OVER_18_STUDYING',
         updateDependentGroup,
+        catalog: SEED_CATALOG,
       });
 
       expect(updateDependentGroup).toHaveBeenCalledWith('dep-1', {
@@ -71,6 +73,7 @@ describe('homeReminderChangeGroup', () => {
         dependentId: 'dep-1',
         newGroup: 'CHILD_OVER_18_STUDYING',
         updateDependentGroup,
+        catalog: SEED_CATALOG,
       });
 
       expect(result).toEqual({
@@ -91,6 +94,7 @@ describe('homeReminderChangeGroup', () => {
         dependentId: 'dep-1',
         newGroup: 'CHILD_OVER_18_STUDYING',
         updateDependentGroup,
+        catalog: SEED_CATALOG,
       });
 
       expect(result.ok).toBe(true);
@@ -110,6 +114,7 @@ describe('homeReminderChangeGroup', () => {
         dependentId: 'dep-1',
         newGroup: 'CHILD_OVER_18_STUDYING',
         updateDependentGroup,
+        catalog: SEED_CATALOG,
       });
 
       expect(result.ok).toBe(false);

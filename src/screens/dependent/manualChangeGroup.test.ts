@@ -2,6 +2,7 @@ import {
   buildManualChangeGroupPlan,
   runManualChangeGroup,
 } from './manualChangeGroup';
+import { SEED_CATALOG } from './seedCatalog.test.fixture';
 
 describe('manualChangeGroup', () => {
   it('builds options excluding current group for CHILD', () => {
@@ -10,10 +11,11 @@ describe('manualChangeGroup', () => {
       fullName: 'Be Na',
       relationship: 'CHILD',
       currentGroup: 'CHILD_UNDER_18',
+      catalog: SEED_CATALOG,
     });
     expect(plan.options).toEqual([
-      'CHILD_OVER_18_STUDYING',
       'CHILD_OVER_18_DISABLED',
+      'CHILD_OVER_18_STUDYING',
     ]);
     expect(plan.canChange).toBe(true);
   });
@@ -24,6 +26,7 @@ describe('manualChangeGroup', () => {
       fullName: 'X',
       relationship: 'OTHER_DEPENDENT',
       currentGroup: 'OTHER_HELPLESS',
+      catalog: SEED_CATALOG,
     });
     expect(plan.options).toEqual([]);
     expect(plan.canChange).toBe(false);
@@ -48,6 +51,7 @@ describe('manualChangeGroup', () => {
       dependentId: 'dep-1',
       newGroup: 'CHILD_OVER_18_DISABLED',
       updateDependentGroup,
+      catalog: SEED_CATALOG,
     });
 
     expect(result.ok).toBe(true);
@@ -79,6 +83,7 @@ describe('manualChangeGroup', () => {
       newGroup: 'CHILD_OVER_18_STUDYING',
       note: '  Con vào đại học  ',
       updateDependentGroup,
+      catalog: SEED_CATALOG,
     });
 
     expect(result.ok).toBe(true);

@@ -1,10 +1,15 @@
 import {
   buildPendingUploadAgeReminders,
+  canChangeGroupFromReminder,
+  isAlreadyPendingStatus,
   isReminderAwaitingUploadOnly,
+  isTurningSoonStatus,
+  transitionAgeFromStatus,
   mergeAgeTransitionReminders,
   proofNavFromAgeReminder,
 } from './homeAgeReminderBanner';
 import type { AgeReminderItemDto, DependentItem } from '../../api/dependentDocumentApi';
+import { SEED_CATALOG } from '../dependent/seedCatalog.test.fixture';
 
 describe('homeAgeReminderBanner', () => {
   const now = new Date(2026, 8, 21); // 21/09/2026
@@ -40,11 +45,12 @@ describe('homeAgeReminderBanner', () => {
       },
     ];
 
-    const pending = buildPendingUploadAgeReminders(deps, { now });
+    const pending = buildPendingUploadAgeReminders(deps, SEED_CATALOG, { now });
     expect(pending).toHaveLength(1);
     expect(pending[0].dependentId).toBe('dep-1');
     expect(pending[0].requiredAction).toBe('UPLOAD_STUDENT_CARD');
-    expect(isReminderAwaitingUploadOnly(pending[0])).toBe(true);
+    expect(pending[0].recommendedGroup).toBe('CHILD_OVER_18_STUDYING');
+    expect(isReminderAwaitingUploadOnly(pending[0], SEED_CATALOG)).toBe(true);
   });
 
   it('keeps pending upload when API no longer returns under-18 reminder', () => {
@@ -109,7 +115,7 @@ describe('homeAgeReminderBanner', () => {
       daysRemaining: -1,
       message: 'x',
       requiredAction: 'UPLOAD_STUDENT_CARD',
-    });
+    }, SEED_CATALOG);
     expect(nav).toEqual({
       screen: 'ProofDocuments',
       params: {
@@ -118,5 +124,31 @@ describe('homeAgeReminderBanner', () => {
         requiredDocuments: ['STUDENT_CARD'],
       },
     });
+  });
+
+  it('matches transition status by pattern so the age milestone can change', () => {
+    expect(isTurningSoonStatus('TURNING_18_SOON')).toBe(true);
+    expect(isTurningSoonStatus('TURNING_22_SOON')).toBe(true);
+    expect(isTurningSoonStatus('ALREADY_18_PENDING_ACTION')).toBe(false);
+    expect(isAlreadyPendingStatus('ALREADY_22_PENDING_ACTION')).toBe(true);
+    expect(isAlreadyPendingStatus('TURNING_SOON')).toBe(false);
+    expect(transitionAgeFromStatus('TURNING_22_SOON')).toBe(22);
+    expect(transitionAgeFromStatus('UNKNOWN')).toBeNull();
+  });
+
+  it('hides change-group action when recommendedGroup is empty', () => {
+    const base = {
+      dependentId: 'dep-1',
+      fullName: 'A',
+      birthDate: '2008-01-01',
+      currentGroup: 'CHILD_UNDER_18',
+      transitionStatus: 'TURNING_18_SOON',
+      turning18Date: '2026-01-01',
+      daysRemaining: 3,
+      message: 'x',
+      requiredAction: 'UPDATE_GROUP',
+    };
+    expect(canChangeGroupFromReminder({ ...base, recommendedGroup: '' })).toBe(false);
+    expect(canChangeGroupFromReminder({ ...base, recommendedGroup: 'CHILD_OVER_18_STUDYING' })).toBe(true);
   });
 });

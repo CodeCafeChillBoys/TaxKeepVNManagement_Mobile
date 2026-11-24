@@ -12,6 +12,7 @@ import {
 import { buildSoftDeletePlan, runSoftDeleteDependent } from './softDeleteDependent';
 import { resolveProofDocumentsChecklist } from './proofDocumentsParams';
 import { filterChangeGroupOptions } from './dependentGroupUtils';
+import { SEED_CATALOG } from './seedCatalog.test.fixture';
 
 describe('NPT-08 QA checklist (automated seams)', () => {
   describe('Case 1 — Reminder cancel dialog', () => {
@@ -20,7 +21,7 @@ describe('NPT-08 QA checklist (automated seams)', () => {
         dependentId: 'dep-1',
         fullName: 'Be A',
         recommendedGroup: 'CHILD_OVER_18_STUDYING',
-      });
+      }, SEED_CATALOG);
       expect(plan.dependentId).toBe('dep-1');
       expect(plan.newGroup).toBe('CHILD_OVER_18_STUDYING');
       // Screen only calls run* after user confirms — cancel never reaches here.
@@ -46,6 +47,7 @@ describe('NPT-08 QA checklist (automated seams)', () => {
         dependentId: 'dep-1',
         newGroup: 'CHILD_OVER_18_STUDYING',
         updateDependentGroup,
+        catalog: SEED_CATALOG,
       });
       expect(updateDependentGroup).toHaveBeenCalled();
       expect(result.ok).toBe(true);
@@ -64,6 +66,7 @@ describe('NPT-08 QA checklist (automated seams)', () => {
         dependentId: 'dep-1',
         newGroup: 'CHILD_OVER_18_STUDYING',
         updateDependentGroup,
+        catalog: SEED_CATALOG,
       });
       expect(result).toEqual({
         ok: false,
@@ -91,6 +94,7 @@ describe('NPT-08 QA checklist (automated seams)', () => {
         dependentId: 'dep-1',
         newGroup: 'CHILD_OVER_18_DISABLED',
         updateDependentGroup,
+        catalog: SEED_CATALOG,
       });
       expect(result.ok).toBe(true);
     });
@@ -98,7 +102,7 @@ describe('NPT-08 QA checklist (automated seams)', () => {
 
   describe('Case 5 — Picker same Relationship only', () => {
     it('never offers SPOUSE groups for CHILD', () => {
-      const options = filterChangeGroupOptions('CHILD', 'CHILD_UNDER_18');
+      const options = filterChangeGroupOptions(SEED_CATALOG, 'CHILD', 'CHILD_UNDER_18');
       expect(options.every((g) => g.startsWith('CHILD_'))).toBe(true);
       expect(options).not.toContain('SPOUSE_DISABLED');
     });

@@ -3,10 +3,11 @@ import type {
   UpdateDependentGroupRequest,
   UpdateDependentGroupResponse,
 } from '../../api/dependentLifecycleApi';
+import type { DependentCatalog } from '../../api/dependentDocumentApi';
 import {
   filterChangeGroupOptions,
-  groupCodeToIndex,
   mapDependentLifecycleError,
+  uiTabForGroup,
 } from './dependentGroupUtils';
 import type { ProofDocumentsNav } from '../home/homeReminderChangeGroup';
 
@@ -17,6 +18,7 @@ export type ManualChangeGroupInput = {
   currentGroup: string;
   /** Tuổi tại ngày bắt đầu hiệu lực — lọc nhóm theo grill Q4. */
   ageAtEffective?: number;
+  catalog: DependentCatalog | null | undefined;
 };
 
 export type ManualChangeGroupPlan = {
@@ -40,9 +42,9 @@ export function buildManualChangeGroupPlan(
   input: ManualChangeGroupInput
 ): ManualChangeGroupPlan {
   const options = filterChangeGroupOptions(
+    input.catalog,
     input.relationship,
-    input.currentGroup,
-    input.ageAtEffective
+    input.currentGroup
   );
   return {
     dependentId: input.dependentId,
@@ -58,8 +60,9 @@ export async function runManualChangeGroup(options: {
   newGroup: string;
   note?: string | null;
   updateDependentGroup: UpdateDependentGroupFn;
+  catalog: DependentCatalog | null | undefined;
 }): Promise<ManualChangeGroupResult> {
-  const { dependentId, newGroup, note, updateDependentGroup } = options;
+  const { dependentId, newGroup, note, updateDependentGroup, catalog } = options;
   try {
     const trimmedNote = typeof note === 'string' ? note.trim() : undefined;
     const request: UpdateDependentGroupRequest = trimmedNote
@@ -79,7 +82,7 @@ export async function runManualChangeGroup(options: {
         screen: 'ProofDocuments',
         params: {
           dependentId,
-          groupIndex: groupCodeToIndex(currentGroup),
+          groupIndex: Math.max(0, uiTabForGroup(catalog, currentGroup)),
           requiredDocuments: res.data.requiredDocuments ?? [],
         },
       },

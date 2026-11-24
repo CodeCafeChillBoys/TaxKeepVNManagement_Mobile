@@ -1,5 +1,6 @@
 import {
   computeMissingMandatoryDocTypes,
+  describeMissingDoc,
   getDependentStatusMeta,
   formatDependentDate,
   formatDependentMonth,
@@ -34,6 +35,48 @@ describe('dependentDetailUtils', () => {
       ]
     );
     expect(missing).toEqual(['RELATIONSHIP_CERTIFICATE']);
+  });
+
+  const altRules = [
+    { targetGroup: 'PARENT_RETIRED', docType: 'CITIZEN_ID', docName: 'CCCD', isMandatory: true, alternativeGroup: null },
+    { targetGroup: 'PARENT_RETIRED', docType: 'RELATIONSHIP_CERTIFICATE', docName: 'Giấy xác nhận quan hệ', isMandatory: true, alternativeGroup: 'RELATION_PROOF' },
+    { targetGroup: 'PARENT_RETIRED', docType: 'BIRTH_CERTIFICATE', docName: 'Giấy khai sinh', isMandatory: true, alternativeGroup: 'RELATION_PROOF' },
+  ];
+
+  it('alternativeGroup: CCCD + giấy khai sinh là đủ, kể cả khi BE còn trả mã rule đầu', () => {
+    expect(
+      computeMissingMandatoryDocTypes(
+        {
+          currentGroup: 'PARENT_RETIRED',
+          missingDocuments: ['RELATIONSHIP_CERTIFICATE'],
+          documents: [{ docType: 'CITIZEN_ID' }, { docType: 'BIRTH_CERTIFICATE' }],
+        },
+        altRules
+      )
+    ).toEqual([]);
+  });
+
+  it('alternativeGroup: thiếu cả nhóm thì chỉ báo 1 mã, nhãn "Thiếu 1 trong"', () => {
+    const missing = computeMissingMandatoryDocTypes(
+      { currentGroup: 'PARENT_RETIRED', missingDocuments: [], documents: [{ docType: 'CITIZEN_ID' }] },
+      altRules
+    );
+    expect(missing).toEqual(['RELATIONSHIP_CERTIFICATE']);
+    expect(describeMissingDoc(missing[0], altRules, 'PARENT_RETIRED')).toBe(
+      'Thiếu 1 trong: Giấy xác nhận quan hệ / Giấy khai sinh'
+    );
+    expect(describeMissingDoc('CITIZEN_ID', altRules, 'PARENT_RETIRED')).toBe('CCCD');
+  });
+
+  it('RULES_NOT_CONFIGURED giữ nguyên và hiện câu báo chưa cấu hình', () => {
+    const missing = computeMissingMandatoryDocTypes(
+      { currentGroup: 'NEW_GROUP', missingDocuments: ['RULES_NOT_CONFIGURED'], documents: [] },
+      altRules
+    );
+    expect(missing).toEqual(['RULES_NOT_CONFIGURED']);
+    expect(describeMissingDoc('RULES_NOT_CONFIGURED', altRules, 'NEW_GROUP')).toMatch(
+      /chưa được cấu hình danh mục giấy tờ/
+    );
   });
 
   it('formats dates and effective month ranges cleanly', () => {

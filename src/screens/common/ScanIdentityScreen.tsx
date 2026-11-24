@@ -37,6 +37,7 @@ import {
 } from '../../types/ocr';
 import { ocrApi } from '../../api/ocrApi';
 import { normalizeOcrForForm, mapToDependentFill } from './ocrUtils';
+import { getCachedCatalog } from '../../api/dependentCatalogStore';
 import {
   canConfirmOcrReview,
   createEmptyOcrFields,
@@ -412,7 +413,7 @@ export const ScanIdentityScreen: React.FC = () => {
       return;
     }
     if (source === 'dependent') {
-      const fill = mapToDependentFill(fields, fields.suggestedGroup);
+      const fill = mapToDependentFill(fields, fields.suggestedGroup, getCachedCatalog());
       navigation.navigate({
         name: 'TaxRegistration',
         params: { ocrDependentFill: fill },

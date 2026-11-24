@@ -1,5 +1,5 @@
-import { groupCodeToIndex } from './dependentGroupUtils';
-import { selectRulesForTab } from './proofDocumentsParams';
+import { getDocTypeLabel } from '../../api/dependentDocHelpers';
+import { buildDocSlots, isDocSlotSatisfied, RULES_NOT_CONFIGURED_CODE } from './proofDocumentsParams';
 import { isSameProofDocType, normalizeProofDocTypeCode } from './proofDocumentLawExplanation';
 
 export interface DependentStatusMeta {
@@ -45,10 +45,28 @@ export function getDependentStatusMeta(
   };
 }
 
+type MissingDocRule = {
+  targetGroup: string;
+  docType: string;
+  isMandatory: boolean;
+  isActive?: boolean;
+  docName?: string | null;
+  alternativeGroup?: string | null;
+};
+
+const upper = (s?: string | null): string => String(s || '').trim().toUpperCase();
+
+function activeGroupRules<R extends MissingDocRule>(rules: R[], currentGroup?: string | null): R[] {
+  const group = upper(currentGroup);
+  if (!group || !Array.isArray(rules)) return [];
+  return rules.filter((r) => r.isActive !== false && upper(r.targetGroup) === group);
+}
+
 /**
  * Tính danh sách mã giấy tờ bắt buộc còn thiếu dựa trên cả phản hồi BE (missingDocuments)
  * lẫn danh mục quy tắc giấy tờ bắt buộc của nhóm NPT trong DB (dependent-rules).
  * Tránh trường hợp mới tải 2/3 giấy tờ bắt buộc nhưng vẫn báo "Đủ hồ sơ".
+ * Rule cùng alternativeGroup chỉ cần nộp 1: đã có 1 giấy thì cả nhóm coi là đủ, thiếu thì trả mã rule đầu.
  */
 export function computeMissingMandatoryDocTypes(
   detail: {
@@ -56,25 +74,40 @@ export function computeMissingMandatoryDocTypes(
     missingDocuments?: string[] | null;
     documents?: Array<{ docType?: string | null; isCurrent?: boolean | null }> | null;
   } | null | undefined,
-  rules: Array<{ targetGroup: string; docType: string; isMandatory: boolean; isActive?: boolean }> = []
+  rules: MissingDocRule[] = []
 ): string[] {
   if (!detail) return [];
 
   const currentDocs = Array.isArray(detail.documents)
     ? detail.documents.filter((d) => d && d.isCurrent !== false && d.docType)
     : [];
+  const uploadedTypes = currentDocs.map((d) => d.docType);
+  const groupRules = activeGroupRules(rules, detail.currentGroup);
+  const slots = buildDocSlots(groupRules);
+  const slotOf = (docType: string) =>
+    slots.find((s) => s.rules.some((r) => isSameProofDocType(r.docType, docType)));
 
-  const seenCanonical = new Set<string>();
+  const seen = new Set<string>();
   const missing: string[] = [];
 
   const pushIfMissing = (docType?: string | null) => {
     const clean = String(docType || '').trim();
     if (!clean) return;
-    const canonical = normalizeProofDocTypeCode(clean);
-    if (seenCanonical.has(canonical)) return;
-    const alreadyUploaded = currentDocs.some((doc) => isSameProofDocType(doc.docType, clean));
-    if (alreadyUploaded) return;
-    seenCanonical.add(canonical);
+    if (upper(clean) === RULES_NOT_CONFIGURED_CODE) {
+      if (!seen.has(RULES_NOT_CONFIGURED_CODE)) {
+        seen.add(RULES_NOT_CONFIGURED_CODE);
+        missing.push(clean);
+      }
+      return;
+    }
+    const slot = slotOf(clean);
+    const key = slot ? slot.key : normalizeProofDocTypeCode(clean);
+    if (seen.has(key)) return;
+    const satisfied = slot
+      ? isDocSlotSatisfied(slot, uploadedTypes)
+      : currentDocs.some((doc) => isSameProofDocType(doc.docType, clean));
+    if (satisfied) return;
+    seen.add(key);
     missing.push(clean);
   };
 
@@ -82,16 +115,31 @@ export function computeMissingMandatoryDocTypes(
     detail.missingDocuments.forEach(pushIfMissing);
   }
 
-  if (Array.isArray(rules) && rules.length > 0 && detail.currentGroup) {
-    const groupIdx = groupCodeToIndex(detail.currentGroup);
-    const activeRules = rules.filter((r) => r.isActive !== false);
-    const groupRules = selectRulesForTab(activeRules, groupIdx, detail.currentGroup);
-    groupRules
-      .filter((r) => Boolean(r.isMandatory))
-      .forEach((r) => pushIfMissing(r.docType));
-  }
+  slots.filter((s) => s.isMandatory).forEach((s) => pushIfMissing(s.rules[0].docType));
 
   return missing;
+}
+
+/**
+ * Nhãn một mã giấy tờ còn thiếu: RULES_NOT_CONFIGURED → câu báo chưa cấu hình;
+ * mã thuộc alternativeGroup → "Thiếu 1 trong: A / B"; còn lại là docName của rule.
+ */
+export function describeMissingDoc(
+  docType: string,
+  rules: MissingDocRule[],
+  currentGroup?: string | null
+): string {
+  if (upper(docType) === RULES_NOT_CONFIGURED_CODE) return getDocTypeLabel(docType);
+  const groupRules = activeGroupRules(rules, currentGroup);
+  const rule = groupRules.find((r) => isSameProofDocType(r.docType, docType));
+  const alt = upper(rule?.alternativeGroup);
+  if (rule && rule.isMandatory && alt) {
+    const names = groupRules
+      .filter((r) => r.isMandatory && upper(r.alternativeGroup) === alt)
+      .map((r) => getDocTypeLabel(r.docType, r.docName));
+    if (names.length > 1) return `Thiếu 1 trong: ${names.join(' / ')}`;
+  }
+  return getDocTypeLabel(docType, rule?.docName);
 }
 
 export function formatDependentDate(isoStr?: string | null): string {

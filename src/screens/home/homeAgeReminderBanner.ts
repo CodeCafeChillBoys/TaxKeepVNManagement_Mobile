@@ -1,7 +1,33 @@
-import type { AgeReminderItemDto, DependentItem } from '../../api/dependentDocumentApi';
-import { groupCodeToIndex } from '../dependent/dependentGroupUtils';
+import type {
+  AgeReminderItemDto,
+  DependentCatalog,
+  DependentItem,
+} from '../../api/dependentDocumentApi';
+import { findCatalogGroup, uiTabForGroup } from '../dependent/dependentGroupUtils';
 
-const STUDYING_GROUPS = new Set(['CHILD_OVER_18_STUDYING', 'CHILD_STUDYING']);
+type MaybeCatalog = DependentCatalog | null | undefined;
+
+// BE có thể đổi mốc tuổi trong mã trạng thái (TURNING_18_SOON, TURNING_22_SOON...) nên so theo mẫu
+const TURNING_SOON_RE = /^TURNING_(\d+)_SOON$/;
+const ALREADY_PENDING_RE = /^ALREADY_(\d+)_PENDING_ACTION$/;
+
+export function isTurningSoonStatus(status?: string | null): boolean {
+  return TURNING_SOON_RE.test(String(status || '').trim().toUpperCase());
+}
+
+export function isAlreadyPendingStatus(status?: string | null): boolean {
+  return ALREADY_PENDING_RE.test(String(status || '').trim().toUpperCase());
+}
+
+/** Mốc tuổi trong mã trạng thái nhắc chuyển nhóm; không khớp mẫu thì null. */
+export function transitionAgeFromStatus(status?: string | null): number | null {
+  const s = String(status || '').trim().toUpperCase();
+  const m = TURNING_SOON_RE.exec(s) || ALREADY_PENDING_RE.exec(s);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+const isStudyingGroup = (catalog: MaybeCatalog, code?: string | null): boolean =>
+  Boolean(findCatalogGroup(catalog, code)?.requireStudying);
 
 function daysUntilTurning18(birthDateIso: string, now: Date): number | null {
   const iso = (birthDateIso || '').slice(0, 10);
@@ -17,20 +43,18 @@ function daysUntilTurning18(birthDateIso: string, now: Date): number | null {
 }
 
 /**
- * NPT đã chuyển Nhóm 2 nhưng chưa upload minh chứng → vẫn hiện banner
- * đến khi isProfileComplete = true.
+ * NPT đã chuyển sang nhóm đang đi học (cờ requireStudying trong catalog) nhưng chưa upload minh chứng
+ * → vẫn hiện banner đến khi isProfileComplete = true.
  */
 export function buildPendingUploadAgeReminders(
   dependents: DependentItem[],
+  catalog: MaybeCatalog,
   options?: { now?: Date }
 ): AgeReminderItemDto[] {
   const now = options?.now ?? new Date();
 
   return dependents
-    .filter(
-      (dep) =>
-        !dep.isProfileComplete && STUDYING_GROUPS.has((dep.currentGroup || '').toUpperCase())
-    )
+    .filter((dep) => !dep.isProfileComplete && isStudyingGroup(catalog, dep.currentGroup))
     .map((dep) => {
       const daysRemaining = daysUntilTurning18(dep.birthDate, now) ?? -1;
       const turning18Date = (() => {
@@ -51,7 +75,7 @@ export function buildPendingUploadAgeReminders(
         fullName: dep.fullName,
         birthDate: (dep.birthDate || '').slice(0, 10),
         currentGroup: dep.currentGroup,
-        recommendedGroup: 'CHILD_OVER_18_STUDYING',
+        recommendedGroup: dep.currentGroup,
         transitionStatus: status,
         turning18Date,
         daysRemaining,
@@ -78,14 +102,19 @@ export function mergeAgeTransitionReminders(
   return Array.from(byId.values()).sort((a, b) => a.daysRemaining - b.daysRemaining);
 }
 
-export function isReminderAwaitingUploadOnly(item: AgeReminderItemDto): boolean {
-  return (
-    item.requiredAction === 'UPLOAD_STUDENT_CARD' ||
-    STUDYING_GROUPS.has((item.currentGroup || '').toUpperCase())
-  );
+export function isReminderAwaitingUploadOnly(item: AgeReminderItemDto, catalog: MaybeCatalog): boolean {
+  return item.requiredAction === 'UPLOAD_STUDENT_CARD' || isStudyingGroup(catalog, item.currentGroup);
 }
 
-export function proofNavFromAgeReminder(item: AgeReminderItemDto): {
+/** Chỉ cho đổi nhóm từ nhắc nhở khi BE có gợi ý nhóm đích. */
+export function canChangeGroupFromReminder(item: AgeReminderItemDto): boolean {
+  return Boolean(String(item.recommendedGroup || '').trim());
+}
+
+export function proofNavFromAgeReminder(
+  item: AgeReminderItemDto,
+  catalog: MaybeCatalog
+): {
   screen: 'ProofDocuments';
   params: { dependentId: string; groupIndex: number; requiredDocuments: string[] };
 } {
@@ -93,7 +122,7 @@ export function proofNavFromAgeReminder(item: AgeReminderItemDto): {
     screen: 'ProofDocuments',
     params: {
       dependentId: item.dependentId,
-      groupIndex: groupCodeToIndex(item.recommendedGroup || item.currentGroup),
+      groupIndex: Math.max(0, uiTabForGroup(catalog, item.recommendedGroup || item.currentGroup)),
       requiredDocuments: ['STUDENT_CARD'],
     },
   };

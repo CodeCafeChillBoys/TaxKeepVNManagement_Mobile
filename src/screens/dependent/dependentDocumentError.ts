@@ -232,6 +232,16 @@ export function parseDependentUploadError(err: unknown): ParsedDependentUploadEr
     };
   }
 
+  // 9b. Nhóm NPT chưa có rule giấy tờ nào (RULES_NOT_CONFIGURED)
+  if (code === 'RULES_NOT_CONFIGURED') {
+    return {
+      code: 'RULES_NOT_CONFIGURED',
+      title: 'Nhóm chưa được cấu hình giấy tờ',
+      message: 'Nhóm này chưa được cấu hình danh mục giấy tờ, vui lòng liên hệ hỗ trợ.',
+      hint: 'Liên hệ bộ phận hỗ trợ để được cấu hình danh mục giấy tờ cho nhóm này.',
+    };
+  }
+
   // 10. Ảnh quá mờ / lóa sáng / không đọc được (UNREADABLE_DOCUMENT / UNREADABLE_IMAGE)
   if (
     code === 'UNREADABLE_DOCUMENT' ||

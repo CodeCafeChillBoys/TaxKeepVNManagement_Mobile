@@ -8,8 +8,10 @@ import { fonts } from '../../constants/fonts';
 import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { formatPersonName } from '../../utils/formatPersonName';
-import { CONDITION_GROUP_OPTIONS, RELATIONSHIP_OPTIONS } from './dependentEligibility';
-import { groupCodeToTitle } from './dependentGroupUtils';
+import type { DependentCatalog } from '../../api/dependentDocumentApi';
+import { useDependentCatalog } from '../../hooks/useDependentCatalog';
+import { CONDITION_GROUP_OPTIONS } from './dependentEligibility';
+import { groupName, relationshipName } from './dependentGroupUtils';
 
 type Route = RouteProp<RootStackParamList, 'DependentSaved'>;
 
@@ -19,21 +21,22 @@ function formatEffectiveFrom(value: string): string {
   return `01/${match[2]}/${match[1]}`;
 }
 
-function relationshipLabel(code: string): string {
-  return RELATIONSHIP_OPTIONS.find((item) => item.value === code)?.label || code || '—';
+function relationshipLabel(catalog: DependentCatalog | null, code: string): string {
+  return relationshipName(catalog, code) || '—';
 }
 
-function conditionLabel(groupCode: string, groupId?: number): string {
+function conditionLabel(catalog: DependentCatalog | null, groupCode: string, groupId?: number): string {
   if (groupId && groupId >= 1 && groupId <= CONDITION_GROUP_OPTIONS.length) {
     return CONDITION_GROUP_OPTIONS[groupId - 1].title;
   }
-  return groupCodeToTitle(groupCode);
+  return groupName(catalog, groupCode) || '—';
 }
 
 export const DependentSavedScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
   const route = useRoute<Route>();
   const insets = useSafeAreaInsets();
+  const { catalog } = useDependentCatalog({ refreshOnMount: false });
   const { dependentId, fullName, relationship, groupCode, groupId, effectiveFromMonth } = route.params;
   const displayName = formatPersonName(fullName) || fullName;
 
@@ -89,8 +92,8 @@ export const DependentSavedScreen: React.FC = () => {
               <View style={styles.doubleRule} />
 
               <ReceiptRow label="Người phụ thuộc" value={displayName} />
-              <ReceiptRow label="Quan hệ" value={relationshipLabel(relationship)} />
-              <ReceiptRow label="Điều kiện" value={conditionLabel(groupCode, groupId)} />
+              <ReceiptRow label="Quan hệ" value={relationshipLabel(catalog, relationship)} />
+              <ReceiptRow label="Điều kiện" value={conditionLabel(catalog, groupCode, groupId)} />
               <ReceiptRow label="Hiệu lực từ" value={formatEffectiveFrom(effectiveFromMonth)} last />
             </View>
 

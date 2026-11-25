@@ -106,12 +106,15 @@ describe('consultation domain formatters', () => {
   });
 
   describe('isValidAvatarUrl', () => {
-    it('rejects fake or dummy storage domains', () => {
+    it('rejects fake or dummy storage domains and accepts valid remote, local, or data image URIs', () => {
       expect(isValidAvatarUrl('https://storage.taxkeep.vn/avatars/expert_sample.jpg')).toBe(false);
       expect(isValidAvatarUrl('http://example.com/pic.jpg')).toBe(false);
       expect(isValidAvatarUrl('')).toBe(false);
       expect(isValidAvatarUrl(null)).toBe(false);
       expect(isValidAvatarUrl('https://validcdn.com/avatar.jpg')).toBe(true);
+      expect(isValidAvatarUrl('data:image/jpeg;base64,/9j/4AAQSkZJRg==')).toBe(true);
+      expect(isValidAvatarUrl('file:///var/mobile/Containers/avatar.jpg')).toBe(true);
+      expect(isValidAvatarUrl('/uploads/avatars/exp-01.png')).toBe(true);
     });
   });
 });

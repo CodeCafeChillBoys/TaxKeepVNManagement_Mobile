@@ -242,6 +242,36 @@ export const ProfileScreen: React.FC = () => {
             </View>
           </View>
 
+          {(profile?.userRole || '').toLowerCase().includes('expert') ? (
+            <TouchableOpacity
+              style={[
+                styles.expertProfileLinkCard,
+                {
+                  backgroundColor: palette.surface,
+                  borderColor: isDark ? palette.gold : '#D99B26',
+                },
+              ]}
+              activeOpacity={0.85}
+              onPress={() => navigation.navigate('ExpertProfile')}
+              accessibilityRole="button"
+              accessibilityLabel="Xem hồ sơ hành nghề chuyên gia"
+              testID="profileOpenExpertProfileBtn"
+            >
+              <View style={styles.expertProfileLinkIcon}>
+                <Ionicons name="medal-outline" size={20} color="#8B1E1E" />
+              </View>
+              <View style={styles.expertProfileLinkTextCol}>
+                <Text style={[styles.expertProfileLinkTitle, { color: palette.textPrimary }]}>
+                  Hồ sơ hành nghề chuyên gia
+                </Text>
+                <Text style={[styles.expertProfileLinkSub, { color: palette.textSecondary }]}>
+                  Chuyên môn, biểu phí, chứng chỉ &amp; đánh giá khách hàng
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={palette.primary} />
+            </TouchableOpacity>
+          ) : null}
+
           <TouchableOpacity
             style={[styles.primaryEditBtn, { backgroundColor: palette.primary }]}
             activeOpacity={0.85}
@@ -381,9 +411,45 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    marginTop: 22,
+    marginTop: 18,
     paddingHorizontal: 16,
     ...theme.shadows.button,
+  },
+  expertProfileLinkCard: {
+    marginTop: 18,
+    borderRadius: 12,
+    borderWidth: 1.2,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    ...theme.shadows.card,
+  },
+  expertProfileLinkIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: '#FCE4A6',
+    borderWidth: 1,
+    borderColor: '#D99B26',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  expertProfileLinkTextCol: {
+    flex: 1,
+    minWidth: 0,
+  },
+  expertProfileLinkTitle: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 14,
+    lineHeight: 19,
+  },
+  expertProfileLinkSub: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 2,
   },
   primaryEditBtnText: {
     fontFamily: fonts.bodyBold,

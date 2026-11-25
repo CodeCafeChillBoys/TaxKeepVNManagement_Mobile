@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import { apiClient } from './apiClient';
+import { getCustomExpertAvatar, resolveExpertAvatarUri } from '../utils/expertAvatarStorage';
 import type { ApiResponse } from './authApi';
 import type {
   ExpertDetailResponse,
@@ -82,7 +83,20 @@ export const consultationApi = {
     const res = await apiClient.get<ApiResponse<ExpertSearchResultDto>>(
       `/api/v1/experts?${params.toString()}`
     );
-    return unwrap(res, 'Không thể tải danh sách chuyên gia.');
+    const result = unwrap(res, 'Không thể tải danh sách chuyên gia.');
+    if (Array.isArray(result.items) && result.items.length > 0) {
+      const enrichedItems = await Promise.all(
+        result.items.map(async (item) => {
+          const customAvatar = await getCustomExpertAvatar(item.userId);
+          if (customAvatar) {
+            return { ...item, avatarUrl: resolveExpertAvatarUri(customAvatar) };
+          }
+          return item;
+        })
+      );
+      return { ...result, items: enrichedItems };
+    }
+    return result;
   },
 
   /**
@@ -104,7 +118,18 @@ export const consultationApi = {
     const res = await apiClient.get<ApiResponse<ExpertListItemResponse[]>>(
       `/api/v1/experts/featured?count=${count}`
     );
-    return unwrap(res, 'Không thể tải danh sách chuyên gia nổi bật.');
+    const items = unwrap(res, 'Không thể tải danh sách chuyên gia nổi bật.');
+    if (Array.isArray(items) && items.length > 0) {
+      return Promise.all(
+        items.map(async (item) => {
+          const customAvatar = await getCustomExpertAvatar(item.userId);
+          return customAvatar
+            ? { ...item, avatarUrl: resolveExpertAvatarUri(customAvatar) }
+            : item;
+        })
+      );
+    }
+    return items;
   },
 
   /**
@@ -113,7 +138,90 @@ export const consultationApi = {
    */
   async getExpertDetail(id: string): Promise<ExpertDetailResponse> {
     const res = await apiClient.get<ApiResponse<ExpertDetailResponse>>(`/api/v1/experts/${id}`);
-    return unwrap(res, 'Không thể tải thông tin chi tiết chuyên gia.');
+    const detail = unwrap(res, 'Không thể tải thông tin chi tiết chuyên gia.');
+    if (detail?.userId) {
+      const customAvatar = await getCustomExpertAvatar(detail.userId);
+      if (customAvatar) {
+        return { ...detail, avatarUrl: resolveExpertAvatarUri(customAvatar) };
+      }
+    }
+    return detail;
+  },
+
+  /**
+   * Tra cứu và lấy hồ sơ hành nghề chuyên gia của tài khoản đang đăng nhập
+   * Kết hợp GET /api/v1/experts, GET /api/v1/expert/slots, GET /api/v1/expert/bookings, GET /api/v1/expert/reviews -> GET /api/v1/experts/{expertProfileId}
+   */
+  async getMyExpertProfile(
+    userId: string,
+    fullNameHint?: string | null
+  ): Promise<ExpertDetailResponse | null> {
+    const normUid = (userId || '').trim().toLowerCase();
+    if (!normUid) return null;
+
+    let resolvedProfileId: string | undefined;
+
+    // 1. Tìm song song từ danh sách chuyên gia (theo tên), lịch làm việc, booking và đánh giá của chuyên gia
+    const [searchByNameRes, slotsRes, bookingsRes, reviewsRes] = await Promise.allSettled([
+      fullNameHint?.trim()
+        ? consultationApi.searchExperts({ keyword: fullNameHint.trim(), page: 1, size: 50 })
+        : Promise.resolve(null),
+      consultationApi.getMySlots(),
+      consultationApi.getExpertBookings({ page: 1, size: 1 }),
+      consultationApi.getMyReceivedReviews({ page: 1, size: 1 }),
+    ]);
+
+    if (searchByNameRes.status === 'fulfilled' && searchByNameRes.value?.items) {
+      const matched = searchByNameRes.value.items.find(
+        (item) => (item.userId || '').toLowerCase() === normUid
+      );
+      if (matched?.id) resolvedProfileId = matched.id;
+    }
+
+    if (!resolvedProfileId && slotsRes.status === 'fulfilled' && Array.isArray(slotsRes.value)) {
+      const firstSlotWithProfile = slotsRes.value.find((s) => Boolean(s.expertProfileId));
+      if (firstSlotWithProfile?.expertProfileId) {
+        resolvedProfileId = firstSlotWithProfile.expertProfileId;
+      }
+    }
+
+    if (
+      !resolvedProfileId &&
+      bookingsRes.status === 'fulfilled' &&
+      bookingsRes.value?.items?.length
+    ) {
+      resolvedProfileId = bookingsRes.value.items[0]?.expertProfileId;
+    }
+
+    if (
+      !resolvedProfileId &&
+      reviewsRes.status === 'fulfilled' &&
+      reviewsRes.value?.items?.length
+    ) {
+      resolvedProfileId = reviewsRes.value.items[0]?.expertProfileId;
+    }
+
+    // 2. Dự phòng: quét trang danh sách chuyên gia rộng hơn nếu tên trên hồ sơ khác tên gợi ý
+    if (!resolvedProfileId) {
+      try {
+        const broadSearch = await consultationApi.searchExperts({ page: 1, size: 100 });
+        const matched = broadSearch.items?.find(
+          (item) => (item.userId || '').toLowerCase() === normUid
+        );
+        if (matched?.id) resolvedProfileId = matched.id;
+      } catch {
+        // Bỏ qua nếu không tìm thấy
+      }
+    }
+
+    if (!resolvedProfileId) return null;
+
+    const detail = await consultationApi.getExpertDetail(resolvedProfileId);
+    const customAvatar = await getCustomExpertAvatar(normUid);
+    if (customAvatar) {
+      return { ...detail, avatarUrl: resolveExpertAvatarUri(customAvatar) };
+    }
+    return detail;
   },
 
   /**
@@ -897,6 +1005,39 @@ export const consultationApi = {
       `/api/v1/bookings/${bookingId}/review`
     );
     return res.data?.data ?? null;
+  },
+
+  /**
+   * Chuyên gia xem toàn bộ danh sách đánh giá nhận được từ khách hàng
+   * GET /api/v1/expert/reviews?page=1&size=20
+   */
+  async getMyReceivedReviews(params?: {
+    page?: number;
+    size?: number;
+  }): Promise<PagedResult<ReviewDetailResponse>> {
+    const query = new URLSearchParams();
+    query.append('page', String(params?.page || 1));
+    query.append('size', String(params?.size || 20));
+    const res = await apiClient.get<ApiResponse<PagedResult<ReviewDetailResponse>>>(
+      `/api/v1/expert/reviews?${query.toString()}`
+    );
+    return unwrap(res, 'Không thể tải danh sách đánh giá của chuyên gia.');
+  },
+
+  /**
+   * Chuyên gia gửi phản hồi công khai cho đánh giá của khách hàng (tối đa 1 lần / đánh giá)
+   * POST /api/v1/expert/reviews/{reviewId}/reply
+   */
+  async replyToReview(reviewId: string, reply: string): Promise<ReviewDetailResponse> {
+    const cleanReply = reply.trim();
+    if (!cleanReply) {
+      throw new Error('Vui lòng nhập nội dung phản hồi đánh giá.');
+    }
+    const res = await apiClient.post<ApiResponse<ReviewDetailResponse>>(
+      `/api/v1/expert/reviews/${reviewId}/reply`,
+      { reply: cleanReply }
+    );
+    return unwrap(res, 'Không thể gửi phản hồi đánh giá.');
   },
 
   // ══════════════════════════════════════════════════════════════════

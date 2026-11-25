@@ -73,11 +73,21 @@ type HomeUtilityItem = {
   keywords: string;
   icon: keyof typeof Ionicons.glyphMap;
   inServiceGroup?: boolean;
+  expertOnly?: boolean;
   testID?: string;
   onNavigate: (nav: RootNavigationProp, isExpert: boolean) => void;
 };
 
 const ALL_HOME_UTILITIES: HomeUtilityItem[] = [
+  {
+    id: 'expert_utilities',
+    label: 'Tiện ích\nchuyên gia',
+    keywords: 'tien ich chuyen gia quan ly ca tu van duyet lich slot khung gio bieu phi ho so chuyen gia',
+    icon: 'briefcase-outline',
+    expertOnly: true,
+    testID: 'homeExpertUtilitiesItem',
+    onNavigate: (nav) => nav.navigate('ExpertUtilities'),
+  },
   {
     id: 'tax_registration',
     label: 'Khai báo người phụ thuộc',
@@ -163,14 +173,6 @@ const ALL_HOME_UTILITIES: HomeUtilityItem[] = [
     onNavigate: (nav) => nav.navigate('ExpenseUpload'),
   },
   {
-    id: 'wallet_taxkeep',
-    label: 'Ví điện tử\nTaxKeep',
-    keywords: 'vi dien tu taxkeep nap tien rut tien so du',
-    icon: 'wallet-outline',
-    onNavigate: (nav, isExp) =>
-      nav.navigate('Wallet', { walletType: isExp ? 'EXPERT' : 'USER' }),
-  },
-  {
     id: 'tax_chat_ai',
     label: 'Trợ lý\nTaxKeep VN',
     keywords: 'tro ly taxkeep vn ai thue chatbot hoi dap tu van tu dong',
@@ -230,7 +232,7 @@ type TodoItem = {
   id: string;
   title: string;
   subtitle: string;
-  kind: 'age' | 'incomplete';
+  kind: 'age' | 'incomplete' | 'expert_pending';
   reminder?: AgeReminderItemDto;
   dependent?: DependentItem;
 };
@@ -361,6 +363,7 @@ export const HomeScreen: React.FC = () => {
   const [promptAnswered, setPromptAnswered] = useState(false);
   const [upcomingMeeting, setUpcomingMeeting] = useState<UpcomingMeetingReminderDto | null>(null);
   const [joiningMeeting, setJoiningMeeting] = useState<boolean>(false);
+  const [pendingExpertBookingsCount, setPendingExpertBookingsCount] = useState<number>(0);
   const [bannerSlideIndex, setBannerSlideIndex] = useState<number>(0);
   const [bannerCardWidth, setBannerCardWidth] = useState<number>(0);
   const bannerScrollRef = useRef<any>(null);
@@ -390,22 +393,27 @@ export const HomeScreen: React.FC = () => {
     })();
   }, []);
 
+  const availableHomeUtilities = useMemo(
+    () => ALL_HOME_UTILITIES.filter((u) => !u.expertOnly || isExpert),
+    [isExpert]
+  );
+
   const favoriteUtilities = useMemo(
     () =>
       favoriteIds
-        .map((id) => ALL_HOME_UTILITIES.find((u) => u.id === id))
+        .map((id) => availableHomeUtilities.find((u) => u.id === id))
         .filter((u): u is HomeUtilityItem => Boolean(u)),
-    [favoriteIds]
+    [favoriteIds, availableHomeUtilities]
   );
 
   const filteredSearchUtilities = useMemo(() => {
     const q = normalizeVietnameseText(searchQuery);
-    if (!q) return ALL_HOME_UTILITIES;
-    return ALL_HOME_UTILITIES.filter((item) => {
+    if (!q) return availableHomeUtilities;
+    return availableHomeUtilities.filter((item) => {
       const labelNorm = normalizeVietnameseText(item.label.replace(/\n/g, ' '));
       return labelNorm.includes(q) || item.keywords.includes(q);
     });
-  }, [searchQuery]);
+  }, [searchQuery, availableHomeUtilities]);
 
   const handleOpenEditFavorites = useCallback(() => {
     setDraftFavoriteIds(favoriteIds);
@@ -540,6 +548,30 @@ export const HomeScreen: React.FC = () => {
             });
           }
         }
+
+        const effectiveRole = (
+          (profileRes.status === 'fulfilled' ? profileRes.value?.userRole : undefined) ||
+          useAuthStore.getState().user?.role ||
+          ''
+        ).toLowerCase();
+        const resolvedIsExpert = effectiveRole === 'expert' || effectiveRole.includes('expert');
+
+        if (resolvedIsExpert) {
+          try {
+            const pendingExpRes = await consultationApi.getExpertPendingBookings({
+              page: 1,
+              size: 20,
+            });
+            if (!alive) return;
+            const count =
+              pendingExpRes?.pagination?.totalItems ?? pendingExpRes?.items?.length ?? 0;
+            setPendingExpertBookingsCount(count);
+          } catch {
+            if (!alive) return;
+          }
+        } else {
+          setPendingExpertBookingsCount(0);
+        }
       };
 
       void loadDashboard();
@@ -572,6 +604,15 @@ export const HomeScreen: React.FC = () => {
     const items: TodoItem[] = [];
     const reminderIds = new Set(reminders.map((r) => r.dependentId));
 
+    if (isExpert && pendingExpertBookingsCount > 0) {
+      items.push({
+        id: 'expert-pending-bookings',
+        title: `Có ${pendingExpertBookingsCount} yêu cầu đặt lịch tư vấn chờ duyệt`,
+        subtitle: 'Vui lòng tiếp nhận hoặc phản hồi khách hàng đúng hạn',
+        kind: 'expert_pending',
+      });
+    }
+
     for (const r of reminders) {
       const name = formatPersonName(r.fullName);
       const isSoon = isTurningSoonStatus(r.transitionStatus);
@@ -598,7 +639,7 @@ export const HomeScreen: React.FC = () => {
     }
 
     return items;
-  }, [reminders, dependents]);
+  }, [isExpert, pendingExpertBookingsCount, reminders, dependents]);
 
   const handleOpenNotifications = useCallback(async () => {
     setNotifModalVisible(true);
@@ -763,6 +804,10 @@ export const HomeScreen: React.FC = () => {
 
   const handleTodoPress = useCallback(
     (item: TodoItem) => {
+      if (item.kind === 'expert_pending') {
+        navigation.navigate('ExpertBookings', { initialTab: 'pending' });
+        return;
+      }
       if (item.kind === 'age' && item.reminder) {
         handleReminderUploadPress(item.reminder);
         return;
@@ -776,6 +821,7 @@ export const HomeScreen: React.FC = () => {
 
   const handleJoinUpcomingMeeting = useCallback(async () => {
     if (!upcomingMeeting?.bookingId) return;
+    const expertMode = isExpert || upcomingMeeting.partnerRole === 'TAXPAYER';
     setJoiningMeeting(true);
     try {
       const res = await consultationApi.joinConsultation(upcomingMeeting.bookingId);
@@ -784,18 +830,24 @@ export const HomeScreen: React.FC = () => {
       } else if (upcomingMeeting.roomUrl) {
         await Linking.openURL(upcomingMeeting.roomUrl);
       } else {
-        navigation.navigate('BookingDetail', { bookingId: upcomingMeeting.bookingId });
+        navigation.navigate('BookingDetail', {
+          bookingId: upcomingMeeting.bookingId,
+          isExpertView: expertMode,
+        });
       }
     } catch {
       if (upcomingMeeting.roomUrl) {
         await Linking.openURL(upcomingMeeting.roomUrl).catch(() => {});
       } else {
-        navigation.navigate('BookingDetail', { bookingId: upcomingMeeting.bookingId });
+        navigation.navigate('BookingDetail', {
+          bookingId: upcomingMeeting.bookingId,
+          isExpertView: expertMode,
+        });
       }
     } finally {
       setJoiningMeeting(false);
     }
-  }, [navigation, upcomingMeeting]);
+  }, [isExpert, navigation, upcomingMeeting]);
 
   const renderNotifItem = useCallback(
     ({ item }: { item: NotificationItem }) => (
@@ -825,6 +877,12 @@ export const HomeScreen: React.FC = () => {
           <Text style={styles.userName} numberOfLines={1}>
             {displayName}
           </Text>
+          {isExpert ? (
+            <View style={styles.expertRolePill} testID="homeExpertRoleBadge">
+              <Ionicons name="shield-checkmark" size={11} color="#8B1E1E" />
+              <Text style={styles.expertRolePillText}>Chuyên gia tư vấn thuế</Text>
+            </View>
+          ) : null}
         </View>
 
         <TouchableOpacity
@@ -1021,7 +1079,10 @@ export const HomeScreen: React.FC = () => {
                   <TouchableOpacity
                     onPress={() => {
                       if (upcomingMeeting.bookingId) {
-                        navigation.navigate('BookingDetail', { bookingId: upcomingMeeting.bookingId });
+                        navigation.navigate('BookingDetail', {
+                          bookingId: upcomingMeeting.bookingId,
+                          isExpertView: isExpert || upcomingMeeting.partnerRole === 'TAXPAYER',
+                        });
                       }
                     }}
                     hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -1094,7 +1155,10 @@ export const HomeScreen: React.FC = () => {
                     ]}
                     onPress={() => {
                       if (upcomingMeeting.bookingId) {
-                        navigation.navigate('BookingDetail', { bookingId: upcomingMeeting.bookingId });
+                        navigation.navigate('BookingDetail', {
+                          bookingId: upcomingMeeting.bookingId,
+                          isExpertView: isExpert || upcomingMeeting.partnerRole === 'TAXPAYER',
+                        });
                       }
                     }}
                     activeOpacity={0.85}
@@ -1110,6 +1174,43 @@ export const HomeScreen: React.FC = () => {
                   </TouchableOpacity>
                 </View>
               </View>
+            ) : null}
+
+            {/* ── THANH ĐIỀU HƯỚNG GỌN NHẸ ĐẾN TRANG TIỆN ÍCH CHUYÊN GIA ── */}
+            {isExpert ? (
+              <TouchableOpacity
+                style={styles.expertUtilitiesBar}
+                activeOpacity={0.82}
+                onPress={() => navigation.navigate('ExpertUtilities')}
+                accessibilityRole="button"
+                accessibilityLabel="Tiện ích chuyên gia"
+                testID="homeExpertUtilitiesBar"
+              >
+                <View style={styles.expertUtilitiesBarIcon}>
+                  <Ionicons name="briefcase" size={18} color="#FFFFFF" />
+                </View>
+
+                <View style={styles.expertUtilitiesBarTextCol}>
+                  <Text style={styles.expertUtilitiesBarTitle} numberOfLines={1}>
+                    Tiện ích chuyên gia
+                  </Text>
+                  <Text style={styles.expertUtilitiesBarSub} numberOfLines={1}>
+                    {pendingExpertBookingsCount > 0
+                      ? `Có ${pendingExpertBookingsCount} yêu cầu đặt lịch chờ phản hồi`
+                      : 'Quản lý lịch làm việc, ca tư vấn & hồ sơ chuyên gia'}
+                  </Text>
+                </View>
+
+                {pendingExpertBookingsCount > 0 ? (
+                  <View style={styles.expertUtilitiesBarBadge}>
+                    <Text style={styles.expertUtilitiesBarBadgeText}>
+                      {pendingExpertBookingsCount}
+                    </Text>
+                  </View>
+                ) : null}
+
+                <Ionicons name="chevron-forward" size={18} color={theme.colors.primary} />
+              </TouchableOpacity>
             ) : null}
 
             {/* Slide Banner: Tư vấn chuyên gia thuế & Đăng ký làm chuyên gia thuế (khi !isExpert) */}
@@ -1574,7 +1675,7 @@ export const HomeScreen: React.FC = () => {
               style={styles.utilityModalList}
               showsVerticalScrollIndicator={false}
             >
-              {ALL_HOME_UTILITIES.map((item) => {
+              {availableHomeUtilities.map((item) => {
                 const isSelected = draftFavoriteIds.includes(item.id);
                 return (
                   <TouchableOpacity
@@ -1669,6 +1770,79 @@ const styles = StyleSheet.create({
     fontSize: 17,
     lineHeight: 22,
     color: theme.colors.textPrimary,
+  },
+  expertRolePill: {
+    marginTop: 3,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 999,
+    backgroundColor: '#FCE4A6',
+    borderWidth: 1,
+    borderColor: '#D99B26',
+  },
+  expertRolePillText: {
+    fontFamily: fonts.bodySemi,
+    fontSize: 10.5,
+    lineHeight: 14,
+    color: '#78350F',
+  },
+  expertUtilitiesBar: {
+    marginTop: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 14,
+    paddingVertical: 13,
+    paddingHorizontal: 14,
+    borderWidth: 1.2,
+    borderColor: '#D99B26',
+    ...theme.shadows.card,
+  },
+  expertUtilitiesBarIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 11,
+    backgroundColor: theme.colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  expertUtilitiesBarTextCol: {
+    flex: 1,
+    minWidth: 0,
+  },
+  expertUtilitiesBarTitle: {
+    fontFamily: fonts.serifBold,
+    fontSize: 15.5,
+    lineHeight: 21,
+    color: theme.colors.primaryDark,
+  },
+  expertUtilitiesBarSub: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    lineHeight: 17,
+    color: theme.colors.textSecondary,
+    marginTop: 1,
+  },
+  expertUtilitiesBarBadge: {
+    minWidth: 22,
+    height: 22,
+    paddingHorizontal: 6,
+    borderRadius: 11,
+    backgroundColor: '#DC2626',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  expertUtilitiesBarBadgeText: {
+    fontFamily: fonts.bodyBold,
+    fontSize: 11,
+    lineHeight: 14,
+    color: '#FFFFFF',
   },
   searchHeaderBtn: {
     width: 40,

@@ -277,6 +277,17 @@ export function formatVnd(amount?: number | null): string {
 export function isValidAvatarUrl(url?: string | null): boolean {
   if (!url || typeof url !== 'string') return false;
   const trimmed = url.trim();
+  if (!trimmed) return false;
+  if (
+    trimmed.startsWith('data:image/') ||
+    trimmed.startsWith('file://') ||
+    trimmed.startsWith('content://') ||
+    trimmed.startsWith('blob:') ||
+    trimmed.startsWith('/uploads/') ||
+    trimmed.startsWith('uploads/')
+  ) {
+    return true;
+  }
   if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) return false;
   // Bỏ qua các địa chỉ máy chủ mẫu / giả lập chưa tồn tại trên internet
   if (trimmed.includes('storage.taxkeep.vn') || trimmed.includes('example.com')) return false;

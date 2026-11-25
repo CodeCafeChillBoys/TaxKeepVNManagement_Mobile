@@ -465,6 +465,10 @@ export const ProofDocumentsScreen: React.FC = () => {
   const currentFile = currentDoc ? selectedFiles[currentDoc.key] : undefined;
   const isCurrentUploaded = currentDoc ? Boolean(uploadedKeys[currentDoc.key]) : false;
   const hasPendingLocalFile = Boolean(currentFile && !currentFile.docId);
+  /** Giấy cũ trên server (sau đổi nhân thân) — có thể dùng lại để OCR quét lại. */
+  const canReuseStoredFile = Boolean(
+    currentFile?.needsReupload && currentFile?.uri && currentFile?.docId
+  );
   const currentError = currentDoc ? stepErrors[currentDoc.key] : undefined;
   const currentSuccessMsg = currentDoc ? stepSuccesses[currentDoc.key] : undefined;
   const isLastStep = currentStepIdx >= activeDocs.length - 1;
@@ -649,6 +653,70 @@ export const ProofDocumentsScreen: React.FC = () => {
     }
   };
 
+  const applyUploadSuccess = (
+    res: {
+      fileUrl?: string;
+      docId?: string;
+      docType?: string;
+      fileMimeType?: string;
+      uploadedAt?: string;
+      isReadable?: boolean;
+      isProfileComplete?: boolean;
+    },
+    sourceFile: SelectedDocFile,
+    successToastTitle: string
+  ) => {
+    if (!currentDoc) return;
+    const updatedDocFile: SelectedDocFile = {
+      ...sourceFile,
+      needsReupload: false,
+      sizeText: 'Đã xác thực & lưu trên hệ thống',
+      uri: res.fileUrl || sourceFile.uri,
+      docId: res.docId,
+      docType: res.docType || currentDoc.docType,
+      uploadedAt: res.uploadedAt || new Date().toISOString(),
+      isReadable: res.isReadable,
+    };
+
+    setSelectedFiles((prev) => ({ ...prev, [currentDoc.key]: updatedDocFile }));
+    setUploadedKeys((prev) => ({ ...prev, [currentDoc.key]: true }));
+    setSkippedKeys((prev) => ({ ...prev, [currentDoc.key]: false }));
+    setStepSuccesses((prev) => ({
+      ...prev,
+      [currentDoc.key]: `${currentDoc.shortLabel} đã được kiểm tra khớp hồ sơ và lưu thành công.`,
+    }));
+    if (res.isProfileComplete) {
+      setServerProfileComplete(true);
+    }
+
+    setServerDocs((prev) => {
+      const filtered = prev.filter((d) => d.docType !== (res.docType || currentDoc.docType));
+      return [
+        ...filtered,
+        {
+          docId: res.docId,
+          docType: res.docType || currentDoc.docType,
+          fileUrl: res.fileUrl,
+          fileMimeType: res.fileMimeType || sourceFile.type,
+          uploadedAt: res.uploadedAt || new Date().toISOString(),
+          isReadable: res.isReadable,
+          isCurrent: true,
+        },
+      ];
+    });
+
+    toast.success(`"${currentDoc.shortLabel}" đã xác thực thành công!`, successToastTitle);
+
+    if (currentStepIdx < activeDocs.length - 1) {
+      setLastSuccessNotice(
+        `Đã xác thực thành công: ${currentDoc.shortLabel}. Mời tiếp tục chứng từ tiếp theo.`
+      );
+      setCurrentStepIdx(currentStepIdx + 1);
+    } else {
+      setLastSuccessNotice(null);
+    }
+  };
+
   // Upload ĐÚNG 1 chứng từ ở bước hiện tại — thành công mới tự nhảy sang chứng từ tiếp theo
   const handleUploadCurrentStep = async () => {
     if (!currentDoc || uploading) return;
@@ -679,58 +747,49 @@ export const ProofDocumentsScreen: React.FC = () => {
         currentFile
       );
       if (!isMountedRef.current) return;
-
-      const updatedDocFile: SelectedDocFile = {
-        ...currentFile,
-        needsReupload: false,
-        sizeText: 'Đã xác thực & lưu trên hệ thống',
-        uri: res.fileUrl || currentFile.uri,
-        docId: res.docId,
-        docType: res.docType || currentDoc.docType,
-        uploadedAt: res.uploadedAt || new Date().toISOString(),
-        isReadable: res.isReadable,
-      };
-
-      setSelectedFiles((prev) => ({ ...prev, [currentDoc.key]: updatedDocFile }));
-      setUploadedKeys((prev) => ({ ...prev, [currentDoc.key]: true }));
-      setSkippedKeys((prev) => ({ ...prev, [currentDoc.key]: false }));
-      setStepSuccesses((prev) => ({
-        ...prev,
-        [currentDoc.key]: `${currentDoc.shortLabel} đã được kiểm tra khớp hồ sơ và lưu thành công.`,
-      }));
-      if (res.isProfileComplete) {
-        setServerProfileComplete(true);
+      applyUploadSuccess(res, currentFile, 'Tải chứng từ thành công');
+    } catch (err: unknown) {
+      if (!isMountedRef.current) return;
+      const parsed = parseDependentUploadError(err);
+      setStepErrors((prev) => ({ ...prev, [currentDoc.key]: parsed }));
+      toast.error(parsed.message, parsed.title);
+    } finally {
+      if (isMountedRef.current) {
+        setUploading(false);
       }
+    }
+  };
 
-      setServerDocs((prev) => {
-        const filtered = prev.filter((d) => d.docType !== (res.docType || currentDoc.docType));
-        return [
-          ...filtered,
-          {
-            docId: res.docId,
-            docType: res.docType || currentDoc.docType,
-            fileUrl: res.fileUrl,
-            fileMimeType: res.fileMimeType || currentFile.type,
-            uploadedAt: res.uploadedAt || new Date().toISOString(),
-            isReadable: res.isReadable,
-          },
-        ];
-      });
+  /** Dùng lại ảnh đã lưu trên server (sau đổi nhân thân) → tải về → OCR quét lại theo hồ sơ mới. */
+  const handleReverifyStoredCurrentStep = async () => {
+    if (!currentDoc || uploading || !currentFile?.uri) return;
 
-      toast.success(
-        `"${currentDoc.shortLabel}" đã tải lên và xác thực thành công!`,
-        'Tải chứng từ thành công'
+    if (!dependentId) {
+      toast.warning('Không tìm thấy thông tin hồ sơ người phụ thuộc để lưu.', 'Chưa có hồ sơ');
+      return;
+    }
+
+    if (!docsFromDb) {
+      toast.warning(RULES_NOT_LOADED_MESSAGE, 'Chưa có danh mục giấy tờ');
+      return;
+    }
+
+    setUploading(true);
+    setStepErrors((prev) => ({ ...prev, [currentDoc.key]: undefined }));
+    setLastSuccessNotice(null);
+
+    try {
+      const res = await dependentDocumentApi.reuploadStoredDocument(
+        dependentId,
+        currentFile.docType || currentDoc.docType,
+        {
+          uri: currentFile.uri,
+          name: currentFile.name,
+          type: currentFile.type,
+        }
       );
-
-      // Nếu còn chứng từ tiếp theo -> chuyển tự động sang chứng từ kế tiếp kèm thông báo thành công của bước vừa xong
-      if (currentStepIdx < activeDocs.length - 1) {
-        setLastSuccessNotice(
-          `Đã tải lên thành công: ${currentDoc.shortLabel}. Mời tiếp tục chứng từ tiếp theo.`
-        );
-        setCurrentStepIdx(currentStepIdx + 1);
-      } else {
-        setLastSuccessNotice(null);
-      }
+      if (!isMountedRef.current) return;
+      applyUploadSuccess(res, currentFile, 'Quét lại chứng từ thành công');
     } catch (err: unknown) {
       if (!isMountedRef.current) return;
       const parsed = parseDependentUploadError(err);
@@ -1171,6 +1230,8 @@ export const ProofDocumentsScreen: React.FC = () => {
                   <Text style={styles.selectedFileSize}>
                     {isCurrentUploaded && !hasPendingLocalFile
                       ? '✓ Đã xác thực & lưu trên máy chủ'
+                      : canReuseStoredFile
+                      ? 'Cần nộp lại • Có thể dùng lại ảnh đã lưu để AI quét lại'
                       : `Chưa tải lên • ${currentFile.sizeText}`}
                   </Text>
 
@@ -1266,6 +1327,39 @@ export const ProofDocumentsScreen: React.FC = () => {
                     {isLastStep ? 'Hoàn tất hồ sơ minh chứng' : 'Tiếp tục chứng từ tiếp theo'}
                   </Text>
                 </TouchableOpacity>
+              ) : canReuseStoredFile ? (
+                <>
+                  <TouchableOpacity
+                    style={[styles.primaryStepBtn, uploading && styles.btnDisabled]}
+                    onPress={() => void handleReverifyStoredCurrentStep()}
+                    disabled={uploading}
+                    activeOpacity={0.85}
+                    testID="reverifyStoredDocBtn"
+                  >
+                    {uploading ? (
+                      <>
+                        <ActivityIndicator size="small" color="#FFFFFF" />
+                        <Text style={styles.primaryStepBtnText}>Đang quét lại ảnh đã lưu...</Text>
+                      </>
+                    ) : (
+                      <>
+                        <Ionicons name="refresh-outline" size={20} color="#FFFFFF" />
+                        <Text style={styles.primaryStepBtnText}>Dùng lại ảnh này & quét lại</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.secondaryStepBtn}
+                    onPress={() =>
+                      handleOpenDocPicker(currentDoc.key, currentDoc.title, currentDoc.docType)
+                    }
+                    disabled={uploading}
+                    activeOpacity={0.8}
+                    testID="pickCurrentDocBtn"
+                  >
+                    <Text style={styles.secondaryStepBtnText}>Chọn / Chụp ảnh khác</Text>
+                  </TouchableOpacity>
+                </>
               ) : (
                 <TouchableOpacity
                   style={styles.primaryStepBtn}

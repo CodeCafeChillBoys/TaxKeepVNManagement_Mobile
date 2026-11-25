@@ -37,7 +37,12 @@ export function DrumHeader({ title, onBack, backTestID, right }: Props) {
               <Ionicons name="arrow-back" size={24} color={palette.textPrimary} />
             </TouchableOpacity>
           </View>
-          <Text style={[styles.title, { color: titleColor }]} numberOfLines={1}>
+          <Text
+            style={[styles.title, { color: titleColor }]}
+            numberOfLines={2}
+            adjustsFontSizeToFit
+            minimumFontScale={0.8}
+          >
             {title}
           </Text>
           <View style={[styles.side, styles.sideRight, { width: sideWidth }]}>
@@ -81,8 +86,9 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontFamily: fonts.serifBold,
     fontWeight: '700',
-    fontSize: 20,
-    lineHeight: 26,
+    fontSize: 19,
+    lineHeight: 25,
+    paddingHorizontal: 4,
     color: theme.colors.primaryDark,
   },
 });

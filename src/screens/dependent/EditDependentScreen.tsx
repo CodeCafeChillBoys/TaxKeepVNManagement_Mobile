@@ -347,7 +347,7 @@ export const EditDependentScreen: React.FC = () => {
               </View>
               <View style={styles.chipRow}>
                 <TouchableOpacity
-                  style={styles.chip}
+                  style={[styles.chip, styles.chipDay]}
                   onPress={() =>
                     openPicker(
                       'Ngày sinh',
@@ -360,11 +360,18 @@ export const EditDependentScreen: React.FC = () => {
                   }
                   testID="editDependentBirthDay"
                 >
-                  <Text style={styles.chipText}>Ngày {form.birthDay}</Text>
-                  <Ionicons name="chevron-down" size={16} color="#1A1A1A" />
+                  <Text
+                    style={styles.chipText}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.85}
+                  >
+                    Ngày {form.birthDay}
+                  </Text>
+                  <Ionicons name="chevron-down" size={15} color="#1A1A1A" style={styles.chevronIcon} />
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={styles.chip}
+                  style={[styles.chip, styles.chipMonth]}
                   onPress={() =>
                     openPicker(
                       'Tháng sinh',
@@ -373,11 +380,18 @@ export const EditDependentScreen: React.FC = () => {
                     )
                   }
                 >
-                  <Text style={styles.chipText}>Tháng {form.birthMonth}</Text>
-                  <Ionicons name="chevron-down" size={16} color="#1A1A1A" />
+                  <Text
+                    style={styles.chipText}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.85}
+                  >
+                    Tháng {form.birthMonth}
+                  </Text>
+                  <Ionicons name="chevron-down" size={15} color="#1A1A1A" style={styles.chevronIcon} />
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={styles.chip}
+                  style={[styles.chip, styles.chipYear]}
                   onPress={() =>
                     openPicker(
                       'Năm sinh',
@@ -386,8 +400,15 @@ export const EditDependentScreen: React.FC = () => {
                     )
                   }
                 >
-                  <Text style={styles.chipText}>{form.birthYear}</Text>
-                  <Ionicons name="chevron-down" size={16} color="#1A1A1A" />
+                  <Text
+                    style={styles.chipText}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.85}
+                  >
+                    {form.birthYear}
+                  </Text>
+                  <Ionicons name="chevron-down" size={15} color="#1A1A1A" style={styles.chevronIcon} />
                 </TouchableOpacity>
               </View>
             </View>
@@ -727,22 +748,29 @@ const styles = StyleSheet.create({
   ageBadgeText: { fontFamily: fonts.bodyBold, fontSize: 11 },
   ageAdultText: { color: '#2E7D32' },
   ageChildText: { color: '#E65100' },
-  chipRow: { flexDirection: 'row', gap: 8 },
+  chipRow: { flexDirection: 'row', gap: 6 },
   chip: {
     flex: 1,
+    minWidth: 0,
     minHeight: 44,
     backgroundColor: '#EAEAEE',
     borderRadius: 12,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 10,
-    gap: 4,
+    paddingHorizontal: 9,
+    gap: 3,
   },
+  chipDay: { flex: 1.08 },
+  chipMonth: { flex: 1.24 },
+  chipYear: { flex: 0.85 },
+  chevronIcon: { flexShrink: 0 },
   chipText: {
     flex: 1,
+    flexShrink: 1,
     fontFamily: fonts.bodyMedium,
     fontSize: 13,
+    lineHeight: 18,
     color: '#1A1A1A',
   },
   dropdown: {

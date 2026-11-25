@@ -308,22 +308,22 @@ export const TaxRegistrationScreen: React.FC = () => {
     if (isAge14OrOlder) {
       if (!citizenId.trim()) {
         toast.warning(
-          'Người phụ thuộc từ đủ 14 tuổi trở lên tại thời điểm hiệu lực bắt buộc phải có số Căn cước công dân.',
-          'Thiếu số Căn cước công dân'
+          'Người phụ thuộc từ đủ 14 tuổi trở lên tại thời điểm hiệu lực bắt buộc phải có mã số định danh.',
+          'Thiếu mã số định danh'
         );
         return;
       }
       if (citizenId.trim().length !== 12 && citizenId.trim().length !== 9) {
         toast.warning(
-          'Số Căn cước công dân phải gồm 12 chữ số (hoặc 9 chữ số CMND cũ).',
-          'Số căn cước chưa hợp lệ'
+          'Mã số định danh phải gồm 12 chữ số (hoặc 9 chữ số CMND cũ).',
+          'Mã số định danh chưa hợp lệ'
         );
         return;
       }
     } else if (!birthCertNumber.trim()) {
       toast.warning(
-        'Người phụ thuộc dưới 14 tuổi vui lòng nhập số giấy khai sinh hoặc mã định danh cá nhân.',
-        'Thiếu thông tin định danh'
+        'Người phụ thuộc dưới 14 tuổi vui lòng nhập mã số định danh.',
+        'Thiếu mã số định danh'
       );
       return;
     }
@@ -606,7 +606,7 @@ export const TaxRegistrationScreen: React.FC = () => {
             {isAge14OrOlder ? (
               <View style={styles.formGroup}>
                 <Text style={styles.fieldLabel}>
-                  Căn cước công dân <Text style={styles.required}>*Bắt buộc</Text>
+                  Mã số định danh <Text style={styles.required}>*Bắt buộc</Text>
                 </Text>
                 <TextInput
                   style={styles.inputField}
@@ -619,13 +619,13 @@ export const TaxRegistrationScreen: React.FC = () => {
                   testID="inputCitizenId"
                 />
                 <Text style={styles.fieldHintText}>
-                  Công dân từ đủ 14 tuổi bắt buộc cung cấp số Căn cước công dân.
+                  Công dân từ đủ 14 tuổi bắt buộc cung cấp mã số định danh (CCCD).
                 </Text>
               </View>
             ) : (
               <View style={styles.formGroup}>
                 <Text style={styles.fieldLabel}>
-                  Số giấy khai sinh <Text style={styles.required}>*Bắt buộc</Text>
+                  Mã số định danh <Text style={styles.required}>*Bắt buộc</Text>
                 </Text>
                 <TextInput
                   style={styles.inputField}
@@ -636,7 +636,7 @@ export const TaxRegistrationScreen: React.FC = () => {
                   testID="inputBirthCertNumber"
                 />
                 <Text style={styles.fieldHintText}>
-                  Trẻ em dưới 14 tuổi chưa cấp căn cước sử dụng số giấy khai sinh hoặc mã định danh.
+                  Trẻ em dưới 14 tuổi dùng mã số định danh cá nhân (hoặc số trên giấy tờ định danh tương ứng).
                 </Text>
               </View>
             )}

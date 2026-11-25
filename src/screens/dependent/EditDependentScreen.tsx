@@ -392,44 +392,57 @@ export const EditDependentScreen: React.FC = () => {
               </View>
             </View>
 
-            <View style={styles.formGroup}>
-              <Text style={styles.fieldLabel}>
-                Số CCCD {!form.birthCertNumber.trim() ? <Text style={styles.required}>*</Text> : null}
-              </Text>
-              <TextInput
-                style={styles.input}
-                value={form.citizenId}
-                onChangeText={(t) => patchForm({ citizenId: t.replace(/\D/g, '').slice(0, 12) })}
-                keyboardType="numeric"
-                maxLength={12}
-                editable={!isInactive}
-                placeholder="12 chữ số"
-                placeholderTextColor="#8E8E93"
-                testID="editDependentCitizenId"
-              />
-              {needCitizenId ? (
-                <Text style={styles.hint}>
-                  Gợi ý: Từ đủ 14 tuổi nên nhập CCCD 12 chữ số (hồ sơ cần ít nhất Số CCCD hoặc Số giấy khai sinh).
+            {/* Chỉ hiện 1 ô mã số định danh — theo tuổi (giống đăng ký); field còn lại null/không dùng thì ẩn */}
+            {needCitizenId ? (
+              <View style={styles.formGroup}>
+                <Text style={styles.fieldLabel}>
+                  Mã số định danh <Text style={styles.required}>*</Text>
                 </Text>
-              ) : null}
-            </View>
-
-            <View style={styles.formGroup}>
-              <Text style={styles.fieldLabel}>
-                Số giấy khai sinh {!form.citizenId.trim() ? <Text style={styles.required}>*</Text> : null}
-              </Text>
-              <TextInput
-                style={styles.input}
-                value={form.birthCertNumber}
-                onChangeText={(t) => patchForm({ birthCertNumber: t })}
-                maxLength={DEPENDENT_MAX_LENGTHS.birthCertNumber}
-                editable={!isInactive}
-                testID="editDependentBirthCert"
-              />
-              {!needCitizenId ? (
-                <Text style={styles.hint}>Dưới 14 tuổi có thể dùng số giấy khai sinh hoặc số định danh/CCCD.</Text>
-              ) : null}
-            </View>
+                <TextInput
+                  style={styles.input}
+                  value={form.citizenId}
+                  onChangeText={(t) =>
+                    patchForm({
+                      citizenId: t.replace(/\D/g, '').slice(0, 12),
+                      birthCertNumber: '',
+                    })
+                  }
+                  keyboardType="numeric"
+                  maxLength={12}
+                  editable={!isInactive}
+                  placeholder="12 chữ số"
+                  placeholderTextColor="#8E8E93"
+                  testID="editDependentCitizenId"
+                />
+                <Text style={styles.hint}>
+                  Từ đủ 14 tuổi bắt buộc mã số định danh 12 chữ số.
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.formGroup}>
+                <Text style={styles.fieldLabel}>
+                  Mã số định danh <Text style={styles.required}>*</Text>
+                </Text>
+                <TextInput
+                  style={styles.input}
+                  value={form.birthCertNumber}
+                  onChangeText={(t) =>
+                    patchForm({
+                      birthCertNumber: t,
+                      citizenId: '',
+                    })
+                  }
+                  maxLength={DEPENDENT_MAX_LENGTHS.birthCertNumber}
+                  editable={!isInactive}
+                  placeholder="Ví dụ: 079218001234"
+                  placeholderTextColor="#8E8E93"
+                  testID="editDependentBirthCert"
+                />
+                <Text style={styles.hint}>
+                  Dưới 14 tuổi dùng mã số định danh cá nhân (hoặc số trên giấy tờ định danh tương ứng).
+                </Text>
+              </View>
+            )}
 
             <View style={styles.formGroup}>
               <Text style={styles.fieldLabel}>Mã số thuế (nếu có)</Text>

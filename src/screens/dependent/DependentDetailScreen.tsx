@@ -467,15 +467,11 @@ export const DependentDetailScreen: React.FC = () => {
             <DetailRow label="Mối quan hệ" value={getRelationshipLabel(detail.relationship)} />
             <DetailRow label="Nhóm điều kiện" value={getGroupTitle(detail.currentGroup)} />
             <DetailRow label="Ngày sinh" value={`${formatDependentDate(detail.birthDate)} (${age} tuổi)`} />
-            {detail.citizenId ? (
-              <DetailRow label="Số CCCD" value={detail.citizenId} monospace />
-            ) : null}
-            {detail.birthCertNumber ? (
-              <DetailRow label="Số Giấy khai sinh" value={detail.birthCertNumber} monospace />
-            ) : null}
-            {!detail.citizenId && !detail.birthCertNumber ? (
-              <DetailRow label="Giấy tờ định danh" value="Chưa cập nhật" />
-            ) : null}
+            <DetailRow
+              label="Mã số định danh"
+              value={detail.citizenId || detail.birthCertNumber || 'Chưa cập nhật'}
+              monospace={Boolean(detail.citizenId || detail.birthCertNumber)}
+            />
             {detail.taxIdNumber ? (
               <DetailRow label="Mã số thuế NPT" value={detail.taxIdNumber} monospace />
             ) : null}

@@ -10,6 +10,7 @@ import {
   Modal,
   Linking,
   BackHandler,
+  Platform,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
@@ -594,10 +595,13 @@ export const ExpertDetailScreen: React.FC = () => {
                 <View style={styles.specChipsWrap}>
                   {expert.specializationNames.map((s, idx) => (
                     <View key={idx} style={styles.detailSpecChip}>
-                      <Ionicons name="checkmark-circle" size={14} color={theme.colors.gold} />
-                      <Text style={styles.detailSpecText} numberOfLines={2}>
-                        {s}
-                      </Text>
+                      <Ionicons
+                        name="checkmark-circle"
+                        size={14}
+                        color={theme.colors.gold}
+                        style={{ marginTop: 2, flexShrink: 0 }}
+                      />
+                      <Text style={styles.detailSpecText}>{s}</Text>
                     </View>
                   ))}
                 </View>
@@ -1747,25 +1751,31 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 8,
     marginTop: 8,
+    width: '100%',
   },
   detailSpecChip: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     backgroundColor: '#FAF5EA',
     paddingHorizontal: 10,
     paddingVertical: 6,
-    borderRadius: 6,
+    borderRadius: 8,
     borderWidth: 0.5,
     borderColor: '#E4D6BE',
-    gap: 5,
+    gap: 6,
     maxWidth: '100%',
     flexShrink: 1,
   },
   detailSpecText: {
     fontFamily: fonts.bodySemi,
     fontSize: 12,
+    lineHeight: 17,
     color: '#78350F',
     flexShrink: 1,
+    minWidth: 0,
+    ...(Platform.OS === 'web'
+      ? ({ wordBreak: 'break-word', overflowWrap: 'anywhere' } as any)
+      : {}),
   },
 
   // Certificates

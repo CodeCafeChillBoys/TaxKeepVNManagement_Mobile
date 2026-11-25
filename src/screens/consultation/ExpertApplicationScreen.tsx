@@ -62,14 +62,14 @@ export const ExpertApplicationScreen: React.FC = () => {
         prevRoute.name
       )
     ) {
-      navigation.navigate('Profile');
+      navigation.navigate('Home');
       return;
     }
 
     if (navigation.canGoBack()) {
       navigation.goBack();
     } else {
-      navigation.navigate('Profile');
+      navigation.navigate('Home');
     }
   }, [navigation]);
 
@@ -377,8 +377,12 @@ export const ExpertApplicationScreen: React.FC = () => {
   }, [currentUser?.fullName]);
 
   useEffect(() => {
+    if (userRole === 'expert' || userRole.includes('expert')) {
+      navigation.replace('ExpertProfile');
+      return;
+    }
     fetchApplicationData();
-  }, [fetchApplicationData]);
+  }, [fetchApplicationData, navigation, userRole]);
 
   // Tự động polling làm mới dữ liệu hồ sơ nếu còn chứng chỉ đang chờ AI OCR thẩm định
   useEffect(() => {

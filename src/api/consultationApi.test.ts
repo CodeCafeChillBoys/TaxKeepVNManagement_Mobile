@@ -685,6 +685,149 @@ describe('consultationApi', () => {
       expect(mockGet).toHaveBeenCalledWith('/api/v1/expert-certificate-configs');
       expect(res).toEqual(mockConfigs);
     });
+
+    it('gets expert received reviews and replies to a review', async () => {
+      const mockPaged = {
+        items: [
+          {
+            id: 'rev-1',
+            bookingId: 'b-1',
+            expertProfileId: 'exp-prof-1',
+            userId: 'u-client',
+            reviewerName: 'Trần Văn B',
+            rating: 5,
+            comment: 'Tư vấn rất tận tâm và rõ ràng!',
+            isAnonymous: false,
+            isPublished: true,
+            isFlaggedForReview: false,
+            createdAt: '2026-11-25T10:00:00Z',
+          },
+        ],
+        pagination: { page: 1, pageSize: 20, totalItems: 1, totalPages: 1 },
+      };
+      mockGet.mockResolvedValueOnce({ data: { success: true, data: mockPaged } });
+
+      const revRes = await consultationApi.getMyReceivedReviews({ page: 1, size: 20 });
+      expect(mockGet).toHaveBeenCalledWith('/api/v1/expert/reviews?page=1&size=20');
+      expect(revRes).toEqual(mockPaged);
+
+      const mockReplied = {
+        ...mockPaged.items[0],
+        expertReply: 'Cảm ơn anh đã tin tưởng dịch vụ tư vấn!',
+      };
+      mockPost.mockResolvedValueOnce({ data: { success: true, data: mockReplied } });
+
+      const replyRes = await consultationApi.replyToReview(
+        'rev-1',
+        '  Cảm ơn anh đã tin tưởng dịch vụ tư vấn!  '
+      );
+      expect(mockPost).toHaveBeenCalledWith('/api/v1/expert/reviews/rev-1/reply', {
+        reply: 'Cảm ơn anh đã tin tưởng dịch vụ tư vấn!',
+      });
+      expect(replyRes.expertReply).toBe('Cảm ơn anh đã tin tưởng dịch vụ tư vấn!');
+    });
+
+    it('resolves expertProfileId by userId and fetches GET /api/v1/experts/{id}', async () => {
+      const mockDetail = {
+        id: 'exp-prof-99',
+        userId: 'user-exp-99',
+        fullName: 'Nguyễn Minh Chuyên Gia',
+        jobTitle: 'Chuyên viên tư vấn thuế cao cấp',
+        yearsOfExperience: 8,
+        rating: 4.9,
+        totalReviews: 12,
+        completedConsultationsCount: 35,
+        isActive: true,
+        specializationNames: ['Quyết toán thuế TNCN'],
+        verifiedCertificates: [],
+        feePackages: [{ id: 'f1', sessionType: 'ONLINE_MEETING', durationMinutes: 60, fee: 300000 }],
+        recentReviews: [],
+        upcomingAvailableSlots: [],
+      };
+
+      mockGet
+        .mockResolvedValueOnce({
+          data: {
+            success: true,
+            data: {
+              items: [{ id: 'exp-prof-99', userId: 'USER-EXP-99', fullName: 'Nguyễn Minh Chuyên Gia' }],
+              pagination: { page: 1, pageSize: 50, totalItems: 1, totalPages: 1 },
+            },
+          },
+        })
+        .mockResolvedValueOnce({ data: { success: true, data: [] } })
+        .mockResolvedValueOnce({
+          data: {
+            success: true,
+            data: { items: [], pagination: { page: 1, pageSize: 1, totalItems: 0, totalPages: 0 } },
+          },
+        })
+        .mockResolvedValueOnce({
+          data: {
+            success: true,
+            data: { items: [], pagination: { page: 1, pageSize: 1, totalItems: 0, totalPages: 0 } },
+          },
+        })
+        .mockResolvedValueOnce({ data: { success: true, data: mockDetail } });
+
+      const profile = await consultationApi.getMyExpertProfile(
+        'user-exp-99',
+        'Nguyễn Minh Chuyên Gia'
+      );
+      expect(mockGet).toHaveBeenLastCalledWith('/api/v1/experts/exp-prof-99');
+      expect(profile).toEqual(mockDetail);
+    });
+
+    it('overlays locally saved custom avatar on getMyExpertProfile without requiring BE modification', async () => {
+      const { saveCustomExpertAvatar, clearCustomExpertAvatarCache } = require('../utils/expertAvatarStorage');
+      clearCustomExpertAvatarCache();
+      await saveCustomExpertAvatar('user-exp-avatar-1', 'data:image/png;base64,iVBORw0KGgo=');
+
+      mockGet
+        .mockResolvedValueOnce({
+          data: {
+            success: true,
+            data: {
+              items: [{ id: 'exp-prof-av', userId: 'user-exp-avatar-1', fullName: 'Trần Chuyên Gia' }],
+              pagination: { page: 1, pageSize: 50, totalItems: 1, totalPages: 1 },
+            },
+          },
+        })
+        .mockResolvedValueOnce({ data: { success: true, data: [] } })
+        .mockResolvedValueOnce({
+          data: {
+            success: true,
+            data: { items: [], pagination: { page: 1, pageSize: 1, totalItems: 0, totalPages: 0 } },
+          },
+        })
+        .mockResolvedValueOnce({
+          data: {
+            success: true,
+            data: { items: [], pagination: { page: 1, pageSize: 1, totalItems: 0, totalPages: 0 } },
+          },
+        })
+        .mockResolvedValueOnce({
+          data: {
+            success: true,
+            data: {
+              id: 'exp-prof-av',
+              userId: 'user-exp-avatar-1',
+              fullName: 'Trần Chuyên Gia',
+              avatarUrl: null,
+              specializationNames: ['Thuế TNCN'],
+              feePackages: [],
+              verifiedCertificates: [],
+            },
+          },
+        });
+
+      const profile = await consultationApi.getMyExpertProfile(
+        'user-exp-avatar-1',
+        'Trần Chuyên Gia'
+      );
+      expect(profile?.avatarUrl).toBe('data:image/png;base64,iVBORw0KGgo=');
+      clearCustomExpertAvatarCache();
+    });
   });
 });
 

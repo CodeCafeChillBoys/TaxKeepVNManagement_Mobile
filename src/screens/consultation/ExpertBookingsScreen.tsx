@@ -21,7 +21,6 @@ import { GoldDoubleRule } from '../../components/brand/GoldDoubleRule';
 import { Dialog } from '../../components/common/Dialog';
 import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { consultationApi } from '../../api/consultationApi';
-import { walletApi, WalletResponse } from '../../api/walletApi';
 import { toFriendlyConsultationError } from '../../utils/consultationFriendlyErrors';
 import type { BookingListItemResponse } from '../../types/consultation';
 import {
@@ -69,7 +68,6 @@ export const ExpertBookingsScreen: React.FC = () => {
   const [activeTab, setActiveTab] = useState<TabKey>(initialTab);
   const [pendingBookings, setPendingBookings] = useState<BookingListItemResponse[]>([]);
   const [allBookings, setAllBookings] = useState<BookingListItemResponse[]>([]);
-  const [expertWallet, setExpertWallet] = useState<WalletResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -115,14 +113,14 @@ export const ExpertBookingsScreen: React.FC = () => {
         prevRoute.name
       )
     ) {
-      navigation.navigate('Profile');
+      navigation.navigate('Home');
       return;
     }
 
     if (navigation.canGoBack()) {
       navigation.goBack();
     } else {
-      navigation.navigate('Profile');
+      navigation.navigate('Home');
     }
   }, [navigation]);
 
@@ -154,8 +152,7 @@ export const ExpertBookingsScreen: React.FC = () => {
       const apiStatusParam =
         statusFilter === 'ALL' || statusFilter === 'USER_NO_SHOW' ? undefined : statusFilter;
 
-      const [walletRes, bookingsRes, feeConfigsRes] = await Promise.allSettled([
-        walletApi.getMyWallet('EXPERT'),
+      const [bookingsRes, feeConfigsRes] = await Promise.allSettled([
         activeTab === 'PENDING'
           ? consultationApi.getExpertPendingBookings({ page: 1, size: 30 })
           : consultationApi.getExpertBookings({
@@ -165,10 +162,6 @@ export const ExpertBookingsScreen: React.FC = () => {
             }),
         consultationApi.getConsultationFeeConfigs({ isActive: true }),
       ]);
-
-      if (walletRes.status === 'fulfilled') {
-        setExpertWallet(walletRes.value);
-      }
 
       if (feeConfigsRes.status === 'fulfilled' && Array.isArray(feeConfigsRes.value)) {
         const activeTypes = Array.from(
@@ -551,36 +544,6 @@ export const ExpertBookingsScreen: React.FC = () => {
         </TouchableOpacity>
       </View>
       <GoldDoubleRule />
-
-      {/* ── REVENUE & WALLET KPI CARD ── */}
-      <View style={styles.kpiRevenueCard}>
-        <View style={styles.kpiRevenueLeft}>
-          <Text style={styles.kpiRevenueLabel}>Tổng thu nhập tích lũy</Text>
-          <Text style={styles.kpiRevenueValue}>{formatVnd(expertWallet?.totalEarned ?? 0)}</Text>
-          <Text style={styles.kpiAvailableSub}>
-            Số dư ví khả dụng: <Text style={{ fontFamily: fonts.bodyBold, color: '#059669' }}>{formatVnd(expertWallet?.availableBalance ?? 0)}</Text>
-          </Text>
-          {(expertWallet?.pendingEscrowReceivable ?? 0) > 0 && (
-            <Text style={[styles.kpiAvailableSub, { marginTop: 2 }]}>
-              Đang giữ bảo chứng chờ giải ngân:{' '}
-              <Text style={{ fontFamily: fonts.bodyBold, color: '#D97706' }}>
-                {formatVnd(expertWallet?.pendingEscrowReceivable ?? 0)}
-              </Text>
-            </Text>
-          )}
-        </View>
-
-        <TouchableOpacity
-          style={styles.kpiWalletBtn}
-          activeOpacity={0.85}
-          onPress={() => navigation.navigate('Wallet', { walletType: 'EXPERT' })}
-          accessibilityRole="button"
-          accessibilityLabel="TAXKEEP VN WALLET"
-        >
-          <Ionicons name="wallet-outline" size={16} color="#FFFFFF" />
-          <Text style={styles.kpiWalletBtnText}>TAXKEEP VN WALLET</Text>
-        </TouchableOpacity>
-      </View>
 
       {/* ── TAB SELECTOR ── */}
       <View style={styles.tabContainer}>
@@ -1430,58 +1393,6 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.error,
   },
   modalSubmitBtnText: {
-    fontFamily: fonts.bodyBold,
-    fontSize: 12,
-    color: '#FFFFFF',
-  },
-  kpiRevenueCard: {
-    marginHorizontal: 16,
-    marginTop: 12,
-    marginBottom: 4,
-    backgroundColor: 'rgba(255, 253, 247, 0.94)',
-    borderRadius: 14,
-    padding: 15,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderWidth: 1.5,
-    borderColor: '#E5D5B5',
-    ...theme.shadows.card,
-  },
-  kpiRevenueLeft: {
-    flex: 1,
-    marginRight: 10,
-  },
-  kpiRevenueLabel: {
-    fontFamily: fonts.bodyMedium,
-    fontSize: 12,
-    color: '#5A4A22',
-  },
-  kpiRevenueValue: {
-    fontFamily: fonts.serifBold,
-    fontSize: 22,
-    lineHeight: 28,
-    color: theme.colors.primaryDark,
-    fontVariant: ['tabular-nums'],
-    marginTop: 2,
-  },
-  kpiAvailableSub: {
-    fontFamily: fonts.body,
-    fontSize: 11.5,
-    color: theme.colors.textSecondary,
-    marginTop: 3,
-  },
-  kpiWalletBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: theme.colors.primary,
-    paddingVertical: 9,
-    paddingHorizontal: 13,
-    borderRadius: 8,
-    ...theme.shadows.button,
-  },
-  kpiWalletBtnText: {
     fontFamily: fonts.bodyBold,
     fontSize: 12,
     color: '#FFFFFF',

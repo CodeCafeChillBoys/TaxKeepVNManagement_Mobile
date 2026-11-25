@@ -10,7 +10,6 @@ import { RootNavigationProp, RootStackParamList } from '../../navigation/types';
 import { formatPersonName } from '../../utils/formatPersonName';
 import type { DependentCatalog } from '../../api/dependentDocumentApi';
 import { useDependentCatalog } from '../../hooks/useDependentCatalog';
-import { CONDITION_GROUP_OPTIONS } from './dependentEligibility';
 import { groupName, relationshipName } from './dependentGroupUtils';
 
 type Route = RouteProp<RootStackParamList, 'DependentSaved'>;
@@ -25,10 +24,7 @@ function relationshipLabel(catalog: DependentCatalog | null, code: string): stri
   return relationshipName(catalog, code) || '—';
 }
 
-function conditionLabel(catalog: DependentCatalog | null, groupCode: string, groupId?: number): string {
-  if (groupId && groupId >= 1 && groupId <= CONDITION_GROUP_OPTIONS.length) {
-    return CONDITION_GROUP_OPTIONS[groupId - 1].title;
-  }
+function conditionLabel(catalog: DependentCatalog | null, groupCode: string): string {
   return groupName(catalog, groupCode) || '—';
 }
 
@@ -93,7 +89,7 @@ export const DependentSavedScreen: React.FC = () => {
 
               <ReceiptRow label="Người phụ thuộc" value={displayName} />
               <ReceiptRow label="Quan hệ" value={relationshipLabel(catalog, relationship)} />
-              <ReceiptRow label="Điều kiện" value={conditionLabel(catalog, groupCode, groupId)} />
+              <ReceiptRow label="Điều kiện" value={conditionLabel(catalog, groupCode)} />
               <ReceiptRow label="Hiệu lực từ" value={formatEffectiveFrom(effectiveFromMonth)} last />
             </View>
 

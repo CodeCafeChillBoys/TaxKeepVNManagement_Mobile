@@ -35,19 +35,17 @@ import {
 } from './applyTaxRegistrationOcrFill';
 import {
   ageAtEffectiveFrom,
-  CONDITION_GROUP_OPTIONS,
   ELIGIBILITY_CLEARED_TOAST,
   filterEligibleGroups,
   filterEligibleRelationships,
+  findEligibleGroupOption,
   GROUP_NOT_CONFIGURED_MESSAGE,
-  intersectConfiguredGroups,
   isAge14OrOlderAtEffective,
-  isGroupEligibleFor,
+  isGroupCodeEligible,
   reconcileEligibilitySelection,
-  relationshipOptions,
   sanitizeOcrEligibility,
-  selectGroupsForTab,
 } from './dependentEligibility';
+import { uiTabForGroup } from './dependentGroupUtils';
 
 const DAYS = Array.from({ length: 31 }, (_, i) => String(i + 1).padStart(2, '0'));
 const MONTHS = Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, '0'));
@@ -66,8 +64,7 @@ type PickerType =
   | 'endDay'
   | 'endMonth'
   | 'endYear'
-  | 'conditionGroup'
-  | 'subGroup';
+  | 'conditionGroup';
 
 interface PickerItem {
   value: any;
@@ -128,7 +125,9 @@ export const TaxRegistrationScreen: React.FC = () => {
   const [endMonth, setEndMonth] = useState<string>('12');
   const [endYear, setEndYear] = useState<string>(String(currentYear));
 
-  const [selectedGroupIdx, setSelectedGroupIdx] = useState<number>(0);
+  const [selectedGroupCode, setSelectedGroupCode] = useState<string>('');
+  const [configuredGroupCodes, setConfiguredGroupCodes] = useState<string[] | null>(null);
+  const [groupsLoading, setGroupsLoading] = useState(false);
 
   const effectiveFromMonth = `${startYear}-${startMonth}`;
   const ageAtEffective = useMemo(
@@ -141,9 +140,10 @@ export const TaxRegistrationScreen: React.FC = () => {
     () => filterEligibleRelationships(catalog, ageAtEffective),
     [catalog, ageAtEffective]
   );
+  // Nhóm = catalog ∩ GET /dependents/groups?relationship= (đã có rule giấy tờ)
   const eligibleGroups = useMemo(
-    () => filterEligibleGroups(catalog, relationship, ageAtEffective),
-    [catalog, relationship, ageAtEffective]
+    () => filterEligibleGroups(catalog, relationship, ageAtEffective, configuredGroupCodes),
+    [catalog, relationship, ageAtEffective, configuredGroupCodes]
   );
 
   // Catalog về lần đầu: chọn sẵn quan hệ đầu danh sách (theo displayOrder) như form cũ
@@ -154,28 +154,66 @@ export const TaxRegistrationScreen: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eligibleRelationships]);
 
+  // Đổi quan hệ → tải danh sách nhóm đã cấu hình giấy tờ
+  useEffect(() => {
+    if (!relationship) {
+      setConfiguredGroupCodes(null);
+      return;
+    }
+    let cancelled = false;
+    setGroupsLoading(true);
+    dependentDocumentApi
+      .getGroups(relationship)
+      .then((codes) => {
+        if (!cancelled) setConfiguredGroupCodes(codes);
+      })
+      .catch(() => {
+        if (!cancelled) setConfiguredGroupCodes([]);
+      })
+      .finally(() => {
+        if (!cancelled) setGroupsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [relationship]);
+
+  // Khi danh sách nhóm đổi: giữ mã đang chọn nếu còn hợp lệ, không thì chọn nhóm đầu
+  useEffect(() => {
+    if (configuredGroupCodes === null) return;
+    if (eligibleGroups.length === 0) {
+      if (selectedGroupCode) setSelectedGroupCode('');
+      return;
+    }
+    const stillOk = findEligibleGroupOption(eligibleGroups, selectedGroupCode);
+    if (!stillOk) {
+      setSelectedGroupCode(eligibleGroups[0].code);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eligibleGroups, configuredGroupCodes]);
+
   const skipReconcileToastRef = useRef(true);
 
   useEffect(() => {
     if (!catalog) return;
     if (!relationship) {
-      // Lần đầu catalog về: effect trên vừa chọn sẵn quan hệ, không có gì để đối chiếu
       skipReconcileToastRef.current = false;
       return;
     }
     const { next, clearedGroup, clearedRelationship } = reconcileEligibilitySelection(
       catalog,
-      { relationship, selectedGroupIdx },
-      ageAtEffective
+      { relationship, selectedGroupCode },
+      ageAtEffective,
+      configuredGroupCodes
     );
     if (next.relationship !== relationship) setRelationship(next.relationship);
-    if (next.selectedGroupIdx !== selectedGroupIdx) setSelectedGroupIdx(next.selectedGroupIdx);
+    if (next.selectedGroupCode !== selectedGroupCode) setSelectedGroupCode(next.selectedGroupCode);
     if (!skipReconcileToastRef.current && (clearedGroup || clearedRelationship)) {
       toast.info(ELIGIBILITY_CLEARED_TOAST, 'Cần chọn lại điều kiện');
     }
     skipReconcileToastRef.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ageAtEffective, catalog]);
+  }, [ageAtEffective, catalog, configuredGroupCodes]);
 
   const [activePicker, setActivePicker] = useState<{
     title: string;
@@ -202,10 +240,12 @@ export const TaxRegistrationScreen: React.FC = () => {
       catalog,
       {
         relationship: patch.relationship,
+        selectedGroupCode: patch.selectedGroupCode,
         selectedGroupIdx: patch.selectedGroupIdx,
       },
       age,
-      relationship
+      relationship,
+      configuredGroupCodes
     );
 
     skipReconcileToastRef.current = true;
@@ -216,10 +256,10 @@ export const TaxRegistrationScreen: React.FC = () => {
     if (patch.citizenId !== undefined) setCitizenId(patch.citizenId);
     if (patch.birthCertNumber !== undefined) setBirthCertNumber(patch.birthCertNumber);
     if (sanitized.relationship) setRelationship(sanitized.relationship);
-    if (typeof sanitized.selectedGroupIdx === 'number') {
-      setSelectedGroupIdx(sanitized.selectedGroupIdx);
+    if (sanitized.selectedGroupCode) {
+      setSelectedGroupCode(sanitized.selectedGroupCode);
     } else if (sanitized.dropped) {
-      setSelectedGroupIdx(-1);
+      setSelectedGroupCode('');
     }
 
     navigation.setParams({ ocrDependentFill: undefined });
@@ -248,12 +288,18 @@ export const TaxRegistrationScreen: React.FC = () => {
       return;
     }
 
+    if (configuredGroupCodes !== null && configuredGroupCodes.length === 0) {
+      toast.warning(GROUP_NOT_CONFIGURED_MESSAGE, 'Chưa có nhóm điều kiện');
+      return;
+    }
+
+    const groupEnumCode = (chosenGroup || selectedGroupCode || '').trim();
     if (
-      selectedGroupIdx < 0 ||
-      !isGroupEligibleFor(catalog, selectedGroupIdx, relationship, ageAtEffective)
+      !groupEnumCode ||
+      !isGroupCodeEligible(catalog, groupEnumCode, relationship, configuredGroupCodes)
     ) {
       toast.warning(
-        'Vui lòng chọn nhóm điều kiện phù hợp với ngày sinh và thời điểm bắt đầu hiệu lực.',
+        'Vui lòng chọn nhóm điều kiện phù hợp với quan hệ và danh mục giấy tờ đã cấu hình.',
         'Nhóm điều kiện chưa phù hợp'
       );
       return;
@@ -292,35 +338,8 @@ export const TaxRegistrationScreen: React.FC = () => {
       return;
     }
     const effectiveTo = hasEndDate ? `${endYear}-${endMonth}` : `${startYear}-12`;
-
-    const candidates = selectGroupsForTab(catalog, selectedGroupIdx, relationship);
-    if (candidates.length === 0) {
-      toast.warning('Mối quan hệ và nhóm điều kiện chưa khớp nhau. Vui lòng chọn lại.', 'Cần kiểm tra lại');
-      return;
-    }
     const relCode = relationship;
-    let groupEnumCode = chosenGroup || '';
-    if (!groupEnumCode) {
-      // Chỉ cho chọn nhóm đã có rule giấy tờ trong DB (GET /dependents/groups)
-      const options = intersectConfiguredGroups(
-        candidates,
-        await dependentDocumentApi.getGroups(relCode)
-      );
-      if (!isMountedRef.current) return;
-      if (options.length === 0) {
-        toast.warning(GROUP_NOT_CONFIGURED_MESSAGE, 'Chưa có nhóm điều kiện');
-        return;
-      }
-      if (options.length > 1) {
-        openPicker(
-          'Chọn điều kiện giảm trừ',
-          'subGroup',
-          options.map((g) => ({ value: g.code, label: g.name || g.code }))
-        );
-        return;
-      }
-      groupEnumCode = options[0].code;
-    }
+    const selectedGroupIdx = Math.max(0, uiTabForGroup(catalog, groupEnumCode));
 
     let createdDependentId = '';
     try {
@@ -393,9 +412,7 @@ export const TaxRegistrationScreen: React.FC = () => {
           break;
         case 'relationship':
           setRelationship(val);
-          if (!isGroupEligibleFor(catalog, selectedGroupIdx, val, ageAtEffective)) {
-            setSelectedGroupIdx(-1);
-          }
+          setSelectedGroupCode('');
           break;
         case 'startDay':
           setStartDay(val);
@@ -416,17 +433,13 @@ export const TaxRegistrationScreen: React.FC = () => {
           setEndYear(val);
           break;
         case 'conditionGroup':
-          setSelectedGroupIdx(val);
+          setSelectedGroupCode(String(val || ''));
           break;
-        case 'subGroup':
-          setActivePicker(null);
-          handleContinue(val);
-          return;
       }
       setActivePicker(null);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [activePicker, catalog, selectedGroupIdx, ageAtEffective, handleContinue]
+    [activePicker]
   );
 
   const pickerKeyExtractor = useCallback((item: PickerItem) => String(item.value), []);
@@ -438,12 +451,10 @@ export const TaxRegistrationScreen: React.FC = () => {
   );
 
   const selectedRelLabel =
-    relationshipOptions(catalog).find((r) => r.value === relationship)?.label || 'Chọn mối quan hệ';
+    eligibleRelationships.find((r) => r.value === relationship)?.label || 'Chọn mối quan hệ';
   const selectedGroupTitle =
-    selectedGroupIdx >= 0
-      ? CONDITION_GROUP_OPTIONS.find((g) => g.index === selectedGroupIdx)?.title ??
-        'Chọn nhóm điều kiện'
-      : 'Chọn nhóm điều kiện';
+    findEligibleGroupOption(eligibleGroups, selectedGroupCode)?.title ||
+    (groupsLoading ? 'Đang tải nhóm điều kiện...' : 'Chọn nhóm điều kiện');
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -792,13 +803,21 @@ export const TaxRegistrationScreen: React.FC = () => {
 
               <TouchableOpacity
                 style={styles.dropdownSelector}
-                onPress={() =>
+                onPress={() => {
+                  if (groupsLoading) return;
+                  if (eligibleGroups.length === 0) {
+                    toast.warning(GROUP_NOT_CONFIGURED_MESSAGE, 'Chưa có nhóm điều kiện');
+                    return;
+                  }
                   openPicker(
                     'Chọn nhóm điều kiện đăng ký',
                     'conditionGroup',
-                    eligibleGroups.map((g) => ({ value: g.index, label: g.title }))
-                  )
-                }
+                    eligibleGroups.map((g) => ({
+                      value: g.code,
+                      label: g.subtitle ? `${g.title} — ${g.subtitle}` : g.title,
+                    }))
+                  );
+                }}
                 testID="selectConditionGroup"
               >
                 <Text style={styles.dropdownSelectorText} numberOfLines={1}>

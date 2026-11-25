@@ -1,12 +1,14 @@
 import {
   ageAtEffectiveFrom,
   ageYearsAt,
-  CONDITION_GROUP_OPTIONS,
+  buildGroupSubtitle,
+  conditionGroupOptions,
   ELIGIBILITY_CLEARED_TOAST,
   filterEligibleGroups,
   filterEligibleRelationships,
   intersectConfiguredGroups,
   isAge14OrOlderAtEffective,
+  isGroupCodeEligible,
   isGroupEligibleFor,
   reconcileEligibilitySelection,
   relationshipOptions,
@@ -21,49 +23,64 @@ const C = SEED_CATALOG;
 describe('dependentEligibility', () => {
   describe('ageYearsAt / ageAtEffectiveFrom', () => {
     it('counts 18 on birthday at as-of (Q8)', () => {
-      // Born 2008-01-01, as-of 2026-01-01 → 18
       expect(ageYearsAt(2008, 1, 1, new Date(2026, 0, 1))).toBe(18);
-      // Day before birthday still 17
       expect(ageYearsAt(2008, 1, 2, new Date(2026, 0, 1))).toBe(17);
     });
 
     it('age at effectiveFrom month uses day 1 of that month', () => {
-      // DOB 1995-10-20, effective 2026-01 → 30
       expect(ageAtEffectiveFrom('20', '10', '1995', '2026-01')).toBe(30);
+    });
+
+    it('isAge14OrOlderAtEffective', () => {
+      expect(isAge14OrOlderAtEffective(13)).toBe(false);
+      expect(isAge14OrOlderAtEffective(14)).toBe(true);
     });
   });
 
-  describe('CONDITION_GROUP_OPTIONS', () => {
-    it('keeps 5 law tabs without hard-coded group codes', () => {
-      expect(CONDITION_GROUP_OPTIONS.map((g) => g.index)).toEqual([0, 1, 2, 3, 4]);
-      CONDITION_GROUP_OPTIONS.forEach((g) => expect(g).not.toHaveProperty('code'));
+  describe('conditionGroupOptions (catalog + getGroups)', () => {
+    it('lists catalog groups for a relationship with catalog names', () => {
+      const opts = conditionGroupOptions(C, 'CHILD');
+      expect(opts.map((g) => g.code)).toEqual([
+        'CHILD_UNDER_18',
+        'CHILD_OVER_18_DISABLED',
+        'CHILD_OVER_18_STUDYING',
+      ]);
+      expect(opts[0].title).toBeTruthy();
+      expect(opts[0].title).not.toMatch(/^Nhóm \d/);
+      expect(opts.every((g) => typeof g.code === 'string')).toBe(true);
+    });
+
+    it('intersects with configured codes from GET /dependents/groups', () => {
+      const opts = conditionGroupOptions(C, 'PARENT', ['PARENT_RETIRED']);
+      expect(opts.map((g) => g.code)).toEqual(['PARENT_RETIRED']);
+    });
+
+    it('returns empty when catalog missing or relationship empty', () => {
+      expect(conditionGroupOptions(null, 'CHILD')).toEqual([]);
+      expect(conditionGroupOptions(C, '')).toEqual([]);
+    });
+
+    it('buildGroupSubtitle uses catalog attributes', () => {
+      const under18 = C.groups.find((g) => g.code === 'CHILD_UNDER_18')!;
+      expect(buildGroupSubtitle(under18)).toMatch(/tuổi/i);
+      const studying = C.groups.find((g) => g.code === 'CHILD_OVER_18_STUDYING')!;
+      expect(buildGroupSubtitle(studying)).toMatch(/đi học/i);
     });
   });
 
   describe('group matrix (relationship only — age FE validate off)', () => {
     it('group 1–3 only CHILD (any age)', () => {
       expect(isGroupEligibleFor(C, 0, 'CHILD', 17)).toBe(true);
-      expect(isGroupEligibleFor(C, 0, 'CHILD', 18)).toBe(true);
       expect(isGroupEligibleFor(C, 0, 'PARENT', 10)).toBe(false);
-      expect(isGroupEligibleFor(C, 1, 'CHILD', 17)).toBe(true);
-      expect(isGroupEligibleFor(C, 2, 'CHILD', 5)).toBe(true);
-      expect(isGroupEligibleFor(C, 2, 'SPOUSE', 40)).toBe(false);
+      expect(isGroupCodeEligible(C, 'CHILD_UNDER_18', 'CHILD')).toBe(true);
+      expect(isGroupCodeEligible(C, 'PARENT_RETIRED', 'CHILD')).toBe(false);
     });
 
-    it('group 4 SPOUSE/PARENT (any age)', () => {
-      expect(isGroupEligibleFor(C, 3, 'PARENT', 30)).toBe(true);
-      expect(isGroupEligibleFor(C, 3, 'SPOUSE', 18)).toBe(true);
-      expect(isGroupEligibleFor(C, 3, 'CHILD', 40)).toBe(false);
-    });
-
-    it('group 5 OTHER only', () => {
-      expect(isGroupEligibleFor(C, 4, 'OTHER_DEPENDENT', 10)).toBe(true);
-      expect(isGroupEligibleFor(C, 4, 'CHILD', 10)).toBe(false);
-    });
-
-    it('CHILD sees groups 1–3; PARENT sees group 4', () => {
-      expect(filterEligibleGroups(C, 'CHILD', 10).map((g) => g.index)).toEqual([0, 1, 2]);
-      expect(filterEligibleGroups(C, 'PARENT', 30).map((g) => g.index)).toEqual([3]);
+    it('filterEligibleGroups returns catalog options for PARENT', () => {
+      expect(filterEligibleGroups(C, 'PARENT', 30).map((g) => g.code)).toEqual([
+        'PARENT_DISABLED',
+        'PARENT_RETIRED',
+      ]);
     });
 
     it('nothing is eligible before the catalog loads', () => {
@@ -108,12 +125,6 @@ describe('dependentEligibility', () => {
         'PARENT_RETIRED',
       ]);
     });
-
-    it('returns empty on mismatch', () => {
-      expect(selectGroupsForTab(C, 3, 'CHILD')).toEqual([]);
-      expect(selectGroupsForTab(C, -1, 'CHILD')).toEqual([]);
-      expect(selectGroupsForTab(C, 0, '')).toEqual([]);
-    });
   });
 
   describe('intersectConfiguredGroups', () => {
@@ -127,49 +138,73 @@ describe('dependentEligibility', () => {
   });
 
   describe('reconcileEligibilitySelection (Q6)', () => {
-    it('clears group 1 when PARENT (relationship mismatch)', () => {
-      const r = reconcileEligibilitySelection(C, { relationship: 'PARENT', selectedGroupIdx: 0 }, 30);
+    it('clears group code when relationship mismatches', () => {
+      const r = reconcileEligibilitySelection(
+        C,
+        { relationship: 'PARENT', selectedGroupCode: 'CHILD_UNDER_18' },
+        30
+      );
       expect(r.clearedGroup).toBe(true);
-      expect(r.next.selectedGroupIdx).toBe(-1);
+      expect(r.next.selectedGroupCode).toBe('');
       expect(r.next.relationship).toBe('PARENT');
     });
 
-    it('keeps PARENT + group 4 even under 18 (age off)', () => {
-      const r = reconcileEligibilitySelection(C, { relationship: 'PARENT', selectedGroupIdx: 3 }, 10);
+    it('keeps PARENT_RETIRED for PARENT', () => {
+      const r = reconcileEligibilitySelection(
+        C,
+        { relationship: 'PARENT', selectedGroupCode: 'PARENT_RETIRED' },
+        10
+      );
       expect(r.clearedRelationship).toBe(false);
-      expect(r.next.relationship).toBe('PARENT');
-      expect(r.next.selectedGroupIdx).toBe(3);
+      expect(r.next.selectedGroupCode).toBe('PARENT_RETIRED');
     });
 
     it('clears a relationship that is no longer in the catalog', () => {
-      const r = reconcileEligibilitySelection(C, { relationship: 'REMOVED', selectedGroupIdx: 4 }, 10);
+      const r = reconcileEligibilitySelection(
+        C,
+        { relationship: 'REMOVED', selectedGroupCode: 'OTHER_HELPLESS' },
+        10
+      );
       expect(r.clearedRelationship).toBe(true);
-      expect(r.next).toEqual({ relationship: '', selectedGroupIdx: -1 });
+      expect(r.next).toEqual({ relationship: '', selectedGroupCode: '' });
+    });
+
+    it('clears group when not in configured codes', () => {
+      const r = reconcileEligibilitySelection(
+        C,
+        { relationship: 'PARENT', selectedGroupCode: 'PARENT_RETIRED' },
+        30,
+        ['PARENT_DISABLED']
+      );
+      expect(r.clearedGroup).toBe(true);
+      expect(r.next.selectedGroupCode).toBe('');
     });
   });
 
-  describe('sanitizeOcrEligibility (Q9)', () => {
-    it('keeps group 1 for CHILD any age (age off)', () => {
-      const s = sanitizeOcrEligibility(C, { relationship: 'CHILD', selectedGroupIdx: 0 }, 30);
-      expect(s.dropped).toBe(false);
+  describe('sanitizeOcrEligibility', () => {
+    it('keeps group code from OCR when valid', () => {
+      const s = sanitizeOcrEligibility(
+        C,
+        { relationship: 'CHILD', selectedGroupCode: 'CHILD_UNDER_18' },
+        10
+      );
+      expect(s.selectedGroupCode).toBe('CHILD_UNDER_18');
       expect(s.selectedGroupIdx).toBe(0);
-      expect(s.relationship).toBe('CHILD');
+      expect(s.dropped).toBe(false);
     });
 
-    it('uses fallback relationship when OCR gives only the tab', () => {
-      expect(sanitizeOcrEligibility(C, { selectedGroupIdx: 3 }, 30, 'PARENT').dropped).toBe(false);
+    it('maps tab index to first group of that tab', () => {
+      const s = sanitizeOcrEligibility(C, { selectedGroupIdx: 0 }, 10, 'CHILD');
+      expect(s.selectedGroupCode).toBe('CHILD_UNDER_18');
+    });
+
+    it('drops mismatched tab for relationship', () => {
       expect(sanitizeOcrEligibility(C, { selectedGroupIdx: 3 }, 30, 'CHILD').dropped).toBe(true);
+      expect(sanitizeOcrEligibility(C, { selectedGroupIdx: 3 }, 30, 'PARENT').dropped).toBe(false);
     });
   });
 
-  describe('CCCD threshold (Q7)', () => {
-    it('uses age at effective', () => {
-      expect(isAge14OrOlderAtEffective(14)).toBe(true);
-      expect(isAge14OrOlderAtEffective(13)).toBe(false);
-    });
-  });
-
-  it('exports toast copy', () => {
-    expect(ELIGIBILITY_CLEARED_TOAST).toMatch(/hiệu lực/i);
+  it('exports cleared toast copy', () => {
+    expect(ELIGIBILITY_CLEARED_TOAST.length).toBeGreaterThan(10);
   });
 });

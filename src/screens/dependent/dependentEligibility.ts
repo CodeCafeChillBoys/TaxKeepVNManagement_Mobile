@@ -1,46 +1,31 @@
 /**
  * Eligibility: tuổi tại ngày bắt đầu hiệu lực → lọc quan hệ / nhóm NPT.
- * Grill Q1–Q12 (2026-09-20). Quan hệ và nhóm lấy từ catalog BE, tab "Nhóm 1–5" tính qua uiTabForGroup.
+ * Quan hệ lấy từ GET /dependents/catalog; nhóm chọn được = catalog ∩ GET /dependents/groups?relationship=.
  */
 
 import type { CatalogGroup, DependentCatalog } from '../../api/dependentDocumentApi';
-import { groupsForRelationship, uiTabForCatalogGroup } from './dependentGroupUtils';
+import {
+  findCatalogGroup,
+  groupsForRelationship,
+  uiTabForCatalogGroup,
+  uiTabForGroup,
+} from './dependentGroupUtils';
 
 export type RelationshipCode = string;
 
 type MaybeCatalog = DependentCatalog | null | undefined;
 
-/** UI group index 0..4 (Nhóm 1..5). */
+/** UI group index 0..4 (Nhóm 1..5) — chỉ còn dùng cho màn giải thích luật / ảnh minh chứng. */
 export type ConditionGroupIndex = 0 | 1 | 2 | 3 | 4;
 
-/** Tiêu đề / mô tả 5 tab theo luật (nội dung luật, không phải mã nhóm). */
-export const CONDITION_GROUP_OPTIONS = [
-  {
-    index: 0 as ConditionGroupIndex,
-    title: 'Nhóm 1: Con dưới 18 tuổi',
-    subtitle: 'Độ tuổi tại ngày hiệu lực < 18 tuổi.',
-  },
-  {
-    index: 1 as ConditionGroupIndex,
-    title: 'Nhóm 2: Con từ 18 tuổi trở lên đang đi học',
-    subtitle: 'Đủ 18 tuổi trở lên tại ngày hiệu lực và còn đang theo học.',
-  },
-  {
-    index: 2 as ConditionGroupIndex,
-    title: 'Nhóm 3: Con bị khuyết tật / Mất khả năng lao động',
-    subtitle: 'Quan hệ Con — mọi độ tuổi (khuyết tật / mất khả năng lao động).',
-  },
-  {
-    index: 3 as ConditionGroupIndex,
-    title: 'Nhóm 4: Vợ / Chồng hoặc Cha / Mẹ',
-    subtitle: 'Vợ, chồng, cha mẹ — đủ 18 tuổi trở lên tại ngày hiệu lực.',
-  },
-  {
-    index: 4 as ConditionGroupIndex,
-    title: 'Nhóm 5: Cá nhân không nơi nương tựa khác',
-    subtitle: 'Anh, chị, em ruột, ông bà, cô dì chú bác, cháu ruột.',
-  },
-];
+/** Một lựa chọn nhóm trên form đăng ký: mã + nhãn từ catalog. */
+export type ConditionGroupOption = {
+  code: string;
+  title: string;
+  subtitle: string;
+  /** Tab luật 0..4 (phục vụ điều hướng ProofDocuments / OCR cũ). */
+  index: number;
+};
 
 export type RelationshipOption = { value: string; label: string };
 
@@ -50,6 +35,62 @@ export function relationshipOptions(catalog: MaybeCatalog): RelationshipOption[]
   return [...catalog.relationships]
     .sort((a, b) => a.displayOrder - b.displayOrder)
     .map((r) => ({ value: r.code, label: r.name || r.code }));
+}
+
+/** Mô tả ngắn từ thuộc tính nhóm catalog (tuổi / đi học / khuyết tật). */
+export function buildGroupSubtitle(group: CatalogGroup): string {
+  const parts: string[] = [];
+  if (group.minAge != null && group.maxAge != null) {
+    parts.push(`Từ ${group.minAge} đến dưới ${group.maxAge} tuổi`);
+  } else if (group.maxAge != null) {
+    parts.push(`Dưới ${group.maxAge} tuổi`);
+  } else if (group.minAge != null) {
+    parts.push(`Từ ${group.minAge} tuổi trở lên`);
+  }
+  if (group.requireStudying) parts.push('Đang đi học');
+  if (group.requireDisabled) parts.push('Khuyết tật / mất khả năng lao động');
+  return parts.join(' · ') || 'Theo quy định hiện hành.';
+}
+
+/** Giao nhóm catalog với mã đã có rule (GET /dependents/groups). */
+export function intersectConfiguredGroups(
+  candidates: CatalogGroup[],
+  configuredCodes: string[]
+): CatalogGroup[] {
+  const configured = new Set(configuredCodes.map((c) => String(c || '').toUpperCase()));
+  return candidates.filter((g) => configured.has(g.code.toUpperCase()));
+}
+
+/**
+ * Nhóm điều kiện để chọn trên UI.
+ * - `catalog`: GET /dependents/catalog
+ * - `configuredCodes`: GET /dependents/groups?relationship=… (null/undefined = chưa lọc theo rule)
+ */
+export function conditionGroupOptions(
+  catalog: MaybeCatalog,
+  relationship: string,
+  configuredCodes?: string[] | null
+): ConditionGroupOption[] {
+  let groups = groupsForRelationship(catalog, relationship);
+  if (configuredCodes) {
+    groups = intersectConfiguredGroups(groups, configuredCodes);
+  }
+  return groups.map((g) => ({
+    code: g.code,
+    title: g.name || g.code,
+    subtitle: buildGroupSubtitle(g),
+    index: uiTabForCatalogGroup(g),
+  }));
+}
+
+/** @deprecated Dùng conditionGroupOptions — giữ tên cũ cho chỗ gọi filterEligibleGroups. */
+export function filterEligibleGroups(
+  catalog: MaybeCatalog,
+  relationship: string,
+  _ageAtEffective: number,
+  configuredCodes?: string[] | null
+): ConditionGroupOption[] {
+  return conditionGroupOptions(catalog, relationship, configuredCodes);
 }
 
 /** Tuổi tại `asOf` (thường = ngày 01 của tháng hiệu lực). Q8: đủ N trong ngày sinh nhật → age >= N. */
@@ -98,7 +139,7 @@ export function isAge14OrOlderAtEffective(ageAtEffective: number): boolean {
   return ageAtEffective >= 14;
 }
 
-/** Nhóm catalog của quan hệ thuộc tab UI đang chọn (1 nhóm thì chọn luôn, nhiều nhóm thì mở picker). */
+/** Nhóm catalog của quan hệ thuộc tab UI (ảnh minh chứng / giải thích luật). */
 export function selectGroupsForTab(
   catalog: MaybeCatalog,
   groupIndex: number,
@@ -107,6 +148,19 @@ export function selectGroupsForTab(
   if (groupIndex < 0 || !relationship) return [];
   return groupsForRelationship(catalog, relationship).filter(
     (g) => uiTabForCatalogGroup(g) === groupIndex
+  );
+}
+
+/** Mã nhóm có trong catalog, đúng quan hệ (và đúng danh sách đã cấu hình nếu truyền vào). */
+export function isGroupCodeEligible(
+  catalog: MaybeCatalog,
+  groupCode: string,
+  relationship: string,
+  configuredCodes?: string[] | null
+): boolean {
+  if (!groupCode || !relationship) return false;
+  return conditionGroupOptions(catalog, relationship, configuredCodes).some(
+    (g) => g.code.toUpperCase() === groupCode.toUpperCase()
   );
 }
 
@@ -123,16 +177,6 @@ export function isGroupEligibleFor(
   return selectGroupsForTab(catalog, groupIndex, relationship).length > 0;
 }
 
-export function filterEligibleGroups(
-  catalog: MaybeCatalog,
-  relationship: string,
-  ageAtEffective: number
-): typeof CONDITION_GROUP_OPTIONS {
-  return CONDITION_GROUP_OPTIONS.filter((g) =>
-    isGroupEligibleFor(catalog, g.index, relationship, ageAtEffective)
-  );
-}
-
 export function filterEligibleRelationships(
   catalog: MaybeCatalog,
   ageAtEffective: number
@@ -144,20 +188,21 @@ export function filterEligibleRelationships(
 
 export type EligibilitySelection = {
   relationship: string;
-  selectedGroupIdx: number;
+  /** Mã nhóm catalog đang chọn (vd CHILD_UNDER_18). */
+  selectedGroupCode: string;
 };
 
 /**
  * Sau khi đổi tuổi/hiệu lực/quan hệ/nhóm: nếu selection invalid → clear phần hỏng.
- * Q6: xóa nhóm (và quan hệ nếu quan hệ cũng không còn hợp lệ).
  */
 export function reconcileEligibilitySelection(
   catalog: MaybeCatalog,
   current: EligibilitySelection,
-  ageAtEffective: number
+  ageAtEffective: number,
+  configuredCodes?: string[] | null
 ): { next: EligibilitySelection; clearedGroup: boolean; clearedRelationship: boolean } {
   let relationship = current.relationship;
-  let selectedGroupIdx = current.selectedGroupIdx;
+  let selectedGroupCode = current.selectedGroupCode;
   let clearedRelationship = false;
   let clearedGroup = false;
 
@@ -166,36 +211,47 @@ export function reconcileEligibilitySelection(
   );
   if (!relOk) {
     relationship = '';
-    selectedGroupIdx = -1;
+    selectedGroupCode = '';
     clearedRelationship = Boolean(current.relationship);
-    clearedGroup = current.selectedGroupIdx >= 0;
+    clearedGroup = Boolean(current.selectedGroupCode);
     return {
-      next: { relationship, selectedGroupIdx },
+      next: { relationship, selectedGroupCode },
       clearedGroup,
       clearedRelationship,
     };
   }
 
-  if (!isGroupEligibleFor(catalog, selectedGroupIdx, relationship, ageAtEffective)) {
-    selectedGroupIdx = -1;
-    clearedGroup = current.selectedGroupIdx >= 0;
+  if (!isGroupCodeEligible(catalog, selectedGroupCode, relationship, configuredCodes)) {
+    selectedGroupCode = '';
+    clearedGroup = Boolean(current.selectedGroupCode);
   }
 
   return {
-    next: { relationship, selectedGroupIdx },
+    next: { relationship, selectedGroupCode },
     clearedGroup,
     clearedRelationship,
   };
 }
 
-/** OCR: giữ field khác; bỏ nhóm/quan hệ nếu không hợp lệ với tuổi tại hiệu lực. */
+/** OCR: giữ field khác; bỏ nhóm/quan hệ nếu không hợp lệ. Ưu tiên mã nhóm; tab cũ map sang nhóm đầu tiên của tab. */
 export function sanitizeOcrEligibility(
   catalog: MaybeCatalog,
-  patch: { relationship?: string; selectedGroupIdx?: number },
+  patch: {
+    relationship?: string;
+    selectedGroupCode?: string;
+    selectedGroupIdx?: number;
+  },
   ageAtEffective: number,
-  fallbackRelationship = ''
-): { relationship?: string; selectedGroupIdx?: number; dropped: boolean } {
+  fallbackRelationship = '',
+  configuredCodes?: string[] | null
+): {
+  relationship?: string;
+  selectedGroupCode?: string;
+  selectedGroupIdx?: number;
+  dropped: boolean;
+} {
   let relationship = patch.relationship;
+  let selectedGroupCode = patch.selectedGroupCode;
   let selectedGroupIdx = patch.selectedGroupIdx;
   let dropped = false;
 
@@ -204,22 +260,41 @@ export function sanitizeOcrEligibility(
       (r) => r.value === relationship
     );
     if (!relOk) {
-      relationship = undefined;
-      selectedGroupIdx = undefined;
-      dropped = true;
-      return { relationship, selectedGroupIdx, dropped };
+      return {
+        relationship: undefined,
+        selectedGroupCode: undefined,
+        selectedGroupIdx: undefined,
+        dropped: true,
+      };
     }
   }
 
-  if (typeof selectedGroupIdx === 'number') {
-    const rel = relationship || fallbackRelationship;
+  const rel = relationship || fallbackRelationship;
+
+  if (!selectedGroupCode && typeof selectedGroupIdx === 'number' && rel) {
+    const fromTab = selectGroupsForTab(catalog, selectedGroupIdx, rel);
+    const filtered = configuredCodes
+      ? intersectConfiguredGroups(fromTab, configuredCodes)
+      : fromTab;
+    if (filtered[0]) selectedGroupCode = filtered[0].code;
+  }
+
+  if (selectedGroupCode) {
+    if (!isGroupCodeEligible(catalog, selectedGroupCode, rel, configuredCodes)) {
+      selectedGroupCode = undefined;
+      selectedGroupIdx = undefined;
+      dropped = true;
+    } else {
+      selectedGroupIdx = Math.max(0, uiTabForGroup(catalog, selectedGroupCode));
+    }
+  } else if (typeof selectedGroupIdx === 'number') {
     if (!isGroupEligibleFor(catalog, selectedGroupIdx, rel, ageAtEffective)) {
       selectedGroupIdx = undefined;
       dropped = true;
     }
   }
 
-  return { relationship, selectedGroupIdx, dropped };
+  return { relationship, selectedGroupCode, selectedGroupIdx, dropped };
 }
 
 export const ELIGIBILITY_CLEARED_TOAST =
@@ -227,11 +302,21 @@ export const ELIGIBILITY_CLEARED_TOAST =
 
 export const GROUP_NOT_CONFIGURED_MESSAGE = 'Nhóm này chưa được cấu hình giấy tờ.';
 
-/** Giao nhóm của tab với danh sách nhóm đã có rule active (GET /dependents/groups). */
-export function intersectConfiguredGroups(
-  candidates: CatalogGroup[],
-  configuredCodes: string[]
-): CatalogGroup[] {
-  const configured = new Set(configuredCodes.map((c) => String(c || '').toUpperCase()));
-  return candidates.filter((g) => configured.has(g.code.toUpperCase()));
+/** Tìm nhóm catalog theo mã (helper cho form). */
+export function findEligibleGroupOption(
+  options: ConditionGroupOption[],
+  code?: string | null
+): ConditionGroupOption | undefined {
+  const c = String(code || '').toUpperCase();
+  if (!c) return undefined;
+  return options.find((g) => g.code.toUpperCase() === c);
+}
+
+/** Nhóm đầu tiên trong catalog (dùng khi không có mã OCR). */
+export function firstCatalogGroupCode(catalog: MaybeCatalog, relationship: string): string {
+  return groupsForRelationship(catalog, relationship)[0]?.code || '';
+}
+
+export function catalogGroupExists(catalog: MaybeCatalog, code?: string | null): boolean {
+  return Boolean(findCatalogGroup(catalog, code));
 }

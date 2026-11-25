@@ -35,7 +35,7 @@ export type RootStackParamList = {
     | {
         groupIndex?: number;
         dependentId?: string;
-        /** Checklist từ PATCH /group — ưu tiên hơn LAW_GROUP_SPECS local */
+        /** Checklist từ PATCH /group — ưu tiên hơn rule lọc theo tab/catalog */
         requiredDocuments?: string[];
         dependentData?: {
           fullName: string;

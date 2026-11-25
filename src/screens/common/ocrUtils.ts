@@ -76,11 +76,12 @@ export function normalizeGender(raw?: string | null): string {
 
 export type SuggestedGroupAlias = {
   selectedGroupIdx: number;
+  groupCode: string;
   relationship?: string;
 };
 
 /**
- * suggestedGroup AI/BE → tab form TaxRegistration + quan hệ, tra theo catalog nhóm NPT (PRD §8.4).
+ * suggestedGroup AI/BE → mã nhóm catalog + tab luật + quan hệ (PRD §8.4).
  * Mã không có trong catalog thì không tự chọn nhóm.
  */
 export function aliasSuggestedGroup(
@@ -90,7 +91,10 @@ export function aliasSuggestedGroup(
   if (!code || !code.trim()) return null;
   const group = findCatalogGroup(catalog, code);
   if (!group) return null;
-  const alias: SuggestedGroupAlias = { selectedGroupIdx: uiTabForCatalogGroup(group) };
+  const alias: SuggestedGroupAlias = {
+    selectedGroupIdx: uiTabForCatalogGroup(group),
+    groupCode: group.code,
+  };
   if (group.relationshipCode) alias.relationship = group.relationshipCode;
   return alias;
 }
@@ -187,6 +191,7 @@ export function mapToDependentFill(
   if (groupCode) fill.suggestedGroup = groupCode;
   if (alias) {
     fill.selectedGroupIdx = alias.selectedGroupIdx;
+    fill.selectedGroupCode = alias.groupCode;
     if (alias.relationship) fill.relationship = alias.relationship;
   }
 

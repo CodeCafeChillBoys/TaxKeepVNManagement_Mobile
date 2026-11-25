@@ -19,6 +19,8 @@ export interface DependentItem {
   groupTitle: string;
   isProfileComplete: boolean;
   requiredDocs: string[];
+  /** Giấy tờ bắt buộc còn thiếu (từ BE, tính theo rule hiện tại). */
+  missingDocuments?: string[];
   citizenId?: string;
   birthCertNumber?: string;
   relationship?: string;
@@ -256,21 +258,30 @@ export const dependentDocumentApi = {
       const res = await apiClient.get<any>('/api/v1/dependents', { params: query });
       const list = res.data?.data?.items || res.data?.data || res.data;
       if (Array.isArray(list)) {
-        return list.map((item: any) => ({
-          id: item.dependentId || item.id,
-          fullName: item.fullName || item.name || 'Người phụ thuộc',
-          birthDate: (item.birthDate || '').split('T')[0],
-          currentGroup: item.currentGroup || '',
-          groupTitle: item.groupTitle || getGroupTitle(item.currentGroup),
-          isProfileComplete: Boolean(item.isProfileComplete),
-          requiredDocs: item.requiredDocuments || item.requiredDocs || ['BIRTH_CERTIFICATE'],
-          citizenId: item.citizenId,
-          birthCertNumber: item.birthCertNumber,
-          relationship: item.relationship,
-          effectiveFromMonth: item.effectiveFromMonth,
-          effectiveToMonth: item.effectiveToMonth,
-          status: item.status || 'ACTIVE',
-        }));
+        return list.map((item: any) => {
+          const missingDocuments = Array.isArray(item.missingDocuments)
+            ? item.missingDocuments.filter((x: unknown) => typeof x === 'string' && x.trim())
+            : [];
+          // Đủ hồ sơ = cờ BE và không còn giấy bắt buộc thiếu (tránh lệch list vs chi tiết)
+          const isProfileComplete =
+            Boolean(item.isProfileComplete) && missingDocuments.length === 0;
+          return {
+            id: item.dependentId || item.id,
+            fullName: item.fullName || item.name || 'Người phụ thuộc',
+            birthDate: (item.birthDate || '').split('T')[0],
+            currentGroup: item.currentGroup || '',
+            groupTitle: item.groupTitle || getGroupTitle(item.currentGroup),
+            isProfileComplete,
+            requiredDocs: item.requiredDocuments || item.requiredDocs || ['BIRTH_CERTIFICATE'],
+            missingDocuments,
+            citizenId: item.citizenId,
+            birthCertNumber: item.birthCertNumber,
+            relationship: item.relationship,
+            effectiveFromMonth: item.effectiveFromMonth,
+            effectiveToMonth: item.effectiveToMonth,
+            status: item.status || 'ACTIVE',
+          };
+        });
       }
       return [];
     } catch (err) {

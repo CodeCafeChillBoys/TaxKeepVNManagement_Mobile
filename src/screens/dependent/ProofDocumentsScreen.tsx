@@ -863,9 +863,9 @@ export const ProofDocumentsScreen: React.FC = () => {
                 {formatPersonName(route.params.dependentData.fullName)}
               </Text>{' '}
               {route.params.dependentData.citizenId
-                ? `(CCCD: ${route.params.dependentData.citizenId})`
+                ? `(Mã ĐD: ${route.params.dependentData.citizenId})`
                 : route.params.dependentData.birthCertNumber
-                ? `(Số GKS: ${route.params.dependentData.birthCertNumber})`
+                ? `(Mã ĐD: ${route.params.dependentData.birthCertNumber})`
                 : ''}
             </Text>
           </View>

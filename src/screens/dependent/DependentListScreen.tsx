@@ -103,7 +103,7 @@ const DependentLedgerRow = React.memo<DependentRowProps>(
     const isAdult = age >= 14;
     const hasCitizenId = Boolean(dep.citizenId);
     const displayName = formatPersonName(dep.fullName);
-    const idLabel = isAdult || hasCitizenId ? 'Căn cước' : 'Giấy khai sinh';
+    const idLabel = 'Mã số định danh';
     const idValue = dep.citizenId || dep.birthCertNumber || 'Chưa cập nhật';
 
     return (
@@ -589,11 +589,7 @@ export const DependentListScreen: React.FC = () => {
                   </View>
 
                   <View style={styles.modalDetailRow}>
-                    <Text style={styles.modalDetailLabel}>
-                      {calculateAge(selectedDetail.birthDate) >= 14 || selectedDetail.citizenId
-                        ? 'Căn cước công dân:'
-                        : 'Số Giấy khai sinh:'}
-                    </Text>
+                    <Text style={styles.modalDetailLabel}>Mã số định danh:</Text>
                     <Text style={[styles.modalDetailVal, styles.monospace]}>
                       {selectedDetail.citizenId || selectedDetail.birthCertNumber || 'Chưa cập nhật'}
                     </Text>

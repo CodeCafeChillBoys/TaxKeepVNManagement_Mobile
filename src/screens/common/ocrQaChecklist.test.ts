@@ -219,6 +219,7 @@ describe('OCR-11 QA checklist (automated seams)', () => {
 
       expect(aliasSuggestedGroup(SEED_CATALOG, extracted.fields.suggestedGroup)).toEqual({
         selectedGroupIdx: 1,
+        groupCode: 'CHILD_OVER_18_STUDYING',
         relationship: 'CHILD',
       });
       const fill = mapToDependentFill(

@@ -24,7 +24,8 @@ import { CatalogErrorBanner } from '../../components/common/CatalogErrorBanner';
 import { useDependentCatalog } from '../../hooks/useDependentCatalog';
 import { getCachedCatalog } from '../../api/dependentCatalogStore';
 import { RULES_NOT_CONFIGURED_LABEL } from '../../api/dependentDocHelpers';
-import { uiTabForGroup } from './dependentGroupUtils';
+import { findCatalogGroup, groupName, uiTabForGroup } from './dependentGroupUtils';
+import { buildGroupSubtitle } from './dependentEligibility';
 import { formatPersonName } from '../../utils/formatPersonName';
 import {
   dependentDocumentApi,
@@ -85,12 +86,8 @@ interface LawDocItem {
   options?: LawDocOption[];
 }
 
-interface LawGroupRequirement {
-  groupId: number;
-  tabLabel: string;
-  title: string;
-  subtitle: string;
-}
+/** Tab luật 0..4 (dùng lọc rule / giải thích), không phải nhãn UI. */
+const LAW_TAB_COUNT = 5;
 
 const ALTERNATIVE_SLOT_TITLE = 'Nộp 1 trong các giấy tờ:';
 const OPTIONAL_SUFFIX = ' (không bắt buộc)';
@@ -153,40 +150,6 @@ interface SelectedDocFile {
   needsReupload?: boolean;
 }
 
-// Tiêu đề / mô tả 5 tab theo luật. Danh sách giấy tờ lấy từ rule DB, không viết sẵn trong app.
-const LAW_GROUP_SPECS: LawGroupRequirement[] = [
-  {
-    groupId: 1,
-    tabLabel: 'Nhóm 1',
-    title: 'Nhóm 1: Con dưới 18 tuổi',
-    subtitle: 'Độ tuổi tính theo ngày sinh < 18 tuổi.',
-  },
-  {
-    groupId: 2,
-    tabLabel: 'Nhóm 2',
-    title: 'Nhóm 2: Con từ 18 tuổi trở lên đang đi học',
-    subtitle: 'Con từ đủ 18 tuổi và đang theo học đại học, cao đẳng, trung học chuyên nghiệp, dạy nghề.',
-  },
-  {
-    groupId: 3,
-    tabLabel: 'Nhóm 3',
-    title: 'Nhóm 3: Con bị khuyết tật / Mất khả năng lao động',
-    subtitle: 'Con đủ 18 tuổi trở lên nhưng không có khả năng tự lao động tạo thu nhập.',
-  },
-  {
-    groupId: 4,
-    tabLabel: 'Nhóm 4',
-    title: 'Nhóm 4: Vợ / Chồng hoặc Cha / Mẹ',
-    subtitle: 'Bao gồm: Vợ, chồng; cha mẹ đẻ, cha mẹ vợ/chồng, cha mẹ kế, cha mẹ nuôi hợp pháp.',
-  },
-  {
-    groupId: 5,
-    tabLabel: 'Nhóm 5',
-    title: 'Nhóm 5: Cá nhân khác không nơi nương tựa trực tiếp nuôi dưỡng',
-    subtitle: 'Bao gồm: Anh, chị, em ruột; ông bà nội/ngoại; cô dì chú bác ruột; cháu ruột.',
-  },
-];
-
 export const ProofDocumentsScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
   const route = useRoute<ProofDocumentsRouteProp>();
@@ -217,7 +180,7 @@ export const ProofDocumentsScreen: React.FC = () => {
   const initialGroupIdx =
     typeof route.params?.groupIndex === 'number' &&
     route.params.groupIndex >= 0 &&
-    route.params.groupIndex < LAW_GROUP_SPECS.length
+    route.params.groupIndex < LAW_TAB_COUNT
       ? route.params.groupIndex
       : 0;
 
@@ -227,7 +190,7 @@ export const ProofDocumentsScreen: React.FC = () => {
     if (
       typeof route.params?.groupIndex === 'number' &&
       route.params.groupIndex >= 0 &&
-      route.params.groupIndex < LAW_GROUP_SPECS.length
+      route.params.groupIndex < LAW_TAB_COUNT
     ) {
       setSelectedGroupIdx(route.params.groupIndex);
     }
@@ -265,7 +228,43 @@ export const ProofDocumentsScreen: React.FC = () => {
   // Loại giấy người dùng chọn trong ô "nộp 1 trong N", theo key ô
   const [docChoices, setDocChoices] = useState<Record<string, string>>({});
 
-  const currentGroupSpec = LAW_GROUP_SPECS[selectedGroupIdx];
+  const activeGroupCode = useMemo(() => {
+    const fromRoute =
+      route.params?.dependentData?.groupCode ||
+      (route.params?.dependentData as { currentGroup?: string } | undefined)?.currentGroup;
+    return (
+      selectedDependent?.currentGroup ||
+      fromRoute ||
+      ''
+    ).trim();
+  }, [route.params?.dependentData, selectedDependent?.currentGroup]);
+
+  /** Tiêu đề / mô tả từ GET /dependents/catalog — không còn 5 nhãn luật cứng. */
+  const currentGroupSpec = useMemo(() => {
+    const group = findCatalogGroup(catalog, activeGroupCode);
+    if (group) {
+      return {
+        title: group.name || group.code,
+        subtitle: buildGroupSubtitle(group),
+      };
+    }
+    const fallbackTitle = groupName(catalog, activeGroupCode) || activeGroupCode || 'Nhóm điều kiện';
+    return {
+      title: fallbackTitle,
+      subtitle: catalogLoading ? 'Đang tải danh mục nhóm...' : 'Theo quy định hiện hành.',
+    };
+  }, [activeGroupCode, catalog, catalogLoading]);
+
+  // Có mã nhóm từ hồ sơ + catalog → căn tab luật theo catalog (tránh lệch groupIndex cũ)
+  useEffect(() => {
+    if (!catalog || !activeGroupCode) return;
+    const tab = uiTabForGroup(catalog, activeGroupCode);
+    if (tab >= 0 && tab < LAW_TAB_COUNT && tab !== selectedGroupIdx) {
+      setSelectedGroupIdx(tab);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catalog, activeGroupCode]);
+
   const docsFromDb = Boolean(dynamicDocs && dynamicDocs.length > 0);
   const activeDocs = useMemo<LawDocItem[]>(
     () =>

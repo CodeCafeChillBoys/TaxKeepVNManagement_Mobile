@@ -35,9 +35,10 @@ describe('ocrUtils mappers', () => {
   });
 
   describe('aliasSuggestedGroup (PRD §8.4)', () => {
-    it('maps catalog groups to tab + relationship from the catalog', () => {
+    it('maps catalog groups to tab + relationship + groupCode from the catalog', () => {
       expect(aliasSuggestedGroup(SEED_CATALOG, 'CHILD_OVER_18_STUDYING')).toEqual({
         selectedGroupIdx: 1,
+        groupCode: 'CHILD_OVER_18_STUDYING',
         relationship: 'CHILD',
       });
     });
@@ -45,26 +46,32 @@ describe('ocrUtils mappers', () => {
     it('maps known codes per alias table', () => {
       expect(aliasSuggestedGroup(SEED_CATALOG, 'CHILD_UNDER_18')).toEqual({
         selectedGroupIdx: 0,
+        groupCode: 'CHILD_UNDER_18',
         relationship: 'CHILD',
       });
       expect(aliasSuggestedGroup(SEED_CATALOG, 'CHILD_OVER_18_STUDYING')).toEqual({
         selectedGroupIdx: 1,
+        groupCode: 'CHILD_OVER_18_STUDYING',
         relationship: 'CHILD',
       });
       expect(aliasSuggestedGroup(SEED_CATALOG, 'CHILD_OVER_18_DISABLED')).toEqual({
         selectedGroupIdx: 2,
+        groupCode: 'CHILD_OVER_18_DISABLED',
         relationship: 'CHILD',
       });
       expect(aliasSuggestedGroup(SEED_CATALOG, 'SPOUSE_DISABLED')).toEqual({
         selectedGroupIdx: 3,
+        groupCode: 'SPOUSE_DISABLED',
         relationship: 'SPOUSE',
       });
       expect(aliasSuggestedGroup(SEED_CATALOG, 'PARENT_RETIRED')).toEqual({
         selectedGroupIdx: 3,
+        groupCode: 'PARENT_RETIRED',
         relationship: 'PARENT',
       });
       expect(aliasSuggestedGroup(SEED_CATALOG, 'OTHER_HELPLESS')).toEqual({
         selectedGroupIdx: 4,
+        groupCode: 'OTHER_HELPLESS',
         relationship: 'OTHER_DEPENDENT',
       });
     });

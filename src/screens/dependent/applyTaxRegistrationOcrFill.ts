@@ -9,6 +9,7 @@ export type TaxRegistrationOcrPatch = {
   citizenId?: string;
   birthCertNumber?: string;
   selectedGroupIdx?: number;
+  selectedGroupCode?: string;
   relationship?: string;
 };
 
@@ -60,6 +61,11 @@ export function applyTaxRegistrationOcrFill(
 
   if (typeof fill.selectedGroupIdx === 'number') {
     patch.selectedGroupIdx = fill.selectedGroupIdx;
+  }
+  if (fill.selectedGroupCode?.trim()) {
+    patch.selectedGroupCode = fill.selectedGroupCode.trim();
+  } else if (fill.suggestedGroup?.trim()) {
+    patch.selectedGroupCode = fill.suggestedGroup.trim();
   }
   if (fill.relationship?.trim()) {
     patch.relationship = fill.relationship.trim();

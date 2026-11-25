@@ -49,6 +49,8 @@ export interface OcrDependentFill {
   suggestedGroup?: string;
   relationship?: string;
   selectedGroupIdx?: number;
+  /** Mã nhóm catalog (GET /dependents/catalog), ưu tiên hơn tab index. */
+  selectedGroupCode?: string;
 }
 
 export const OCR_FIELD_META: {

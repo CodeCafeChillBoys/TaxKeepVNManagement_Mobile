@@ -163,6 +163,7 @@ export const ProofDocumentsScreen: React.FC = () => {
   } = useDependentCatalog();
 
   const isMountedRef = useRef(true);
+  const scrollViewRef = useRef<React.ComponentRef<typeof ScrollView>>(null);
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
@@ -752,7 +753,7 @@ export const ProofDocumentsScreen: React.FC = () => {
       if (!isMountedRef.current) return;
       const parsed = parseDependentUploadError(err);
       setStepErrors((prev) => ({ ...prev, [currentDoc.key]: parsed }));
-      toast.error(parsed.message, parsed.title);
+      scrollViewRef.current?.scrollTo({ y: 120, animated: true });
     } finally {
       if (isMountedRef.current) {
         setUploading(false);
@@ -794,7 +795,7 @@ export const ProofDocumentsScreen: React.FC = () => {
       if (!isMountedRef.current) return;
       const parsed = parseDependentUploadError(err);
       setStepErrors((prev) => ({ ...prev, [currentDoc.key]: parsed }));
-      toast.error(parsed.message, parsed.title);
+      scrollViewRef.current?.scrollTo({ y: 120, animated: true });
     } finally {
       if (isMountedRef.current) {
         setUploading(false);
@@ -906,6 +907,7 @@ export const ProofDocumentsScreen: React.FC = () => {
       />
 
       <ScrollView
+        ref={scrollViewRef}
         contentContainerStyle={[
           styles.scrollContent,
           { paddingBottom: Math.max(insets.bottom, 20) + 28 },

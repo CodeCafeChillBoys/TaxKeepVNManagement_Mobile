@@ -20,7 +20,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { theme } from '../../constants/theme';
 import { fonts } from '../../constants/fonts';
 import { DrumPatternBackdrop } from '../../components/brand/DrumPatternBackdrop';
-import { HomeHeaderButton } from '../../components/navigation/HomeHeaderButton';
+import { HomeHeaderButton, useShowHomeButton } from '../../components/navigation/HomeHeaderButton';
 import { useToast } from '../../components/ui/Toast';
 import { CatalogErrorBanner } from '../../components/common/CatalogErrorBanner';
 import { useDependentCatalog } from '../../hooks/useDependentCatalog';
@@ -89,6 +89,7 @@ export const TaxRegistrationScreen: React.FC = () => {
   const navigation = useNavigation<RootNavigationProp>();
   const route = useRoute<RouteProp<RootStackParamList, 'TaxRegistration'>>();
   const insets = useSafeAreaInsets();
+  const showHomeButton = useShowHomeButton();
   const { toast } = useToast();
   const {
     catalog,
@@ -457,7 +458,7 @@ export const TaxRegistrationScreen: React.FC = () => {
     (groupsLoading ? 'Đang tải nhóm điều kiện...' : 'Chọn nhóm điều kiện');
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
       <DrumPatternBackdrop variant="soft" />
       <View style={styles.header}>
         <TouchableOpacity
@@ -467,12 +468,17 @@ export const TaxRegistrationScreen: React.FC = () => {
           accessibilityLabel="Quay lại"
           testID="taxRegBackBtn"
         >
-          <Ionicons name="arrow-back" size={26} color="#1A1A1A" />
+          <Ionicons name="arrow-back" size={24} color="#1A1A1A" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle} numberOfLines={1}>
+        <Text
+          style={styles.headerTitle}
+          numberOfLines={2}
+          adjustsFontSizeToFit
+          minimumFontScale={0.8}
+        >
           Đơn đăng ký người phụ thuộc
         </Text>
-        <View style={styles.homeSlot}>
+        <View style={showHomeButton ? styles.homeSlot : styles.homeSlotCompact}>
           <HomeHeaderButton />
         </View>
       </View>
@@ -482,6 +488,7 @@ export const TaxRegistrationScreen: React.FC = () => {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         <ScrollView
+          style={styles.flex}
           contentContainerStyle={styles.scrollOuter}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
@@ -556,7 +563,7 @@ export const TaxRegistrationScreen: React.FC = () => {
 
               <View style={styles.dateSelectorRow}>
                 <TouchableOpacity
-                  style={styles.dateSelectorChip}
+                  style={[styles.dateSelectorChip, styles.dateChipDay]}
                   onPress={() =>
                     openPicker(
                       'Chọn ngày sinh',
@@ -566,12 +573,17 @@ export const TaxRegistrationScreen: React.FC = () => {
                   }
                   testID="selectBirthDay"
                 >
-                  <Text style={styles.dateSelectorText} numberOfLines={1}>{`Ngày ${birthDay}`}</Text>
-                  <Ionicons name="chevron-down" size={16} color="#1A1A1A" />
+                  <Text
+                    style={styles.dateSelectorText}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.85}
+                  >{`Ngày ${birthDay}`}</Text>
+                  <Ionicons name="chevron-down" size={15} color="#1A1A1A" style={styles.chevronIcon} />
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  style={styles.dateSelectorChip}
+                  style={[styles.dateSelectorChip, styles.dateChipMonth]}
                   onPress={() =>
                     openPicker(
                       'Chọn tháng sinh',
@@ -581,12 +593,17 @@ export const TaxRegistrationScreen: React.FC = () => {
                   }
                   testID="selectBirthMonth"
                 >
-                  <Text style={styles.dateSelectorText} numberOfLines={1}>{`Tháng ${birthMonth}`}</Text>
-                  <Ionicons name="chevron-down" size={16} color="#1A1A1A" />
+                  <Text
+                    style={styles.dateSelectorText}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.85}
+                  >{`Tháng ${birthMonth}`}</Text>
+                  <Ionicons name="chevron-down" size={15} color="#1A1A1A" style={styles.chevronIcon} />
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  style={styles.dateSelectorChip}
+                  style={[styles.dateSelectorChip, styles.dateChipYear]}
                   onPress={() =>
                     openPicker(
                       'Chọn năm sinh',
@@ -596,8 +613,13 @@ export const TaxRegistrationScreen: React.FC = () => {
                   }
                   testID="selectBirthYear"
                 >
-                  <Text style={styles.dateSelectorText} numberOfLines={1}>{birthYear}</Text>
-                  <Ionicons name="chevron-down" size={16} color="#1A1A1A" />
+                  <Text
+                    style={styles.dateSelectorText}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.85}
+                  >{birthYear}</Text>
+                  <Ionicons name="chevron-down" size={15} color="#1A1A1A" style={styles.chevronIcon} />
                 </TouchableOpacity>
               </View>
             </View>
@@ -676,7 +698,7 @@ export const TaxRegistrationScreen: React.FC = () => {
               </View>
               <View style={styles.dateSelectorRow}>
                 <TouchableOpacity
-                  style={styles.dateSelectorChip}
+                  style={[styles.dateSelectorChip, styles.dateChipDay]}
                   onPress={() =>
                     openPicker(
                       'Chọn ngày bắt đầu',
@@ -685,12 +707,17 @@ export const TaxRegistrationScreen: React.FC = () => {
                     )
                   }
                 >
-                  <Text style={styles.dateSelectorText} numberOfLines={1}>{`Ngày ${startDay}`}</Text>
-                  <Ionicons name="chevron-down" size={16} color="#1A1A1A" />
+                  <Text
+                    style={styles.dateSelectorText}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.85}
+                  >{`Ngày ${startDay}`}</Text>
+                  <Ionicons name="chevron-down" size={15} color="#1A1A1A" style={styles.chevronIcon} />
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  style={styles.dateSelectorChip}
+                  style={[styles.dateSelectorChip, styles.dateChipMonth]}
                   onPress={() =>
                     openPicker(
                       'Chọn tháng bắt đầu',
@@ -699,12 +726,17 @@ export const TaxRegistrationScreen: React.FC = () => {
                     )
                   }
                 >
-                  <Text style={styles.dateSelectorText} numberOfLines={1}>{`Tháng ${startMonth}`}</Text>
-                  <Ionicons name="chevron-down" size={16} color="#1A1A1A" />
+                  <Text
+                    style={styles.dateSelectorText}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.85}
+                  >{`Tháng ${startMonth}`}</Text>
+                  <Ionicons name="chevron-down" size={15} color="#1A1A1A" style={styles.chevronIcon} />
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  style={styles.dateSelectorChip}
+                  style={[styles.dateSelectorChip, styles.dateChipYear]}
                   onPress={() =>
                     openPicker(
                       'Chọn năm bắt đầu',
@@ -713,8 +745,13 @@ export const TaxRegistrationScreen: React.FC = () => {
                     )
                   }
                 >
-                  <Text style={styles.dateSelectorText} numberOfLines={1}>{startYear}</Text>
-                  <Ionicons name="chevron-down" size={16} color="#1A1A1A" />
+                  <Text
+                    style={styles.dateSelectorText}
+                    numberOfLines={1}
+                    adjustsFontSizeToFit
+                    minimumFontScale={0.85}
+                  >{startYear}</Text>
+                  <Ionicons name="chevron-down" size={15} color="#1A1A1A" style={styles.chevronIcon} />
                 </TouchableOpacity>
               </View>
             </View>
@@ -737,7 +774,7 @@ export const TaxRegistrationScreen: React.FC = () => {
               {hasEndDate && (
                 <View style={[styles.dateSelectorRow, styles.endDateRow]}>
                   <TouchableOpacity
-                    style={styles.dateSelectorChip}
+                    style={[styles.dateSelectorChip, styles.dateChipDay]}
                     onPress={() =>
                       openPicker(
                         'Chọn ngày kết thúc',
@@ -746,12 +783,17 @@ export const TaxRegistrationScreen: React.FC = () => {
                       )
                     }
                   >
-                    <Text style={styles.dateSelectorText} numberOfLines={1}>{`Ngày ${endDay}`}</Text>
-                    <Ionicons name="chevron-down" size={16} color="#1A1A1A" />
+                    <Text
+                      style={styles.dateSelectorText}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.85}
+                    >{`Ngày ${endDay}`}</Text>
+                    <Ionicons name="chevron-down" size={15} color="#1A1A1A" style={styles.chevronIcon} />
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    style={styles.dateSelectorChip}
+                    style={[styles.dateSelectorChip, styles.dateChipMonth]}
                     onPress={() =>
                       openPicker(
                         'Chọn tháng kết thúc',
@@ -760,12 +802,17 @@ export const TaxRegistrationScreen: React.FC = () => {
                       )
                     }
                   >
-                    <Text style={styles.dateSelectorText} numberOfLines={1}>{`Tháng ${endMonth}`}</Text>
-                    <Ionicons name="chevron-down" size={16} color="#1A1A1A" />
+                    <Text
+                      style={styles.dateSelectorText}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.85}
+                    >{`Tháng ${endMonth}`}</Text>
+                    <Ionicons name="chevron-down" size={15} color="#1A1A1A" style={styles.chevronIcon} />
                   </TouchableOpacity>
 
                   <TouchableOpacity
-                    style={styles.dateSelectorChip}
+                    style={[styles.dateSelectorChip, styles.dateChipYear]}
                     onPress={() =>
                       openPicker(
                         'Chọn năm kết thúc',
@@ -774,8 +821,13 @@ export const TaxRegistrationScreen: React.FC = () => {
                       )
                     }
                   >
-                    <Text style={styles.dateSelectorText} numberOfLines={1}>{endYear}</Text>
-                    <Ionicons name="chevron-down" size={16} color="#1A1A1A" />
+                    <Text
+                      style={styles.dateSelectorText}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.85}
+                    >{endYear}</Text>
+                    <Ionicons name="chevron-down" size={15} color="#1A1A1A" style={styles.chevronIcon} />
                   </TouchableOpacity>
                 </View>
               )}
@@ -891,34 +943,38 @@ export const TaxRegistrationScreen: React.FC = () => {
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  homeSlot: { width: 44, alignItems: 'flex-end', justifyContent: 'center' },
+  homeSlot: { width: 40, alignItems: 'flex-end', justifyContent: 'center' },
+  homeSlotCompact: { width: 20, alignItems: 'flex-end', justifyContent: 'center' },
   safeArea: {
     flex: 1,
     backgroundColor: theme.colors.background,
   },
   header: {
-    height: 52,
+    minHeight: 52,
+    paddingVertical: 6,
     backgroundColor: 'transparent',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 12,
+    paddingHorizontal: 8,
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.goldLight,
   },
   backBtn: {
-    width: 44,
-    height: 44,
+    width: 40,
+    height: 40,
     alignItems: 'center',
     justifyContent: 'center',
   },
   headerTitle: {
     ...theme.typography.titleLarge,
     flex: 1,
-    fontSize: 18,
+    fontSize: 17,
+    lineHeight: 23,
     fontWeight: '700',
     color: theme.colors.primaryDark,
     textAlign: 'center',
+    paddingHorizontal: 4,
   },
   scrollOuter: {
     flexGrow: 1,
@@ -928,13 +984,14 @@ const styles = StyleSheet.create({
     maxWidth: 600,
     alignSelf: 'center',
     paddingHorizontal: 20,
-    paddingTop: 20,
+    paddingTop: 18,
     paddingBottom: 56,
   },
   ocrQuickCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
-    padding: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1.2,
@@ -953,15 +1010,18 @@ const styles = StyleSheet.create({
   },
   ocrTextCol: {
     flex: 1,
+    paddingVertical: 2,
   },
   ocrTitle: {
     fontFamily: fonts.bodyBold,
     fontSize: 16,
+    lineHeight: 22,
     color: theme.colors.primary,
   },
   ocrSubtitle: {
     fontFamily: fonts.body,
     fontSize: 12,
+    lineHeight: 18,
     color: theme.colors.textSecondary,
     marginTop: 2,
   },
@@ -1022,27 +1082,41 @@ const styles = StyleSheet.create({
   },
   dateSelectorRow: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 6,
   },
   endDateRow: {
     marginTop: 10,
   },
   dateSelectorChip: {
     flex: 1,
+    minWidth: 0,
     minHeight: 44,
     backgroundColor: '#EAEAEE',
     borderRadius: 12,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 10,
-    gap: 4,
+    paddingHorizontal: 9,
+    gap: 3,
+  },
+  dateChipDay: {
+    flex: 1.08,
+  },
+  dateChipMonth: {
+    flex: 1.24,
+  },
+  dateChipYear: {
+    flex: 0.85,
+  },
+  chevronIcon: {
+    flexShrink: 0,
   },
   dateSelectorText: {
     flex: 1,
     flexShrink: 1,
     fontFamily: fonts.bodyMedium,
     fontSize: 13,
+    lineHeight: 18,
     color: '#1A1A1A',
   },
   dropdownSelector: {

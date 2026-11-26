@@ -159,6 +159,7 @@ export const dependentDocumentApi = {
   // Tạo hồ sơ người phụ thuộc mới: POST /api/v1/dependents
   createDependent: async (data: {
     fullName: string;
+    gender: string;
     relationship: string;
     currentGroup: string;
     birthDate: string;
@@ -168,6 +169,8 @@ export const dependentDocumentApi = {
     effectiveFromMonth: string;
     effectiveToMonth: string;
     note?: string;
+    /** Cha/mẹ dưới ngưỡng tuổi: true khi đã tick cam kết; còn lại false. */
+    confirmIncomeBelowThreshold?: boolean;
   }): Promise<{ id: string; dependentId: string; fullName: string; citizenId?: string; [key: string]: any }> => {
     try {
       const res = await apiClient.post<any>('/api/v1/dependents', data);
@@ -189,7 +192,19 @@ export const dependentDocumentApi = {
         err,
         'Không thể đăng ký người phụ thuộc.'
       );
-      throw new Error(serverMessage);
+      const code =
+        err?.response?.data?.errorCode ||
+        err?.response?.data?.errors?.errorCode ||
+        err?.errorCode;
+      const wrapped = new Error(serverMessage) as Error & {
+        errorCode?: string;
+        response?: unknown;
+      };
+      if (typeof code === 'string' && code.trim()) {
+        wrapped.errorCode = code.trim();
+      }
+      wrapped.response = err?.response;
+      throw wrapped;
     }
   },
 

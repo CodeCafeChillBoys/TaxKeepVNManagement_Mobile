@@ -61,6 +61,11 @@ export const API_ERROR_MESSAGES: Record<string, string> = {
   HOLD_SLOT_EXPIRED: 'Đã hết thời gian giữ chỗ. Vui lòng chọn lại khung giờ.',
   IDENTIFIER_REQUIRED: 'Vui lòng nhập số căn cước hoặc giấy khai sinh.',
   IDENTITY_MISMATCH: 'Thông tin trên chứng từ không khớp với người nộp thuế hoặc người phụ thuộc đã đăng ký.',
+  INCOME_COMMITMENT_REQUIRED:
+    'Cha/mẹ đã đạt ngưỡng tuổi lao động cần xác nhận cam kết thu nhập hàng tháng không vượt quá 1.000.000 VND.',
+  AGE_NOT_MATCH:
+    'Không thể áp dụng quy tắc tuổi cha/mẹ với giới tính Khác; vui lòng chọn Nam hoặc Nữ.',
+  INVALID_GENDER: 'Giới tính người phụ thuộc chỉ được là Nam, Nữ hoặc Khác.',
   INSUFFICIENT_BALANCE: 'Số dư không đủ để thực hiện giao dịch.',
   INSUFFICIENT_WALLET_BALANCE: 'Số dư ví không đủ. Vui lòng nạp thêm hoặc chọn cổng thanh toán.',
   INVALID_ACTION: 'Thao tác không hợp lệ.',

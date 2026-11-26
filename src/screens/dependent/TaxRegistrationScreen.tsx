@@ -46,6 +46,15 @@ import {
   sanitizeOcrEligibility,
 } from './dependentEligibility';
 import { uiTabForGroup } from './dependentGroupUtils';
+import {
+  ageYearsFromBirthParts,
+  GENDER_OPTIONS,
+  isParentOtherGenderBlocked,
+  parentIncomeCommitmentLabel,
+  resolveConfirmIncomeBelowThreshold,
+  showParentIncomeCommitmentCheckbox,
+  type DependentGenderApi,
+} from './parentIncomeCommitment';
 
 const DAYS = Array.from({ length: 31 }, (_, i) => String(i + 1).padStart(2, '0'));
 const MONTHS = Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, '0'));
@@ -57,6 +66,7 @@ type PickerType =
   | 'birthDay'
   | 'birthMonth'
   | 'birthYear'
+  | 'gender'
   | 'relationship'
   | 'startDay'
   | 'startMonth'
@@ -115,7 +125,9 @@ export const TaxRegistrationScreen: React.FC = () => {
   const [birthMonth, setBirthMonth] = useState<string>('06');
   const [birthYear, setBirthYear] = useState<string>('2018');
 
+  const [gender, setGender] = useState<DependentGenderApi | ''>('');
   const [relationship, setRelationship] = useState<string>('');
+  const [confirmIncomeBelowThreshold, setConfirmIncomeBelowThreshold] = useState(false);
 
   const [startDay, setStartDay] = useState<string>('01');
   const [startMonth, setStartMonth] = useState<string>('01');
@@ -136,6 +148,20 @@ export const TaxRegistrationScreen: React.FC = () => {
     [birthDay, birthMonth, birthYear, effectiveFromMonth]
   );
   const isAge14OrOlder = isAge14OrOlderAtEffective(ageAtEffective);
+  const ageToday = useMemo(
+    () => ageYearsFromBirthParts(birthDay, birthMonth, birthYear),
+    [birthDay, birthMonth, birthYear]
+  );
+  const showIncomeCommitment = useMemo(
+    () => showParentIncomeCommitmentCheckbox(relationship, gender, ageToday, selectedGroupCode),
+    [relationship, gender, ageToday, selectedGroupCode]
+  );
+
+  useEffect(() => {
+    if (!showIncomeCommitment && confirmIncomeBelowThreshold) {
+      setConfirmIncomeBelowThreshold(false);
+    }
+  }, [showIncomeCommitment, confirmIncomeBelowThreshold]);
 
   const eligibleRelationships = useMemo(
     () => filterEligibleRelationships(catalog, ageAtEffective),
@@ -279,8 +305,21 @@ export const TaxRegistrationScreen: React.FC = () => {
       return;
     }
 
+    if (!gender) {
+      toast.warning('Vui lòng chọn giới tính người phụ thuộc.', 'Thiếu thông tin bắt buộc');
+      return;
+    }
+
     if (!relationship) {
       toast.warning('Vui lòng chọn mối quan hệ với người nộp thuế.', 'Thiếu thông tin bắt buộc');
+      return;
+    }
+
+    if (isParentOtherGenderBlocked(relationship, gender)) {
+      toast.warning(
+        'Với cha/mẹ, vui lòng chọn giới tính Nam hoặc Nữ để áp dụng quy tắc tuổi và cam kết thu nhập.',
+        'Giới tính chưa phù hợp'
+      );
       return;
     }
 
@@ -303,6 +342,17 @@ export const TaxRegistrationScreen: React.FC = () => {
         'Vui lòng chọn nhóm điều kiện phù hợp với quan hệ và danh mục giấy tờ đã cấu hình.',
         'Nhóm điều kiện chưa phù hợp'
       );
+      return;
+    }
+
+    const mustConfirmIncome = showParentIncomeCommitmentCheckbox(
+      relationship,
+      gender,
+      ageToday,
+      groupEnumCode
+    );
+    if (mustConfirmIncome && !confirmIncomeBelowThreshold) {
+      toast.warning(parentIncomeCommitmentLabel(), 'Cần xác nhận cam kết thu nhập');
       return;
     }
 
@@ -347,6 +397,7 @@ export const TaxRegistrationScreen: React.FC = () => {
       setIsSubmitting(true);
       const createRes = await dependentDocumentApi.createDependent({
         fullName: fullName.trim(),
+        gender,
         relationship: relCode,
         currentGroup: groupEnumCode,
         birthDate: `${birthDate}T00:00:00Z`,
@@ -354,6 +405,13 @@ export const TaxRegistrationScreen: React.FC = () => {
         birthCertNumber: !isAge14OrOlder ? birthCertNumber.trim() : undefined,
         effectiveFromMonth: effectiveFrom,
         effectiveToMonth: effectiveTo,
+        confirmIncomeBelowThreshold: resolveConfirmIncomeBelowThreshold(
+          relationship,
+          gender,
+          ageToday,
+          groupEnumCode,
+          confirmIncomeBelowThreshold
+        ),
       });
       if (!isMountedRef.current) return;
       createdDependentId = createRes?.dependentId || createRes?.id;
@@ -411,6 +469,9 @@ export const TaxRegistrationScreen: React.FC = () => {
         case 'birthYear':
           setBirthYear(val);
           break;
+        case 'gender':
+          setGender(val);
+          break;
         case 'relationship':
           setRelationship(val);
           setSelectedGroupCode('');
@@ -451,6 +512,8 @@ export const TaxRegistrationScreen: React.FC = () => {
     [handleSelectPickerItem]
   );
 
+  const selectedGenderLabel =
+    GENDER_OPTIONS.find((g) => g.value === gender)?.label || 'Chọn giới tính';
   const selectedRelLabel =
     eligibleRelationships.find((r) => r.value === relationship)?.label || 'Chọn mối quan hệ';
   const selectedGroupTitle =
@@ -624,7 +687,30 @@ export const TaxRegistrationScreen: React.FC = () => {
               </View>
             </View>
 
-            {/* Trường 3: Định danh theo độ tuổi */}
+            {/* Trường 3: Giới tính */}
+            <View style={styles.formGroup}>
+              <Text style={styles.fieldLabel}>
+                Giới tính. <Text style={styles.required}>*Bắt buộc</Text>
+              </Text>
+              <TouchableOpacity
+                style={styles.dropdownSelector}
+                onPress={() =>
+                  openPicker(
+                    'Chọn giới tính',
+                    'gender',
+                    GENDER_OPTIONS.map((g) => ({ value: g.value, label: g.label }))
+                  )
+                }
+                testID="selectGender"
+              >
+                <Text style={styles.dropdownSelectorText} numberOfLines={1}>
+                  {selectedGenderLabel}
+                </Text>
+                <Ionicons name="chevron-down" size={18} color="#1A1A1A" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Trường 4: Định danh theo độ tuổi */}
             {isAge14OrOlder ? (
               <View style={styles.formGroup}>
                 <Text style={styles.fieldLabel}>
@@ -663,7 +749,7 @@ export const TaxRegistrationScreen: React.FC = () => {
               </View>
             )}
 
-            {/* Trường 4: Mối quan hệ */}
+            {/* Trường 5: Mối quan hệ */}
             <View style={styles.formGroup}>
               <Text style={styles.fieldLabel}>
                 Mối quan hệ với người nộp thuế. <Text style={styles.required}>*Bắt buộc</Text>
@@ -686,7 +772,7 @@ export const TaxRegistrationScreen: React.FC = () => {
               </TouchableOpacity>
             </View>
 
-            {/* Trường 5: Thời điểm bắt đầu hiệu lực */}
+            {/* Trường 6: Thời điểm bắt đầu hiệu lực */}
             <View style={styles.formGroup}>
               <View style={styles.longLabelRow}>
                 <Text style={[styles.fieldLabel, styles.longLabelText]}>
@@ -756,7 +842,7 @@ export const TaxRegistrationScreen: React.FC = () => {
               </View>
             </View>
 
-            {/* Trường 6: Thời điểm kết thúc hiệu lực */}
+            {/* Trường 7: Thời điểm kết thúc hiệu lực */}
             <View style={styles.formGroup}>
               <View style={styles.toggleLabelRow}>
                 <Text style={styles.fieldLabelToggle}>
@@ -878,6 +964,27 @@ export const TaxRegistrationScreen: React.FC = () => {
                 <Ionicons name="chevron-down" size={18} color="#1A1A1A" />
               </TouchableOpacity>
             </View>
+
+            {showIncomeCommitment ? (
+              <View style={styles.formGroup}>
+                <TouchableOpacity
+                  style={styles.commitmentRow}
+                  onPress={() => setConfirmIncomeBelowThreshold((v) => !v)}
+                  activeOpacity={0.85}
+                  testID="toggleIncomeCommitment"
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: confirmIncomeBelowThreshold }}
+                >
+                  <Ionicons
+                    name={confirmIncomeBelowThreshold ? 'checkbox' : 'square-outline'}
+                    size={22}
+                    color={confirmIncomeBelowThreshold ? theme.colors.primary : '#8E8E93'}
+                    style={styles.commitmentIcon}
+                  />
+                  <Text style={styles.commitmentText}>{parentIncomeCommitmentLabel()}</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
 
             <View style={styles.btnWrapper}>
               <TouchableOpacity
@@ -1146,6 +1253,25 @@ const styles = StyleSheet.create({
     color: '#1A1A1A',
     flex: 1,
     marginRight: 10,
+  },
+  commitmentRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#F5F2E8',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    gap: 10,
+  },
+  commitmentIcon: {
+    marginTop: 1,
+  },
+  commitmentText: {
+    flex: 1,
+    fontFamily: fonts.bodyMedium,
+    fontSize: 13,
+    lineHeight: 19,
+    color: '#1A1A1A',
   },
   labelWithInfoRow: {
     flexDirection: 'row',

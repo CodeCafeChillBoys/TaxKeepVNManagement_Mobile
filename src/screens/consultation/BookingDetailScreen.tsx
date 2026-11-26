@@ -294,30 +294,51 @@ export const BookingDetailScreen: React.FC = () => {
         data.status !== 'PENDING_PAYMENT' &&
         data.status !== 'AWAITING_EXPERT_APPROVAL'
       ) {
-        const [sessionRes, reviewRes, reviewEligRes, disputeRes, disputeEligRes] = await Promise.allSettled([
+        // review-eligibility / dispute-eligibility chỉ dành cho khách hàng (booking.UserId).
+        // Chuyên gia gọi sẽ bị BE 403 → toast "Không có quyền..." dù chi tiết lịch đã tải OK.
+        const secondaryRequests: Promise<unknown>[] = [
           consultationApi.getConsultationSession(bookingId),
           consultationApi.getBookingReview(bookingId),
-          consultationApi.checkReviewEligibility(bookingId),
           consultationApi.getBookingDispute(bookingId),
-          consultationApi.checkDisputeEligibility(bookingId),
-        ]);
+        ];
+        if (!isExpertView) {
+          secondaryRequests.push(
+            consultationApi.checkReviewEligibility(bookingId),
+            consultationApi.checkDisputeEligibility(bookingId)
+          );
+        }
+
+        const settled = await Promise.allSettled(secondaryRequests);
+        const sessionRes = settled[0];
+        const reviewRes = settled[1];
+        const disputeRes = settled[2];
+        const reviewEligRes = !isExpertView ? settled[3] : undefined;
+        const disputeEligRes = !isExpertView ? settled[4] : undefined;
 
         let latestSession: ConsultationSessionResponse | null = null;
         if (sessionRes.status === 'fulfilled' && sessionRes.value) {
-          latestSession = sessionRes.value;
-          setSessionData(sessionRes.value);
+          latestSession = sessionRes.value as ConsultationSessionResponse;
+          setSessionData(latestSession);
         }
         if (reviewRes.status === 'fulfilled') {
-          setBookingReview(reviewRes.value);
+          setBookingReview(reviewRes.value as Awaited<ReturnType<typeof consultationApi.getBookingReview>>);
         }
-        if (reviewEligRes.status === 'fulfilled') {
-          setReviewEligibility(reviewEligRes.value);
+        if (reviewEligRes?.status === 'fulfilled') {
+          setReviewEligibility(
+            reviewEligRes.value as Awaited<ReturnType<typeof consultationApi.checkReviewEligibility>>
+          );
+        } else if (isExpertView) {
+          setReviewEligibility(null);
         }
         if (disputeRes.status === 'fulfilled') {
-          setBookingDispute(disputeRes.value);
+          setBookingDispute(disputeRes.value as Awaited<ReturnType<typeof consultationApi.getBookingDispute>>);
         }
-        if (disputeEligRes.status === 'fulfilled') {
-          setDisputeEligibility(disputeEligRes.value);
+        if (disputeEligRes?.status === 'fulfilled') {
+          setDisputeEligibility(
+            disputeEligRes.value as Awaited<ReturnType<typeof consultationApi.checkDisputeEligibility>>
+          );
+        } else if (isExpertView) {
+          setDisputeEligibility(null);
         }
 
         // Kiểm tra và hiển thị thông báo khi khách hàng hoặc chuyên gia vắng mặt quá 15 phút (No-Show)

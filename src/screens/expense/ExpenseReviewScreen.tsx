@@ -359,42 +359,6 @@ export const ExpenseReviewScreen: React.FC = () => {
   const confidencePct = effectiveConfidence !== undefined ? toPercent(effectiveConfidence) : null;
   const thresholdPct = toPercent(effectiveThreshold);
 
-  // Ánh xạ nhãn tiếng Việt cho các trường cốt lõi
-  const CRUCIAL_FIELD_LABELS: Record<string, string> = {
-    total_amount: 'Tổng tiền thanh toán',
-    seller_tax_code: isWithholding ? 'Mã số thuế tổ chức chi trả' : 'Mã số thuế bên bán',
-    buyer_id_card: isWithholding ? 'Số CCCD người nộp thuế' : 'Số CCCD người mua',
-    invoice_number: isWithholding ? 'Số chứng từ khấu trừ' : 'Số hóa đơn',
-    seller_name: isWithholding ? 'Tổ chức chi trả thu nhập' : 'Tên đơn vị bán',
-    invoice_date: isWithholding ? 'Ngày cấp chứng từ' : 'Ngày lập hóa đơn',
-    buyer_name: isWithholding ? 'Họ tên người nộp thuế' : 'Họ tên người mua',
-    buyer_tax_code: 'Mã số thuế cá nhân',
-    total_income: 'Tổng thu nhập chịu thuế',
-    tax_withheld: 'Số thuế đã khấu trừ',
-  };
-
-  const crucialDisplayItems = useMemo(() => {
-    return effectiveCrucialFields.map((fieldKey) => {
-      const normKey = fieldKey.trim().toLowerCase();
-      const label = CRUCIAL_FIELD_LABELS[normKey] || fieldKey;
-      const matchingField = (initialData.fields || []).find((f) => {
-        const fNorm = f.fieldName.toLowerCase().replace(/([A-Z])/g, '_$1').toLowerCase();
-        return fNorm.includes(normKey) || normKey.includes(fNorm);
-      });
-      const isLowConfidence = matchingField
-        ? matchingField.confidenceScore < dynamicThreshold
-        : (crucialCheck.lowConfidenceCrucialFields || []).some(
-            (lf) => lf.toLowerCase().includes(normKey) || normKey.includes(lf.toLowerCase())
-          );
-
-      return {
-        key: fieldKey,
-        label,
-        isLowConfidence,
-      };
-    });
-  }, [effectiveCrucialFields, initialData.fields, dynamicThreshold, crucialCheck, isWithholding]);
-
   const isDuplicate = useMemo(() => {
     const year = isWithholding
       ? (parseInt(incomeYear.trim(), 10) || selectedYear || initialData.extractedYear || new Date().getFullYear())
@@ -1248,27 +1212,6 @@ export const ExpenseReviewScreen: React.FC = () => {
                   ? `Độ tin cậy trích xuất: ${confidencePct}% (Yêu cầu hệ thống: ≥ ${thresholdPct}%)`
                   : `Chưa có điểm tin cậy từ AI cho chứng từ này (Yêu cầu hệ thống: ≥ ${thresholdPct}%)`}
               </Text>
-              <Text style={[styles.confidencePct, { color: isPassedThreshold ? '#15803D' : '#B45309' }]}>
-                {confidencePct === null
-                  ? 'Vui lòng tự kiểm tra lại các trường thông tin bên dưới'
-                  : isPassedThreshold
-                    ? 'Đạt tiêu chuẩn đối soát tự động'
-                    : 'Dưới ngưỡng yêu cầu – cần kiểm tra lại'}
-              </Text>
-
-              {/* Các điểm kiểm tra trường cốt lõi */}
-              <View style={styles.checkGrid}>
-                {crucialDisplayItems.map((item) => (
-                  <View key={item.key} style={styles.checkItem}>
-                    <Ionicons
-                      name={item.isLowConfidence ? 'alert-circle-outline' : 'checkmark-circle-outline'}
-                      size={14}
-                      color={item.isLowConfidence ? '#D97706' : '#16A34A'}
-                    />
-                    <Text style={styles.checkText}>{item.label}</Text>
-                  </View>
-                ))}
-              </View>
             </Card>
 
             {/* Cảnh báo lỗi / Xác nhận hợp lệ */}
@@ -2131,10 +2074,6 @@ const styles = StyleSheet.create({
   confidenceFill: { height: '100%', borderRadius: 3 },
   thresholdMarker: { position: 'absolute', top: -3, width: 2, height: 12, marginLeft: -1, backgroundColor: '#1E293B', borderRadius: 1 },
   confidenceLine: { fontSize: 12, color: '#334155', marginBottom: 2 },
-  confidencePct: { fontSize: 11, color: '#64748B', marginBottom: 10 },
-  checkGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  checkItem: { flexDirection: 'row', alignItems: 'center', gap: 4, width: '47%' },
-  checkText: { fontSize: 11, color: '#475569', flex: 1 },
   // Confirmed banner
   lockedPeriodBanner: {
     flexDirection: 'row',

@@ -236,11 +236,14 @@ export const ConsultationChatScreen: React.FC = () => {
           <ActivityIndicator style={styles.loading} color={theme.colors.primary} />
         ) : (
           <FlatList
-            inverted
+            // Chỉ inverted khi đã có tin — tránh ListEmptyComponent bị lật chữ (scaleY).
+            inverted={listData.length > 0}
             data={listData}
             keyExtractor={keyExtractor}
             renderItem={renderItem}
-            contentContainerStyle={styles.listContent}
+            contentContainerStyle={
+              listData.length === 0 ? styles.listContentEmpty : styles.listContent
+            }
             onEndReached={loadOlder}
             onEndReachedThreshold={0.2}
             keyboardShouldPersistTaps="handled"
@@ -327,6 +330,7 @@ const styles = StyleSheet.create({
   statusBadge: { borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
   statusText: { fontFamily: fonts.bodyMedium, fontSize: 11 },
   listContent: { padding: 16, gap: 8 },
+  listContentEmpty: { flexGrow: 1, padding: 16, justifyContent: 'center' },
   row: { maxWidth: '85%', gap: 2 },
   rowMine: { alignSelf: 'flex-end', alignItems: 'flex-end' },
   rowOther: { alignSelf: 'flex-start', alignItems: 'flex-start' },
@@ -343,9 +347,13 @@ const styles = StyleSheet.create({
   time: { fontFamily: fonts.body, fontSize: 11, color: theme.colors.textSecondary },
   typingText: { ...theme.typography.helper, color: theme.colors.textSecondary, fontStyle: 'italic' },
   olderLoading: { marginVertical: 8 },
-  // inverted list lật cả phần rỗng → lật lại cho đúng chiều
-  empty: { alignItems: 'center', gap: 8, paddingVertical: 40, transform: [{ scaleY: -1 }] },
-  emptyText: { ...theme.typography.helper, color: theme.colors.textSecondary, textAlign: 'center' },
+  empty: { alignItems: 'center', gap: 8, paddingVertical: 40 },
+  emptyText: {
+    ...theme.typography.helper,
+    color: theme.colors.textSecondary,
+    textAlign: 'center',
+    writingDirection: 'ltr',
+  },
   errorText: { ...theme.typography.helper, color: theme.colors.error, paddingHorizontal: 16, paddingBottom: 6 },
   closedNote: {
     ...theme.typography.helper,
